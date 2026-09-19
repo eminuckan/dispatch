@@ -58,3 +58,12 @@ it("keeps tool work attached to a user follow-up", () => {
   ];
   expect(teamFollowUpEntries(entries, []).map((e) => e.id)).toEqual(["user", "work"]);
 });
+
+it("keeps a newly dispatched coordination turn hidden before the ledger refresh arrives", () => {
+  const entries = [
+    message("team-new-reservation", "user", "new-turn", "hidden contract"),
+    message("new-answer", "assistant", "new-turn", '{"action":"accept"}'),
+    message("manual", "user", "manual-turn", "Explain"),
+  ];
+  expect(teamFollowUpEntries(entries, []).map((entry) => entry.id)).toEqual(["manual"]);
+});

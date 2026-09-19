@@ -7,11 +7,14 @@ export function teamFollowUpEntries(
   coordinationIds: ReadonlyArray<string>,
 ): TimelineEntry[] {
   const internal = new Set(coordinationIds);
+  // Reserved runtime message IDs can arrive before the next ledger refresh.
+  // This guard runs only after exact managed-thread membership has been confirmed.
+  const isCoordination = (id: string) => internal.has(id) || id.startsWith("team-");
   const publicTurns = new Set(
     entries.flatMap((entry) =>
       entry.kind === "message" &&
       entry.message.role === "user" &&
-      !internal.has(entry.message.id) &&
+      !isCoordination(entry.message.id) &&
       entry.message.turnId
         ? [entry.message.turnId]
         : [],
@@ -19,7 +22,7 @@ export function teamFollowUpEntries(
   );
   return entries.filter((entry) => {
     if (entry.kind === "message" && entry.message.role === "user")
-      return !internal.has(entry.message.id);
+      return !isCoordination(entry.message.id);
     const turnId =
       entry.kind === "message"
         ? entry.message.turnId
