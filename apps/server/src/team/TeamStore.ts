@@ -269,11 +269,6 @@ export const make = Effect.gen(function* () {
               code: "conflict",
               message: "Run cannot admit this turn.",
             });
-          if (current.execution.turns.length >= current.execution.maxTurns)
-            return yield* new TeamError({
-              code: "conflict",
-              message: "Team turn budget exhausted.",
-            });
           const budget = current.policy.estimatedBudgetUsd;
           if (budget !== undefined && budget !== null) {
             const estimates = [...current.execution.turns, turn].map((t) => t.estimatedAttemptUsd);

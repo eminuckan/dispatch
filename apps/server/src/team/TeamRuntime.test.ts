@@ -69,7 +69,7 @@ const initial: TeamRun = {
     workspaceRoot: "/repo",
     baseCommit: "abc",
     leadThreadId: ThreadId.make("team-abc-lead"),
-    maxTurns: 10,
+    maxTurns: 1,
     turns: [],
     phase: "plan",
     notice: null,
@@ -244,7 +244,10 @@ it.effect(
       expect(f.commands).toHaveLength(1);
       const plan = f.commands[0]!;
       if (plan.type !== "thread.turn.start") throw new Error("Expected plan dispatch");
-      f.complete(plan, '{"tasks":[],"rationale":"Lead-only bounded work"}');
+      f.complete(
+        plan,
+        '{"acceptance":["Combined result"],"tasks":[],"rationale":"Lead-only bounded work"}',
+      );
       yield* runtime.tick();
       expect(f.commands).toHaveLength(2);
       const run = yield* store.get(initial.id);
@@ -294,7 +297,7 @@ it.effect(
       yield* runtime.tick();
       finish(
         0,
-        '{"tasks":[{"id":"edit","objective":"Edit label","acceptance":["Exact label check"],"dependencies":[],"profileId":"p","context":"contract"}],"rationale":"bounded worker"}',
+        '{"acceptance":["Combined result"],"tasks":[{"id":"edit","objective":"Edit label","acceptance":["Exact label check"],"dependencies":[],"profileId":"p","context":"contract"}],"rationale":"bounded worker"}',
       );
       yield* runtime.tick();
       finish(1, "Worker complete; commit abc.");
@@ -362,8 +365,8 @@ it.effect("retains an uncertain dispatch reservation and interrupts it on cancel
   }).pipe(Effect.provide(SqlitePersistenceMemory));
 });
 
-it.effect("admits Claude by driver kind even when the instance has a custom name", () => {
-  const f = fixture(false, "claudeAgent");
+it.effect("admits ready providers through the common adapter contract", () => {
+  const f = fixture(false, "opencode");
   return Effect.gen(function* () {
     const store = yield* Store.make;
     yield* store.create(initial);
@@ -373,5 +376,70 @@ it.effect("admits Claude by driver kind even when the instance has a custom name
     );
     yield* runtime.tick();
     expect((yield* store.get(initial.id)).execution?.turns[0]?.status).toBe("dispatched");
+  }).pipe(Effect.provide(SqlitePersistenceMemory));
+});
+
+it.effect(
+  "rejects incomplete combined acceptance, allows one correction, and never loops on resume",
+  () => {
+    const f = fixture();
+    return Effect.gen(function* () {
+      const store = yield* Store.make;
+      yield* store.create(initial);
+      const runtime = yield* make.pipe(
+        Effect.provideService(Store.TeamStore, store),
+        Effect.provide(f.layers),
+      );
+      const finish = (index: number, text: string) => {
+        const command = f.commands[index]!;
+        if (command.type !== "thread.turn.start") throw new Error("Expected turn");
+        f.complete(command, text);
+      };
+      yield* runtime.tick();
+      finish(
+        0,
+        '{"acceptance":["Behavior works","Constraints preserved"],"tasks":[],"rationale":"Lead alone"}',
+      );
+      yield* runtime.tick();
+      finish(
+        1,
+        '{"action":"accept","summary":"Only one criterion checked","checks":[{"criterionIndex":0,"criterion":"Behavior works","command":"python3","args":[]}]}',
+      );
+      yield* runtime.tick();
+      let run = yield* store.get(initial.id);
+      expect(run.status).not.toBe("completed");
+      expect(f.checks).toEqual([]);
+      expect(f.commands).toHaveLength(3);
+      expect(run.decisions.join(" ")).toContain("Constraints preserved");
+      finish(2, '{"action":"correct","summary":"Missing external input","checks":[]}');
+      yield* runtime.tick();
+      run = yield* store.get(initial.id);
+      expect(run.status).toBe("paused");
+      expect(run.execution?.notice).toContain("automatic retries stopped");
+      yield* runtime.control({ id: run.id, revision: run.revision, action: "resume" });
+      yield* runtime.tick();
+      yield* runtime.tick();
+      expect(f.commands).toHaveLength(3);
+      expect((yield* store.get(initial.id)).status).toBe("paused");
+    }).pipe(Effect.provide(SqlitePersistenceMemory));
+  },
+);
+
+it.effect("does not admit workers when the plan omits whole-objective acceptance", () => {
+  const f = fixture();
+  return Effect.gen(function* () {
+    const store = yield* Store.make;
+    yield* store.create(initial);
+    const runtime = yield* make.pipe(
+      Effect.provideService(Store.TeamStore, store),
+      Effect.provide(f.layers),
+    );
+    yield* runtime.tick();
+    const command = f.commands[0]!;
+    if (command.type !== "thread.turn.start") throw new Error("Expected turn");
+    f.complete(command, '{"tasks":[],"rationale":"No criteria"}');
+    yield* runtime.tick();
+    expect((yield* store.get(initial.id)).status).toBe("paused");
+    expect(f.commands).toHaveLength(1);
   }).pipe(Effect.provide(SqlitePersistenceMemory));
 });

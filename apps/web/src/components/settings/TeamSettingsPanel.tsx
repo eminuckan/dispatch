@@ -21,11 +21,7 @@ import { Switch } from "../ui/switch";
 import { Select, SelectTrigger, SelectValue, SelectPopup, SelectItem } from "../ui/select";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { SettingsPageContainer, SettingsSection, SettingsRow } from "./settingsLayout";
-import {
-  suggestRoutingTier,
-  routingTierLabels,
-  subscriptionRoutingPolicy,
-} from "./teamProfileDefaults";
+import { routingTierLabels, subscriptionRoutingPolicy } from "./teamProfileDefaults";
 
 function ProfileOptions({
   initiallyOpen,
@@ -140,6 +136,32 @@ function TeamSettingsForm({
   const [pending, setPending] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const save = useAtomCommand(teamEnvironment.saveSettings, { reportFailure: false });
+  const suggest = useAtomCommand(teamEnvironment.suggestPool, { reportFailure: false });
+  const [poolNote, setPoolNote] = useState<string | null>(null);
+  async function createPool() {
+    if (pending) return;
+    setPending(true);
+    const result = await suggest({ environmentId, input: {} });
+    setPending(false);
+    if (result._tag === "Failure") {
+      const error = squashAtomCommandFailure(result);
+      setPoolNote(error instanceof Error ? error.message : "Could not create a suggested pool.");
+      return;
+    }
+    if (result.value.profiles.length)
+      setPolicy((p) => ({
+        ...p,
+        profiles: result.value.profiles,
+        preferredCapableProfileId: result.value.profiles.some(
+          (profile) => profile.id === p.preferredCapableProfileId,
+        )
+          ? p.preferredCapableProfileId
+          : null,
+      }));
+    setPoolNote(
+      `${result.value.source === "jev" ? "Jev-assisted" : "Provider inventory"} starting pool. ${result.value.notes.join(" ")}`,
+    );
+  }
   const secret = useAtomCommand(teamEnvironment.setSecret, { reportFailure: false });
   const available = providers.filter((p) => p.enabled && p.availability !== "unavailable");
   const first = available.find((p) => p.models.length > 0);
@@ -156,7 +178,9 @@ function TeamSettingsForm({
           ? null
           : p.preferredCapableProfileId,
       profiles: p.profiles.map((profile) =>
-        profile.id === id ? { ...profile, ...update } : profile,
+        profile.id === id
+          ? { ...profile, ...update, ...(update.tier ? { reviewRequired: false } : {}) }
+          : profile,
       ),
     }));
   }
@@ -208,9 +232,10 @@ function TeamSettingsForm({
           id: randomUUID(),
           label: `${provider.displayName ?? provider.instanceId} · ${model.name}`,
           selection: { instanceId: provider.instanceId, model: model.slug },
-          tier: suggestRoutingTier(model.slug) ?? "balanced",
-          lead: true,
-          worker: true,
+          tier: "capable",
+          reviewRequired: true,
+          lead: false,
+          worker: false,
           estimatedAttemptUsd: null,
         },
       ],
@@ -285,27 +310,9 @@ function TeamSettingsForm({
           )}
         </SettingsRow>
         <SettingsRow
-          title="Routing mode"
-          description="Preview suggests a model. Auto selects the lead for new conversations."
-          control={
-            <Choice
-              label="Routing mode"
-              value={policy.mode}
-              disabled={pending}
-              options={[
-                { value: "off", label: "Manual" },
-                { value: "shadow", label: "Preview", disabled: !initial.jevConfigured },
-                { value: "auto", label: "Auto", disabled: !initial.jevConfigured },
-              ]}
-              onChange={(mode) => setPolicy((p) => ({ ...p, mode: mode as TeamPolicy["mode"] }))}
-            />
-          }
-        >
-          <p className="text-xs text-muted-foreground">
-            When enabled, draft text is sent to TypeSafe after you pause typing. Active lead and
-            worker models stay fixed.
-          </p>
-        </SettingsRow>
+          title="Composer control"
+          description="Turn Orchestration on for a new task to select its lead and workers automatically. With it off, your selected model handles normal messages."
+        />
       </SettingsSection>
       <SettingsSection
         id="routing-models"
@@ -327,6 +334,26 @@ function TeamSettingsForm({
           )
         }
       >
+        <SettingsRow
+          title="Suggested starting pool"
+          description="Collect models from all ready providers and reported quota. Existing approved profiles are reused; new models require task-group and role review."
+          control={
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={pending}
+              onClick={() => void createPool()}
+            >
+              {pending ? "Working…" : "Build model pool"}
+            </Button>
+          }
+        >
+          {poolNote && (
+            <p className="text-xs text-muted-foreground" role="status">
+              {poolNote}
+            </p>
+          )}
+        </SettingsRow>
         {policy.profiles.length === 0 && (
           <SettingsRow
             title="Choose the models you want Jev to use"
@@ -343,12 +370,11 @@ function TeamSettingsForm({
           const effort = profile.selection.options?.find((o) =>
             ["reasoningEffort", "effort"].includes(o.id),
           )?.value;
-          const suggestion = suggestRoutingTier(profile.selection.model);
           return (
             <SettingsRow
               key={profile.id}
               title={model?.name ?? profile.selection.model}
-              description={`${provider?.displayName ?? profile.selection.instanceId} · ${routingTierLabels[profile.tier]} · ${typeof effort === "string" ? effort : "Provider default effort"}`}
+              description={`${provider?.displayName ?? profile.selection.instanceId} · ${profile.reviewRequired ? "Needs review · inactive" : routingTierLabels[profile.tier]} · ${typeof effort === "string" ? effort : "Provider default effort"}`}
               control={
                 <Button
                   size="icon-sm"
@@ -384,11 +410,14 @@ function TeamSettingsForm({
                     <span>Task group</span>
                     <Choice
                       label={`Task group for ${profile.label}`}
-                      value={profile.tier}
-                      options={Object.entries(routingTierLabels).map(([value, label]) => ({
-                        value,
-                        label,
-                      }))}
+                      value={profile.reviewRequired ? "unreviewed" : profile.tier}
+                      options={[
+                        { value: "unreviewed", label: "Choose task group", disabled: true },
+                        ...Object.entries(routingTierLabels).map(([value, label]) => ({
+                          value,
+                          label,
+                        })),
+                      ]}
                       onChange={(tier) =>
                         updateProfile(profile.id, { tier: tier as TeamModelProfile["tier"] })
                       }
@@ -396,9 +425,8 @@ function TeamSettingsForm({
                     />
                   </div>
                   <p>
-                    {suggestion
-                      ? `Suggested starting group: ${routingTierLabels[suggestion]}. This is a model-family hint, not a measured ability or quota score.`
-                      : "No preset for this model. Review its task group before enabling Auto."}
+                    Choose this from your evaluation or explicit preference. Model names and Jev
+                    confidence are not capability measurements.
                   </p>
                   {(model?.capabilities?.optionDescriptors ?? []).map((option) => {
                     const value = profile.selection.options?.find((o) => o.id === option.id)?.value;
@@ -525,7 +553,7 @@ function TeamSettingsForm({
         />
         <SettingsRow
           title="Attempts per worker"
-          description="Includes the first attempt and any corrections. Each team also has a turn limit."
+          description="Includes the first attempt and corrections for one work item. Repeated failures pause the team for review."
           control={
             <Choice
               label="Attempts per worker"
@@ -539,7 +567,7 @@ function TeamSettingsForm({
       </SettingsSection>
       <div className="flex flex-wrap items-center gap-3 px-3 sm:px-4">
         <Button size="sm" disabled={pending || !dirty} onClick={() => void persist("policy")}>
-          {pending ? "Saving…" : "Save changes"}
+          {pending ? "Working…" : "Save changes"}
         </Button>
         {dirty && (
           <Button

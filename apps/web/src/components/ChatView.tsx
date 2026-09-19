@@ -1,4 +1,3 @@
-import { teamEnvironment } from "../state/team";
 import { useLoadBalancedEnvironment } from "../hooks/useLoadBalancedEnvironment";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 import type { UsageLimitSourceSnapshots } from "@t3tools/contracts";
@@ -1498,8 +1497,6 @@ export default function ChatView(props: ChatViewProps) {
   const openTerminal = useAtomCommand(terminalEnvironment.open, "terminal open");
   const writeTerminal = useAtomCommand(terminalEnvironment.write, "terminal write");
   const closeTerminalMutation = useAtomCommand(terminalEnvironment.close, "terminal close");
-  const resolveTeamLead = useAtomCommand(teamEnvironment.resolve, { reportFailure: false });
-  const routingInFlight = useRef(false);
   const createThread = useAtomCommand(threadEnvironment.create, { reportFailure: false });
   const deleteThread = useAtomCommand(threadEnvironment.delete, { reportFailure: false });
   const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
@@ -7365,81 +7362,6 @@ export default function ChatView(props: ChatViewProps) {
     if (!sendCtx?.providerAvailable) {
       notifyDirectAnnotationAttached();
       return;
-    }
-    if (routingInFlight.current) return;
-    if (
-      isLocalDraftThread &&
-      !queuedMessage &&
-      !directAnnotation &&
-      sendCtx.multipleModelSelections === null &&
-      serverConfig?.teamRouting === true &&
-      !sendCtx.prompt.trimStart().startsWith("/")
-    ) {
-      const snapshot = sendCtx.prompt;
-      routingInFlight.current = true;
-      try {
-        const routed = await resolveTeamLead({
-          environmentId,
-          input: {
-            prompt: snapshot,
-            hasAttachments:
-              sendCtx.images.length +
-                sendCtx.files.length +
-                sendCtx.terminalContexts.length +
-                sendCtx.previewAnnotations.length +
-                sendCtx.reviewComments.length >
-              0,
-          },
-        });
-        if (routed._tag === "Failure") {
-          const error = squashAtomCommandFailure(routed);
-          setThreadError(
-            activeThread.id,
-            error instanceof Error ? error.message : "Routing failed. Check Jev settings.",
-          );
-          return;
-        }
-        // Never clear or send edits made while the final routing request was in flight.
-        const currentComposer = composerRef.current?.getSendContext();
-        if (
-          !currentComposer ||
-          promptRef.current !== snapshot ||
-          currentComposer.images !== sendCtx.images ||
-          currentComposer.files !== sendCtx.files ||
-          currentComposer.terminalContexts !== sendCtx.terminalContexts ||
-          currentComposer.reviewComments !== sendCtx.reviewComments ||
-          currentComposer.previewAnnotations !== sendCtx.previewAnnotations
-        )
-          return;
-        if (routed.value) {
-          const provider = providerInstanceEntries.find(
-            (entry) => entry.instanceId === routed.value?.instanceId,
-          );
-          if (!provider?.enabled || !provider.isAvailable || provider.status !== "ready") {
-            setThreadError(activeThread.id, "The routed provider is unavailable.");
-            return;
-          }
-          const providerState = getComposerProviderState({
-            provider: provider.driverKind,
-            model: routed.value.model,
-            models: provider.models,
-            modelOptions: routed.value.options,
-            promptInjectionState: getComposerPromptInjectionState(snapshot),
-            planModeEnabled: settings.planModeEnabled,
-          });
-          sendCtx.selectedModelSelection = createModelSelection(
-            routed.value.instanceId,
-            routed.value.model,
-            providerState.modelOptionsForDispatch,
-          );
-          sendCtx.selectedProvider = provider.driverKind;
-          sendCtx.selectedModel = routed.value.model;
-          sendCtx.selectedProviderModels = provider.models;
-          sendCtx.selectedPromptEffort = providerState.promptEffort;
-        }
-      } finally {
-        routingInFlight.current = false;
-      }
     }
     const multipleModelSelections = queuedMessage ? null : sendCtx.multipleModelSelections;
     if (

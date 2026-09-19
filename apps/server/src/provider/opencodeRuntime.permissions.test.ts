@@ -87,3 +87,15 @@ describe("toOpenCodePermissionReply", () => {
     NodeAssert.equal(toOpenCodePermissionReply(decision), reply);
   });
 });
+
+it("denies native task delegation in managed teams after the full-access wildcard", () => {
+  NodeAssert.deepEqual(buildOpenCodePermissionRules("full-access", true).at(-1), {
+    permission: "task",
+    pattern: "*",
+    action: "deny",
+  });
+  NodeAssert.equal(
+    buildOpenCodePermissionRules("full-access").some((rule) => rule.action === "deny"),
+    false,
+  );
+});

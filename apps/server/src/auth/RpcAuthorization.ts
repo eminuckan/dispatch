@@ -28,6 +28,7 @@ export const RPC_REQUIRED_SCOPES = {
   "team.list": AuthOrchestrationReadScope,
   "team.recover": AuthOrchestrationOperateScope,
   "team.resolve": AuthOrchestrationOperateScope,
+  "team.suggestPool": AuthOrchestrationOperateScope,
   "team.settings": AuthOrchestrationReadScope,
   "team.saveSettings": AuthOrchestrationOperateScope,
   "team.setSecret": AuthOrchestrationOperateScope,

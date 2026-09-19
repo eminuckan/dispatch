@@ -2222,3 +2222,36 @@ code {
 .composer-tiptap li[data-checked] > div > p {
   margin: 0;
 }
+
+/* Static border mask; only the small gradient layer moves on the compositor. */
+.orchestration-composer-border {
+  position: absolute;
+  inset: -1px;
+  z-index: 2;
+  overflow: hidden;
+  border-radius: inherit;
+  padding: 1.5px;
+  pointer-events: none;
+  mask:
+    linear-gradient(#fff 0 0) content-box,
+    linear-gradient(#fff 0 0);
+  mask-composite: exclude;
+}
+.orchestration-composer-border > span {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 200%;
+  background: linear-gradient(100deg, #53d8df, #7795ff, #ca87fa, #f7a0c3, #f4cf83, #53d8df);
+  background-size: 50% 100%;
+  animation: orchestration-border-shine 8s linear infinite;
+}
+@keyframes orchestration-border-shine {
+  to {
+    transform: translateX(-50%);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .orchestration-composer-border > span {
+    animation: none;
+  }
+}

@@ -11,6 +11,7 @@ export const TeamModelProfile = Schema.Struct({
   label: TrimmedNonEmptyString.check(Schema.isMaxLength(100)),
   selection: ModelSelection,
   tier: TeamTier,
+  reviewRequired: Schema.optional(Schema.Boolean),
   lead: Schema.Boolean,
   worker: Schema.Boolean,
   // A user estimate is never an actual provider bill or subscription price.
@@ -120,8 +121,12 @@ export const TeamExecution = Schema.Struct({
   workspaceRoot: Schema.String,
   baseCommit: Schema.String,
   leadThreadId: ThreadId,
-  maxTurns: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 100 })),
-  turns: Schema.Array(TeamExecutionTurn).check(Schema.isMaxLength(100)),
+  // Legacy clients may send this field; execution no longer uses a turn ceiling.
+  maxTurns: Schema.optional(Schema.Int),
+  turns: Schema.Array(TeamExecutionTurn),
+  acceptance: Schema.optional(
+    Schema.Array(TrimmedNonEmptyString).check(Schema.isMinLength(1), Schema.isMaxLength(20)),
+  ),
   phase: Schema.Literals(["plan", "workers", "integrate", "done"]),
   notice: Schema.NullOr(Schema.String),
 });
@@ -154,14 +159,15 @@ export const TeamStart = Schema.Struct({
   projectId: ProjectId,
   draft: TeamDraft,
   fingerprint: Id,
-  maxTurns: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 100 })),
+  // Legacy clients may send this field; execution no longer uses a turn ceiling.
+  maxTurns: Schema.optional(Schema.Int),
 });
 export type TeamStart = typeof TeamStart.Type;
 export const TeamRunId = Schema.Struct({ id: Id });
 export const TeamControl = Schema.Struct({
   id: Id,
   revision: Count,
-  action: Schema.Literals(["pause", "resume", "cancel", "extend_budget"]),
+  action: Schema.Literals(["pause", "resume", "cancel"]),
   maxTurns: Schema.optional(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 100 }))),
 });
 
@@ -211,7 +217,7 @@ export const TeamThreadView = Schema.Struct({
   leadThreadId: ThreadId,
   phase: TeamExecution.fields.phase,
   notice: Schema.NullOr(Schema.String),
-  maxTurns: Schema.Int,
+  maxTurns: Schema.optional(Schema.Int),
   tasks: Schema.Array(
     Schema.Struct({
       id: TeamTask.fields.id,
@@ -240,3 +246,9 @@ export const TeamThreadView = Schema.Struct({
   ),
 });
 export type TeamThreadView = typeof TeamThreadView.Type;
+
+export const TeamPoolSuggestion = Schema.Struct({
+  profiles: Schema.Array(TeamModelProfile),
+  notes: Schema.Array(Schema.String),
+  source: Schema.Literals(["jev", "catalog"]),
+});

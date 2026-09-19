@@ -1,16 +1,8 @@
 import { describe, expect, it } from "vite-plus/test";
-import { suggestRoutingTier, subscriptionRoutingPolicy } from "./teamProfileDefaults";
+import { subscriptionRoutingPolicy } from "./teamProfileDefaults";
 import { ProviderInstanceId, type TeamPolicy } from "@t3tools/contracts";
 
 describe("routing profile defaults", () => {
-  it("suggests known model families without ranking their reasoning effort", () => {
-    expect(suggestRoutingTier("gpt-6-astra")).toBe("capable");
-    expect(suggestRoutingTier("gpt-5.6-luna")).toBe("economy");
-    expect(suggestRoutingTier("gpt-5.6-terra")).toBe("balanced");
-    expect(suggestRoutingTier("anthropic/claude-sonnet-4-6")).toBe("balanced");
-    expect(suggestRoutingTier("custom-gpt-6-astra")).toBeNull();
-    expect(suggestRoutingTier("unfamiliar-model")).toBeNull();
-  });
   it("clears legacy estimates without changing routing permissions or mutating a running snapshot", () => {
     const policy = {
       mode: "shadow",

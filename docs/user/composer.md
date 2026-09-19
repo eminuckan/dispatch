@@ -72,23 +72,36 @@ Leaving reasoning level or service tier unset uses the provider's own configurat
 On this fork's web and desktop clients, configure Jev in Settings → Orchestration.
 Add your own Jev API key and explicitly choose the allowed model profiles and
 reasoning options. Models in the ordinary picker are not automatically eligible.
-Known model families receive an editable starting task group, not a benchmark score.
-Use Customize to change a model’s group, effort or lead/worker permissions.
+**Build model pool** collects models from every ready configured provider and reuses
+explicitly approved profiles. New models are inactive until you choose their task
+group and agent roles; no capability or price ranking is inferred from model names.
+Jev may select between approved profiles using the supplied groups and quota, but
+its confidence is not a measurement of model ability. Terra is excluded from generated
+presets by product preference and remains available for manual configuration.
+Reported exhausted quota is excluded at recommendation and admission time, including
+family-specific Claude windows. Unknown quota is labeled, not treated as verified
+spare quota. Save to apply. This is not a benchmark-proven optimum or a hard
+subscription quota guarantee. Use Customize to review effort and lead/worker roles.
 Choose a lead for complex or uncertain tasks; an absent model cannot be
 recommended. Enabling routing sends draft text to TypeSafe after a typing pause.
 The key is saved in the environment's private secret store.
 
-Shadow mode shows recommendations while preserving your selection. Automatic
-mode resolves the lead model again when sending a new text-only draft. Neither
-mode changes an existing lead or worker's model halfway through its conversation.
+The composer’s Orchestration switch controls draft assessment and team launch.
+Selecting a model manually turns it off for that draft. Existing lead and worker
+models remain fixed throughout their conversations.
 Confidence describes classification certainty, not the chance that the code is correct.
 
-Use **Team → Start team** for a managed coding run. Teams currently support
-Codex and Claude, use isolated worktrees from committed HEAD, and preserve the
+Enable **Orchestration** in a new composer, then use the normal send button or
+Enter to start a managed coding run. With the switch off, draft classification,
+automatic model selection, and team creation are disabled for that draft; normal
+send uses your selected model. Teams currently support
+ready configured provider adapters, use isolated worktrees from committed HEAD, and preserve the
 original checkout. Uncommitted changes and attachments are not included. The lead
 plans work, workers receive persistent task contracts, and the lead reviews their
 results before integrating and verifying the combined change. Native subagent
-tools are disabled for these managed sessions.
+tools are disabled in managed Codex, Claude, and OpenCode sessions. Other adapters
+receive the same no-delegation instruction, but do not yet enforce a native-tool
+block; the active-agent limit counts scheduler-managed agents.
 
 Only the lead appears in the sidebar; worker conversations remain accessible from
 the team. Open **Agents** in the right panel to see the team hierarchy, assignments, model
@@ -99,15 +112,18 @@ reloads; replacement workers receive separate names. Active teams refresh
 automatically. Internal coordination messages stay out of chat; messages you send
 yourself remain in Conversation.
 
-The active-agent limit includes the lead. The turn limit includes planning,
-worker attempts, review, repairs and integration. Orchestration settings use agent
+The active-agent limit includes the lead. Teams finish when all planned acceptance
+criteria pass independent checks in the combined lead worktree; there is no total
+turn limit. Repeated corrections or unchanged failed results pause work instead
+of starting an automatic retry loop. Failed combined checks receive one focused
+correction before pausing with saved evidence. Orchestration settings use agent
 and attempt limits, without dollar estimates. They do not measure or enforce your
 remaining subscription quota. Saving removes legacy estimated-dollar limits for
 new teams; existing runs keep their frozen policy.
-**Pause admission** lets current work settle while preventing new turns;
-**Cancel team** requests interruption. An uncertain dispatch keeps its reservation
-until reconciled. Refresh the team panel to see its current state, open its lead
-or workers, resume paused work, or explicitly add turns. Completion does not push
+The **Agents** panel’s **Pause** control lets current work settle while preventing new turns;
+**Cancel** requests interruption. An uncertain dispatch keeps its reservation
+until reconciled. Use the Agents panel to see the current state, open its lead
+or workers, and inspect a blocker before resuming. Completion does not push
 or merge the lead worktree into the original checkout.
 
 A review formatting failure is repaired by the lead without consuming another
@@ -281,5 +297,3 @@ automatically. HTML previews cannot access your T3 Code session.
 
 On mobile, select a PDF attachment or link to open it. iOS uses the native viewer;
 Android opens a compatible installed file viewer.
-
-Jev routing lives in the model picker. Choose Manual, Preview, or Auto there; decision details stay collapsed until needed. Selecting a model while Auto is enabled returns to Preview, so Send uses the model you selected. The Team control beside the attachment/send actions opens team launch and run controls.

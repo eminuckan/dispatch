@@ -1,3 +1,4 @@
+import { isManagedTeamThread } from "../../team/nativeDelegation.ts";
 import {
   EventId,
   type OpenCodeSettings,
@@ -2913,7 +2914,10 @@ export function makeOpenCodeAdapter(
                   yield* runOpenCodeSdk("session.update", () =>
                     client.session.update({
                       sessionID: reusable.id,
-                      permission: buildOpenCodePermissionRules(input.runtimeMode),
+                      permission: buildOpenCodePermissionRules(
+                        input.runtimeMode,
+                        isManagedTeamThread(input.threadId),
+                      ),
                     }),
                   );
                   return { openCodeSession: reusable, created: false };
@@ -2940,7 +2944,10 @@ export function makeOpenCodeAdapter(
                   yield* runOpenCodeSdk("session.update", () =>
                     client.session.update({
                       sessionID: forked.id,
-                      permission: buildOpenCodePermissionRules(input.runtimeMode),
+                      permission: buildOpenCodePermissionRules(
+                        input.runtimeMode,
+                        isManagedTeamThread(input.threadId),
+                      ),
                     }),
                   );
                   return { openCodeSession: forked, created: true };
@@ -2954,7 +2961,10 @@ export function makeOpenCodeAdapter(
                 const createdSession = yield* runOpenCodeSdk("session.create", () =>
                   client.session.create({
                     ...(input.title ? { title: input.title } : {}),
-                    permission: buildOpenCodePermissionRules(input.runtimeMode),
+                    permission: buildOpenCodePermissionRules(
+                      input.runtimeMode,
+                      isManagedTeamThread(input.threadId),
+                    ),
                   }),
                 );
                 if (!createdSession.data) {
@@ -3967,7 +3977,10 @@ export function makeOpenCodeAdapter(
           yield* runOpenCodeSdk("session.update", () =>
             context.client.session.update({
               sessionID: forkedSessionId,
-              permission: buildOpenCodePermissionRules(context.session.runtimeMode),
+              permission: buildOpenCodePermissionRules(
+                context.session.runtimeMode,
+                isManagedTeamThread(context.session.threadId),
+              ),
             }),
           ).pipe(Effect.mapError(toRequestError));
           yield* clearPendingOpenCodeRequests(context, { type: "session.fork" });

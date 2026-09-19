@@ -1846,6 +1846,7 @@ const makeWsRpcLayer = (
         "team.list": () => teamRuntime.list,
         "team.recover": (input) => teamRouter.recover(input),
         "team.resolve": (input) => teamRouter.resolve(input),
+        "team.suggestPool": () => teamRouter.suggestPool(),
         "team.settings": () => teamRouter.settings,
         "team.saveSettings": ({ policy }) => teamRouter.saveSettings(policy),
         "team.setSecret": ({ apiKey }) => teamRouter.setSecret(apiKey),

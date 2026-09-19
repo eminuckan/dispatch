@@ -136,7 +136,7 @@ const leadTurn = (r: TeamRun, id: string): TeamExecutionTurn => ({
     createdAt: "2026-09-19T00:00:00.000Z",
   },
 });
-it.effect("counts leads in global admission and enforces the durable total-turn budget", () =>
+it.effect("counts leads in global admission without enforcing legacy turn ceilings", () =>
   Effect.gen(function* () {
     const store = yield* make;
     for (let i = 0; i < 5; i++) {
@@ -163,11 +163,24 @@ it.effect("counts leads in global admission and enforces the durable total-turn 
       }),
       "test-settled",
     );
-    expect(
-      (yield* store
-        .reserveTurn(settled.id, settled.revision, leadTurn(settled, "over-budget"))
-        .pipe(Effect.flip)).message,
-    ).toBe("Team turn budget exhausted.");
+    const continued = yield* store.reserveTurn(
+      settled.id,
+      settled.revision,
+      leadTurn(settled, "beyond-legacy-limit"),
+    );
+    expect(continued.execution?.turns).toHaveLength(2);
+    yield* store.update(
+      continued.id,
+      continued.revision,
+      (r) => ({
+        ...r,
+        execution: {
+          ...r.execution!,
+          turns: r.execution!.turns.map((t) => ({ ...t, status: "settled" })),
+        },
+      }),
+      "release-slot",
+    );
     yield* store.reserveTurn(sixth.id, 0, leadTurn(sixth, "sixth-turn"));
   }).pipe(Effect.provide(SqlitePersistenceMemory)),
 );

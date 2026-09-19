@@ -109,14 +109,21 @@ export function validatePool(policy: TeamPolicy, providers: ReadonlyArray<Server
   if (
     policy.preferredCapableProfileId &&
     !policy.profiles.some(
-      (p) => p.id === policy.preferredCapableProfileId && p.lead && p.tier === "capable",
+      (p) =>
+        p.id === policy.preferredCapableProfileId &&
+        p.lead &&
+        !p.reviewRequired &&
+        p.tier === "capable",
     )
   )
     throw new TeamError({
       code: "invalid",
       message: "The preferred capable lead must be an allowed capable lead profile.",
     });
-  if (policy.mode !== "off" && !policy.profiles.some((p) => p.lead && p.tier === "capable")) {
+  if (
+    policy.mode !== "off" &&
+    !policy.profiles.some((p) => p.lead && !p.reviewRequired && p.tier === "capable")
+  ) {
     throw new TeamError({
       code: "invalid",
       message: "Routing requires a capable lead profile for uncertain tasks.",
@@ -138,6 +145,7 @@ export function fingerprintDraft(
       status: p.status,
       auth: p.auth.status,
       availability: p.availability,
+      usageLimits: p.usageLimits,
       models: p.models,
     }))
     .sort((a, b) => a.instanceId.localeCompare(b.instanceId));
@@ -166,6 +174,7 @@ export function chooseProfile(
 ) {
   const eligible = policy.profiles.filter(
     (p) =>
+      p.reviewRequired !== true &&
       p[role] &&
       tierRank[p.tier] >= tierRank[tier] &&
       (!deliberateReasoning ||

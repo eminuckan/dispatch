@@ -1,3 +1,4 @@
+import { useComposerRouting } from "./TeamRoutingPreview";
 import { memo, type PointerEventHandler } from "react";
 import { ChevronDownIcon, ChevronLeftIcon } from "lucide-react";
 import { useEnvironmentIdentificationMode } from "~/hooks/useSettings";
@@ -73,6 +74,9 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   onInterrupt,
   onImplementPlanInNewThread,
 }: ComposerPrimaryActionsProps) {
+  const routing = useComposerRouting();
+  const orchestration = routing?.orchestration === true;
+  const routingBlocked = orchestration ? routing?.blocked : null;
   const pointerFocusProps = preserveComposerFocusOnPointerDown
     ? { onPointerDown: preventPointerFocus }
     : undefined;
@@ -230,8 +234,10 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
         isSendDisabled ||
         isConnecting ||
         isEnvironmentUnavailable ||
-        !hasSendableContent
+        !hasSendableContent ||
+        Boolean(routingBlocked)
       }
+
       aria-label={
         isEnvironmentUnavailable
           ? "Environment disconnected"
@@ -245,7 +251,9 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
                   ? "Sending"
                   : isRunning
                     ? "Queue message"
-                    : "Send message"
+                    : orchestration
+                      ? (routingBlocked ?? "Start orchestrated task")
+                      : "Send message"
       }
     >
       {stageBackdropVariant ? (

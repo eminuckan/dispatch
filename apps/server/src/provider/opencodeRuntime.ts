@@ -505,7 +505,15 @@ export function toOpenCodeFileParts(input: {
   return parts;
 }
 
-export function buildOpenCodePermissionRules(runtimeMode: RuntimeMode): PermissionRuleset {
+export function buildOpenCodePermissionRules(
+  runtimeMode: RuntimeMode,
+  managedTeam = false,
+): PermissionRuleset {
+  if (managedTeam)
+    return [
+      ...buildOpenCodePermissionRules(runtimeMode),
+      { permission: "task", pattern: "*", action: "deny" },
+    ];
   if (runtimeMode === "full-access") {
     return [
       { permission: "*", pattern: "*", action: "allow" },

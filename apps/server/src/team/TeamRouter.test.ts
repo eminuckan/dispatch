@@ -56,6 +56,7 @@ const draft = {
 const fixture = (response?: unknown) => {
   let key: Uint8Array | undefined;
   let calls = 0;
+  let currentProviders: ReadonlyArray<ServerProvider> = [provider];
   const http = HttpClient.make((request) =>
     Effect.sync(() => {
       calls++;
@@ -69,6 +70,9 @@ const fixture = (response?: unknown) => {
   );
   return {
     calls: () => calls,
+    setProviders: (value: ReadonlyArray<ServerProvider>) => {
+      currentProviders = value;
+    },
     layer: Layer.mergeAll(
       TeamStore.layer.pipe(Layer.provide(SqlitePersistenceMemory)),
       Layer.mock(ServerSecretStore)({
@@ -82,7 +86,10 @@ const fixture = (response?: unknown) => {
             key = undefined;
           }),
       }),
-      Layer.mock(ProviderRegistry)({ getProviders: Effect.succeed([provider]) }),
+      Layer.mock(ProviderRegistry)({
+        getProviders: Effect.sync(() => currentProviders),
+        refreshInstance: () => Effect.sync(() => currentProviders),
+      }),
       Layer.succeed(HttpClient.HttpClient, http),
     ),
   };
@@ -226,3 +233,53 @@ it.effect("does no inference for disabled routing and rejects stale settings", (
     expect(f.calls()).toBe(0);
   }).pipe(Effect.provide(f.layer));
 });
+
+it.effect(
+  "invalidates a cached lead recommendation when its provider quota becomes exhausted",
+  () => {
+    const f = fixture(successful);
+    return Effect.gen(function* () {
+      const router = yield* make;
+      yield* router.setSecret("fixture-key");
+      const saved = yield* router.saveSettings(policy);
+      const input = { ...draft, policyRevision: saved.policy.revision };
+      expect((yield* router.assess(input)).profileId).toBe("lead");
+      f.setProviders([
+        {
+          ...provider,
+          usageLimits: {
+            checkedAt: "2026-09-19T00:00:00.000Z",
+            windows: [{ id: "weekly", kind: "weekly", label: "Weekly", usedPercent: 100 }],
+          },
+        },
+      ]);
+      expect((yield* router.assess(input)).profileId).toBeNull();
+    }).pipe(Effect.provide(f.layer));
+  },
+);
+
+it.effect(
+  "creates a catalog fallback pool without changing saved settings or inventing models",
+  () => {
+    const f = fixture();
+    f.setProviders([
+      {
+        ...provider,
+        models: ["gpt-5.6-luna", "gpt-6-astra"].map((slug) => ({
+          slug,
+          name: slug,
+          isCustom: false,
+          capabilities: null,
+        })),
+      },
+    ]);
+    return Effect.gen(function* () {
+      const router = yield* make;
+      const suggestion = yield* router.suggestPool();
+      expect(suggestion.profiles.every((p) => p.reviewRequired && !p.lead && !p.worker)).toBe(true);
+      expect(suggestion.source).toBe("catalog");
+      expect((yield* router.settings).policy.profiles).toEqual([]);
+      expect(f.calls()).toBe(0);
+    }).pipe(Effect.provide(f.layer));
+  },
+);

@@ -1,8 +1,10 @@
+import { useAtomCommand } from "../../state/use-atom-command";
+import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { useRightPanelStore } from "../../rightPanelStore";
 import { Link } from "@tanstack/react-router";
 import type { TimelineEntry } from "../../session-logic";
 import { teamFollowUpEntries, teamAgentName, teamTurnLabel } from "./teamConversation.logic";
-import { useEffect, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { ChevronRightIcon, RefreshCwIcon, UsersIcon } from "lucide-react";
 import type { EnvironmentId, TeamThreadView, ThreadId } from "@t3tools/contracts";
 import { teamEnvironment } from "../../state/team";
@@ -101,6 +103,24 @@ function TeamActivity({
   refresh: () => void;
   error: string | null;
 }) {
+  const control = useAtomCommand(teamEnvironment.control, { reportFailure: false });
+  const [controlPending, setControlPending] = useState(false);
+  const [controlError, setControlError] = useState<string | null>(null);
+  async function change(action: "pause" | "resume" | "cancel") {
+    if (controlPending) return;
+    setControlPending(true);
+    setControlError(null);
+    const result = await control({
+      environmentId,
+      input: { id: run.id, revision: run.revision, action },
+    });
+    setControlPending(false);
+    if (result._tag === "Failure") {
+      const error = squashAtomCommandFailure(result);
+      setControlError(error instanceof Error ? error.message : "Could not update orchestration.");
+    }
+    refresh();
+  }
   const leadTurn = run.turns.findLast((turn) => turn.threadId === run.leadThreadId);
   const leadStatus = ["completed", "failed", "cancelled", "paused"].includes(run.status)
     ? run.status
@@ -265,15 +285,38 @@ function TeamActivity({
           </details>
         </div>
       </ScrollArea>
+      {controlError && (
+        <p role="alert" className="px-3 py-1 text-xs text-destructive">
+          {controlError}
+        </p>
+      )}
+      {!["completed", "cancelled", "failed"].includes(run.status) && (
+        <div className="flex items-center gap-1 px-3 py-1">
+          <Button
+            size="xs"
+            variant="ghost"
+            disabled={controlPending}
+            onClick={() => void change(run.status === "paused" ? "resume" : "pause")}
+          >
+            {run.status === "paused" ? "Resume" : "Pause"}
+          </Button>
+          <Button
+            size="xs"
+            variant="ghost"
+            disabled={controlPending}
+            onClick={() => void change("cancel")}
+          >
+            Cancel
+          </Button>
+        </div>
+      )}
       <footer className="flex items-center justify-between px-3 py-2 font-mono text-[.7rem] text-muted-foreground">
         <span>
           {working > 0
             ? `${working} working`
             : `${run.tasks.filter((task) => task.status === "accepted").length} / ${run.tasks.length} tasks accepted`}
         </span>
-        <span>
-          {run.turns.length} / {run.maxTurns} turns
-        </span>
+        <span>{run.turns.length} activity steps</span>
       </footer>
     </div>
   );

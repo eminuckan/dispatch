@@ -1,5 +1,7 @@
 import {
   TeamRoutingProvider,
+  useTeamRoutingState,
+  TeamRoutingStatus,
   TeamRoutingActions,
   TeamManualModelControls,
 } from "./TeamRoutingPreview";
@@ -3752,6 +3754,22 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     showPlanFollowUpPrompt,
   ]);
 
+  const teamRouting = useTeamRoutingState({
+    scopeKey: composerTargetKey(composerDraftTarget),
+    environmentId,
+    projectId: routeKind === "draft" ? props.teamProjectId : null,
+    prompt: routeKind === "draft" ? prompt : "",
+    allowRouting: routeKind === "draft" && multipleModelSelections === null,
+    hasAttachments:
+      composerImages.length +
+        composerFiles.length +
+        composerTerminalContexts.length +
+        composerPreviewAnnotations.length +
+        composerReviewComments.length >
+      0,
+    composing: teamComposing,
+  });
+
   const submitComposer = useCallback(
     (event?: { preventDefault: () => void }, intent: ComposerSubmissionIntent = "foreground") => {
       if (noProviderAvailable || isSendDisabled) {
@@ -3785,6 +3803,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         });
         return;
       }
+      if (teamRouting.orchestration) {
+        event?.preventDefault();
+        if (!isConnecting && !isSendBusy && environmentUnavailable === null)
+          void teamRouting.submit();
+        return;
+      }
       const submission = submitComposerDraft({
         prompt: promptRef.current,
         submissionTarget: activePendingProgress ? "pending-user-input" : "provider-turn",
@@ -3804,6 +3828,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       }
     },
     [
+      teamRouting,
+      isConnecting,
+      isSendBusy,
+      environmentUnavailable,
       activeThreadId,
       activePendingProgress,
       attachmentTargetKey,
@@ -4909,7 +4937,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     hidden: composerControlsHidden || restingHiddenBlockCount > 1,
   });
   const restingBlockDefs = [
-    ...(providerTraitsPicker
+    ...(providerTraitsPicker && !teamRouting.orchestration
       ? [
           {
             id: "traits",
@@ -5057,9 +5085,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           interactionMode={interactionMode}
           runtimeMode={runtimeMode}
           showInteractionModeToggle={planModeUiEnabled}
-          traitsMenuContent={
-            <TeamManualModelControls>{providerTraitsMenuContent}</TeamManualModelControls>
-          }
+          traitsMenuContent={teamRouting.orchestration ? null : providerTraitsMenuContent}
           onToggleInteractionMode={toggleInteractionMode}
           onRuntimeModeChange={handleRuntimeModeChange}
         />
@@ -6051,23 +6077,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // Render
   // ------------------------------------------------------------------
   return (
-    <TeamRoutingProvider
-      environmentId={environmentId}
-      projectId={
-        routeKind === "draft" || activeThreadId?.startsWith("team-") ? props.teamProjectId : null
-      }
-      prompt={routeKind === "draft" ? prompt : ""}
-      allowRouting={routeKind === "draft" && multipleModelSelections === null}
-      hasAttachments={
-        composerImages.length +
-          composerFiles.length +
-          composerTerminalContexts.length +
-          composerPreviewAnnotations.length +
-          composerReviewComments.length >
-        0
-      }
-      composing={teamComposing}
-    >
+    <TeamRoutingProvider state={teamRouting}>
+      <TeamRoutingStatus />
       <form
         ref={composerFormRef}
         onCompositionStartCapture={() => setTeamComposing(true)}
@@ -6334,6 +6345,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             ref={composerMainSurfaceRef}
             className={composerProviderState.composerFrameClassName}
           >
+            {teamRouting.orchestration && (
+              <span className="orchestration-composer-border" aria-hidden="true">
+                <span />
+              </span>
+            )}
             <div
               ref={composerSurfaceRef}
               data-chat-composer-surface="true"

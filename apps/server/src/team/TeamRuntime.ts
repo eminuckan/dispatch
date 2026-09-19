@@ -1,3 +1,4 @@
+import { usableModel } from "./pool.ts";
 import { teamAgentDisplayName } from "@t3tools/shared/teamAgentNames";
 import { teamThreadView } from "./presentation.ts";
 import {
@@ -67,6 +68,11 @@ export const make = Effect.gen(function* () {
   const schedulerLock = yield* Semaphore.make(1);
   const now = DateTime.now.pipe(Effect.map(DateTime.formatIso));
   const checkProfile = Effect.fn("TeamRuntime.checkProfile")(function* (profile: TeamModelProfile) {
+    if (profile.reviewRequired)
+      return yield* new TeamError({
+        code: "invalid",
+        message: "This model profile needs task-group and effort review before dispatch.",
+      });
     const providers = yield* registry.getProviders;
     yield* Effect.try({
       try: () => validatePool({ ...defaultTeamPolicy, profiles: [profile] }, providers),
@@ -75,15 +81,14 @@ export const make = Effect.gen(function* () {
     const provider = providers.find((p) => p.instanceId === profile.selection.instanceId);
     if (
       !provider ||
+      !usableModel(provider, profile.selection.model) ||
       !provider.enabled ||
       provider.status !== "ready" ||
-      provider.auth.status === "unauthenticated" ||
-      !["codex", "claudeAgent"].includes(provider.driver)
+      provider.auth.status === "unauthenticated"
     )
       return yield* new TeamError({
         code: "unavailable",
-        message:
-          "Managed teams currently require a ready Codex or Claude provider with native delegation disabled.",
+        message: "Managed teams require a ready provider without an exhausted quota.",
       });
   });
   const reserve = Effect.fn("TeamRuntime.reserve")(function* (
@@ -171,6 +176,22 @@ export const make = Effect.gen(function* () {
         ["reserved", "dispatching"].includes(turn.status) &&
         !["paused", "cancelled", "failed"].includes(run.status)
       ) {
+        if (turn.status === "reserved") {
+          const selection = turn.command.modelSelection;
+          const currentProviders = yield* registry.getProviders;
+          if (
+            !selection ||
+            !currentProviders.some(
+              (provider) =>
+                provider.instanceId === selection.instanceId &&
+                usableModel(provider, selection.model),
+            )
+          )
+            return yield* pause(
+              run,
+              "The assigned provider is unavailable or its quota is exhausted. The reservation and agent identity are preserved.",
+            );
+        }
         const bootstrap = turn.command.bootstrap;
         if (bootstrap?.createThread && bootstrap.prepareWorktree) {
           const existing = yield* projection
@@ -336,7 +357,7 @@ export const make = Effect.gen(function* () {
           run,
           "plan",
           null,
-          `You are the fixed lead of a managed team. Never spawn native subagents. Inspect the repository but do not implement yet. Return ONLY JSON matching {tasks:[{id,objective,acceptance:string[],dependencies:string[],profileId,context}],rationale}. Choose the smallest useful team, with independent write scopes. Every task needs concrete verification. Zero tasks means the lead will implement alone. Available worker profiles: ${encode(run.policy.profiles.filter((p) => p.worker))}. Objective: ${run.objective}`,
+          `You are the fixed lead of a managed team. Never spawn native subagents. Inspect the repository but do not implement yet. Return ONLY JSON matching {acceptance:string[],tasks:[{id,objective,acceptance:string[],dependencies:string[],profileId,context}],rationale}. Choose the smallest useful team, with independent write scopes. Define 1-20 stable, observable acceptance criteria for the COMPLETE user objective, including constraints and integration behavior. Do not weaken criteria to fit results. Every task needs concrete verification and a bounded write scope. If required information is missing, report the blocker rather than inventing requirements. Zero tasks means the lead will implement alone. Available worker profiles: ${encode(run.policy.profiles.filter((p) => p.worker))}. Objective: ${run.objective}`,
         );
       if (plan.status !== "settled") return run;
       if (!plan.succeeded)
@@ -346,6 +367,11 @@ export const make = Effect.gen(function* () {
         catch: () =>
           new TeamError({ code: "invalid", message: "Lead returned an invalid structured plan." }),
       });
+      if (!proposal.acceptance?.length)
+        return yield* pause(
+          run,
+          "Lead plan needs explicit acceptance criteria for the complete objective.",
+        );
       // Validate the complete graph before spending classification calls or admitting work.
       yield* Effect.try({ try: () => acceptPlan(run, proposal), catch: mapError });
       if ((yield* store.getPolicy).revision === run.policy.revision) {
@@ -390,7 +416,11 @@ export const make = Effect.gen(function* () {
         run.revision,
         (r) => ({
           ...acceptPlan(r, proposal),
-          execution: { ...r.execution!, phase: proposal.tasks.length ? "workers" : "integrate" },
+          execution: {
+            ...r.execution!,
+            acceptance: proposal.acceptance,
+            phase: proposal.tasks.length ? "workers" : "integrate",
+          },
         }),
         "plan-accepted",
       );
@@ -414,7 +444,7 @@ export const make = Effect.gen(function* () {
             run,
             "review",
             workerTurn.id,
-            `Review worker output against every acceptance criterion. Do not spawn subagents or modify the worker worktree. Inspect files at ${worker.value.worktreePath}. Return ONLY JSON {action:"accept"|"correct",summary:string,checks:[{criterionIndex:number,criterion:string,command:string,args:string[]}]}. For accept, provide a reproducible non-destructive check for EVERY criterion. criterionIndex MUST be its zero-based index in the acceptance array; do not infer new criteria. Checks execute in the worker worktree without a shell. For correct, provide a precise correction in summary. Worker contract and output: ${encode(review)}`,
+            `Review worker output against every acceptance criterion. Do not spawn subagents or modify the worker worktree. Inspect files at ${worker.value.worktreePath}. Return ONLY JSON {action:"accept"|"correct",summary:string,checks:[{criterionIndex:number,criterion:string,command:string,args:string[]}]}. For accept, provide a reproducible non-destructive check for EVERY criterion. criterionIndex MUST be its zero-based index in the acceptance array; do not infer new criteria. Checks execute in the worker worktree without a shell. For correct, identify the unmet criterion, observed failure, and a materially different next action in summary. Never resend a previous correction unchanged. Worker contract and output: ${encode(review)}`,
           );
         }
         if (reviewTurn.status !== "settled") return run;
@@ -531,7 +561,7 @@ export const make = Effect.gen(function* () {
           run,
           "worker",
           task.id,
-          `You are a managed worker. Never spawn native subagents. Follow the persisted contract below, which remains authoritative after compaction. Work only in your assigned isolated worktree. Inspect accepted dependency results and integrate their commits if needed. Run relevant checks and report their results and changed files. Commit your own changes with an English message; do not push. Report the commit ID and any unresolved limitations. Contract:\n${contextPack(run, task)}`,
+          `You are a managed worker. Never spawn native subagents. Follow the persisted contract below, which remains authoritative after compaction. Work only in your assigned isolated worktree. Inspect accepted dependency results and integrate their commits if needed. Run relevant checks and report their results and changed files. Commit your own changes with an English message; do not push. Report the commit ID, evidence for each criterion, what changed since the previous attempt, and any unresolved limitations. If blocked, explain the missing input or dependency; do not repeat an unsuccessful action. Contract:\n${contextPack(run, task)}`,
         );
       }
     }
@@ -553,13 +583,11 @@ export const make = Effect.gen(function* () {
         run,
         "integrate",
         null,
-        `Finish and verify the combined objective in your isolated lead worktree. Never spawn native subagents. Integrate accepted worker commits, resolve conflicts, and run relevant combined checks. If no workers were needed, implement directly. Preserve the original checkout; do not push. Return ONLY JSON {action:"accept"|"correct",summary:string,checks:[{criterion:string,command:string,args:string[]}]}. Provide at least one meaningful non-destructive combined verification command; commands run without a shell in your worktree. Objective: ${run.objective}. Accepted worker artifacts: ${encode(artifacts)}`,
+        `Finish and verify the combined objective in your isolated lead worktree. Never spawn native subagents. Integrate accepted worker commits, resolve conflicts, and run relevant combined checks. If no workers were needed, implement directly. Preserve the original checkout; do not push. Return ONLY JSON {action:"accept"|"correct",summary:string,checks:[{criterionIndex:number,criterion:string,command:string,args:string[]}]}. Verify EVERY persisted run acceptance criterion using its zero-based criterionIndex, without changing or dropping criteria. Provide meaningful non-destructive combined verification commands; commands run without a shell in your worktree. Objective: ${run.objective}. Run acceptance: ${encode(run.execution!.acceptance ?? [])}. Accepted worker artifacts: ${encode(artifacts)}`,
       );
     }
-    const final = run.execution!.turns.find(
-      (t) => t.role === "integrate" && t.status === "settled",
-    );
-    if (final) {
+    const final = run.execution!.turns.findLast((t) => t.role === "integrate");
+    if (final?.status === "settled") {
       if (!final.succeeded)
         return yield* pause(run, "Lead integration failed; its worktree is preserved.");
       const proposal = yield* Effect.try({
@@ -570,14 +598,50 @@ export const make = Effect.gen(function* () {
             message: "Lead returned invalid integration evidence.",
           }),
       });
-      if (proposal.action !== "accept" || proposal.checks.length === 0)
-        return yield* pause(run, "Lead could not provide combined acceptance checks.");
-      const evidence = yield* verify(run, run.execution!.leadThreadId, proposal);
-      if (evidence.some((e) => !e.passed))
+      const criteria = run.execution!.acceptance;
+      if (!criteria?.length)
         return yield* pause(
           run,
-          "Combined verification failed. Inspect the lead worktree and evidence.",
+          "This older run has no complete acceptance contract. Start a new team with explicit criteria.",
         );
+      const covered = proposal.action === "accept" && reviewCoverage(criteria, proposal.checks);
+      const evidence = covered
+        ? yield* verify(run, run.execution!.leadThreadId, proposal, criteria)
+        : [];
+      if (!covered || evidence.some((e) => !e.passed)) {
+        const correction = encode({
+          summary: proposal.summary,
+          missingCriteria: criteria.filter(
+            (criterion, index) =>
+              !proposal.checks.some(
+                (check) =>
+                  check.criterionIndex === index ||
+                  (check.criterionIndex === undefined && check.criterion === criterion),
+              ),
+          ),
+          evidence,
+        });
+        run = yield* store.update(
+          run.id,
+          run.revision,
+          (r) => ({
+            ...r,
+            decisions: [...r.decisions, correction],
+          }),
+          "integration-correction",
+        );
+        if (run.execution!.turns.filter((t) => t.role === "integrate").length >= 2)
+          return yield* pause(
+            run,
+            "Combined acceptance remains unresolved after correction. Inspect the saved evidence; automatic retries stopped.",
+          );
+        return yield* reserve(
+          run,
+          "integrate",
+          null,
+          `Correct the combined result in your existing lead worktree. Do not delegate or change acceptance criteria. Do not repeat a failed action unchanged. Return ONLY JSON {action:"accept"|"correct",summary:string,checks:[{criterionIndex:number,criterion:string,command:string,args:string[]}]}. Verify EVERY criterion with a meaningful non-destructive check. If blocked, return correct and explain the missing input. Objective: ${run.objective}. Persisted acceptance: ${encode(criteria)}. Previous result and independently executed evidence: ${correction}`,
+        );
+      }
       return yield* store.update(
         run.id,
         run.revision,
@@ -723,7 +787,6 @@ export const make = Effect.gen(function* () {
         workspaceRoot,
         baseCommit: git.stdout.trim(),
         leadThreadId: ThreadId.make(`team-${id}-lead`),
-        maxTurns: input.maxTurns,
         turns: [],
         phase: "plan",
         notice: null,
@@ -743,24 +806,14 @@ export const make = Effect.gen(function* () {
         code: "conflict",
         message: "Run changed or is already terminal.",
       });
-    if (
-      input.action === "extend_budget" &&
-      (input.maxTurns === undefined || input.maxTurns <= run.execution.maxTurns)
-    )
-      return yield* new TeamError({
-        code: "invalid",
-        message: "The new turn limit must exceed the current limit.",
-      });
     const status =
-      input.action === "extend_budget"
-        ? run.status
-        : input.action === "cancel"
-          ? "cancelled"
-          : input.action === "pause"
-            ? "paused"
-            : run.execution.phase === "plan"
-              ? "planning"
-              : "running";
+      input.action === "cancel"
+        ? "cancelled"
+        : input.action === "pause"
+          ? "paused"
+          : run.execution.phase === "plan"
+            ? "planning"
+            : "running";
     const next = yield* store.update(
       run.id,
       run.revision,
@@ -771,7 +824,6 @@ export const make = Effect.gen(function* () {
           ...r.execution!,
           notice: input.action === "resume" ? null : r.execution!.notice,
           phase: input.action === "cancel" ? "done" : r.execution!.phase,
-          maxTurns: input.action === "extend_budget" ? input.maxTurns! : r.execution!.maxTurns,
           turns: r.execution!.turns.map((t) =>
             input.action === "cancel" && t.status === "reserved"
               ? { ...t, status: "settled", result: "Cancelled before dispatch", succeeded: false }
@@ -802,7 +854,7 @@ export const make = Effect.gen(function* () {
         .pipe(Effect.flatMap(() => reconcile(run.id)))
         .pipe(
           Effect.catch((error) =>
-            error.code === "conflict" && error.message !== "Team turn budget exhausted."
+            error.code === "conflict"
               ? Effect.void
               : store.get(run.id).pipe(
                   Effect.flatMap((current) => pause(current, error.message)),

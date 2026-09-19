@@ -128,11 +128,46 @@ describe("team decider", () => {
       ...planned,
       tasks: planned.tasks.map((t) => ({ ...t, status: "failed" as const, attempts: 2 })),
     };
-    expect(() => retryTask(capped, "a", "allowed", "retry")).toThrow(/limit/);
+    expect(() => retryTask(capped, "a", "allowed", "retry")).toThrow(/exhausted/);
     const running = {
       ...planned,
       tasks: planned.tasks.map((t) => ({ ...t, status: "running" as const })),
     };
     expect(() => retryTask(running, "a", "allowed", "retry")).toThrow(/settled/);
   });
+});
+
+it("stops duplicate corrections and repeated results across persisted worker handoffs", () => {
+  const planned = acceptPlan(run, proposal);
+  const stalled: TeamRun = {
+    ...planned,
+    policy: { ...planned.policy, maxAttempts: 3 },
+    tasks: planned.tasks.map((t) => ({
+      ...t,
+      status: "review",
+      attempts: 2,
+      result: "new report",
+      recoveryHistory: [
+        {
+          generation: 1,
+          profileId: "allowed",
+          result: "same failure",
+          correction: "Fix the boundary",
+        },
+      ],
+    })),
+  };
+  expect(() => retryTask(stalled, "a", "allowed", "  FIX  the boundary ", "handoff")).toThrow(
+    /Repeated correction/,
+  );
+  const repeated = {
+    ...stalled,
+    tasks: stalled.tasks.map((t) => ({ ...t, result: " SAME failure " })),
+  };
+  expect(() => retryTask(repeated, "a", "allowed", "A different suggestion", "handoff")).toThrow(
+    /repeated a previous result/,
+  );
+  expect(retryTask(stalled, "a", "allowed", "Handle the missing null case").tasks[0]?.status).toBe(
+    "pending",
+  );
 });

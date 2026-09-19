@@ -1,24 +1,32 @@
 import { useAtomValue } from "@effect/atom-react";
 import { serverEnvironment } from "../../state/server";
-import { TeamRunControls } from "./TeamRunControls";
+import { Switch } from "../ui/switch";
+import { useNavigate } from "@tanstack/react-router";
+import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { useRightPanelStore } from "../../rightPanelStore";
 import { randomUUID } from "../../lib/utils";
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
-import { Button } from "../ui/button";
 import type { EnvironmentId, ProjectId, TeamAssessment } from "@t3tools/contracts";
 import { createTeamDraftCoordinator } from "@t3tools/client-runtime/state/team-draft";
 import { teamEnvironment } from "../../state/team";
 import { useEnvironmentQuery } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
 
-const RoutingContext = createContext<ReturnType<typeof useRoutingState> | null>(null);
+const RoutingContext = createContext<ReturnType<typeof useTeamRoutingState> | null>(null);
 export const useComposerRouting = () => useContext(RoutingContext);
 
-export function TeamRoutingProvider(props: RoutingProps & { children: ReactNode }) {
-  const config = useAtomValue(serverEnvironment.configValueAtom(props.environmentId));
-  return config?.teamRouting === true ? <RoutingProviderContent {...props} /> : props.children;
+export function TeamRoutingProvider({
+  state,
+  children,
+}: {
+  state: ReturnType<typeof useTeamRoutingState>;
+  children: ReactNode;
+}) {
+  return <RoutingContext value={state}>{children}</RoutingContext>;
 }
 
 type RoutingProps = {
+  scopeKey: string;
   environmentId: EnvironmentId;
   projectId: ProjectId | null;
   prompt: string;
@@ -26,11 +34,8 @@ type RoutingProps = {
   composing: boolean;
   allowRouting: boolean;
 };
-function RoutingProviderContent(props: RoutingProps & { children: ReactNode }) {
-  const state = useRoutingState(props);
-  return <RoutingContext value={state}>{props.children}</RoutingContext>;
-}
-function useRoutingState({
+export function useTeamRoutingState({
+  scopeKey,
   environmentId,
   projectId,
   prompt,
@@ -38,7 +43,19 @@ function useRoutingState({
   composing,
   allowRouting,
 }: RoutingProps) {
-  const settings = useEnvironmentQuery(teamEnvironment.settings({ environmentId, input: {} }));
+  const config = useAtomValue(serverEnvironment.configValueAtom(environmentId));
+  const available = config?.teamRouting === true;
+  const [enabledScope, setEnabledScope] = useState<string | null>(null);
+  const orchestration = available && allowRouting && enabledScope === scopeKey;
+  const navigate = useNavigate();
+  const start = useAtomCommand(teamEnvironment.start, { reportFailure: false });
+  const starting = useRef(false);
+  const [pending, setPending] = useState(false);
+  const [startError, setStartError] = useState<string | null>(null);
+  const command = useRef<{ key: string; id: string } | null>(null);
+  const settings = useEnvironmentQuery(
+    available ? teamEnvironment.settings({ environmentId, input: {} }) : null,
+  );
   const assess = useAtomCommand(teamEnvironment.assess, { reportFailure: false });
   const [result, setResult] = useState<{
     key: string;
@@ -47,7 +64,7 @@ function useRoutingState({
   } | null>(null);
   const [draftId] = useState(randomUUID);
   const revision = useRef(0);
-  const enabled = allowRouting && settings.data?.policy.mode !== "off" && settings.data !== null;
+  const enabled = orchestration && settings.data?.policy.mode !== "off" && settings.data !== null;
   const save = useAtomCommand(teamEnvironment.saveSettings, { reportFailure: false });
   const [saving, setSaving] = useState(false);
   const [modeError, setModeError] = useState<string | null>(null);
@@ -125,6 +142,60 @@ function useRoutingState({
       : prompt.trim()
         ? "Choosing model…"
         : "Chooses when you type";
+  async function setOrchestration(on: boolean) {
+    if (pending || saving) return;
+    if (on && settings.data?.policy.mode === "off" && !(await setMode("shadow"))) return;
+    setEnabledScope(on ? scopeKey : null);
+    setStartError(null);
+  }
+  const blocked = pending
+    ? "Starting team"
+    : !settings.data?.jevConfigured
+      ? "Add your Jev key in Orchestration settings"
+      : hasAttachments
+        ? "Orchestration currently supports text-only requests"
+        : composing
+          ? "Finish typing to start orchestration"
+          : !assessment?.selection
+            ? failed
+              ? "Routing unavailable; check Orchestration settings"
+              : "Choosing team lead"
+            : null;
+  async function submit() {
+    if (!orchestration || blocked || !assessment || !projectId || starting.current) return;
+    starting.current = true;
+    setPending(true);
+    setStartError(null);
+    const key = JSON.stringify([scopeKey, prompt, assessment.fingerprint]);
+    if (command.current?.key !== key) command.current = { key, id: randomUUID() };
+    const response = await start({
+      environmentId,
+      input: {
+        commandId: command.current.id,
+        projectId,
+        fingerprint: assessment.fingerprint,
+        draft: {
+          draftId: assessment.draftId,
+          revision: assessment.revision,
+          policyRevision: assessment.policyRevision,
+          prompt,
+          hasAttachments,
+        },
+      },
+    });
+    starting.current = false;
+    setPending(false);
+    if (response._tag === "Failure") {
+      const error = squashAtomCommandFailure(response);
+      setStartError(error instanceof Error ? error.message : "Could not start orchestration.");
+      return;
+    }
+    if (response.value.execution) {
+      const threadId = response.value.execution.leadThreadId;
+      useRightPanelStore.getState().open({ environmentId, threadId }, "agents");
+      await navigate({ to: "/$environmentId/$threadId", params: { environmentId, threadId } });
+    }
+  }
   return {
     environmentId,
     projectId,
@@ -140,90 +211,57 @@ function useRoutingState({
     setMode,
     saving,
     modeError,
-    automatic: allowRouting && settings.data?.policy.mode === "auto",
+    available,
+    orchestration,
+    setOrchestration,
+    pending,
+    blocked,
+    submit,
+    startError,
+    automatic: orchestration,
   };
 }
 
 export function TeamRoutingPickerDetails() {
   const routing = useComposerRouting();
-  if (!routing?.allowRouting || !routing.settings.data) return null;
+  if (!routing?.orchestration) return null;
   return (
-    <div className="border-b px-3 py-3 text-xs" data-model-picker-content>
-      <div className="flex items-center justify-between gap-3">
-        <span className="font-medium">Jev routing</span>
-        <div className="flex items-center gap-1" aria-label="Routing mode">
-          {(
-            [
-              ["off", "Manual"],
-              ["shadow", "Preview"],
-              ["auto", "Auto"],
-            ] as const
-          ).map(([mode, label]) => (
-            <Button
-              key={mode}
-              size="xs"
-              variant={routing.settings.data?.policy.mode === mode ? "secondary" : "ghost"}
-              aria-pressed={routing.settings.data?.policy.mode === mode}
-              disabled={routing.saving}
-              onClick={() => void routing.setMode(mode)}
-            >
-              {label}
-            </Button>
-          ))}
-        </div>
-      </div>
-      {routing.enabled && (
-        <p className="mt-2 text-muted-foreground" role="status">
-          {routing.summary}
-        </p>
-      )}
-      {routing.settings.data.policy.mode === "shadow" && (
-        <p className="mt-1 text-muted-foreground">Preview only. Send uses your selected model.</p>
-      )}
-      {routing.automatic && (
-        <p className="mt-1 text-muted-foreground">
-          Select a model below to return to manual selection.
-        </p>
-      )}
-      {routing.enabled && (
-        <details className="mt-2 text-muted-foreground">
-          <summary className="cursor-pointer hover:text-foreground">Decision details</summary>
-          <div className="mt-2 space-y-2">
-            <p>{routing.assessment?.reason ?? "Waiting for a draft assessment."}</p>
-            <p>
-              Allowed lead models:{" "}
-              {routing.settings.data.policy.profiles
-                .filter((p) => p.lead)
-                .map((p) => p.label)
-                .join(", ")}
-            </p>
-            <p>Manage models in Settings → Orchestration.</p>
-          </div>
-        </details>
-      )}
-      {routing.modeError && (
-        <p role="alert" className="mt-2 text-destructive">
-          {routing.modeError}
-        </p>
-      )}
+    <div className="px-3 py-3 text-xs" data-model-picker-content>
+      <p className="font-medium">Orchestration chooses the team lead</p>
+      <p className="mt-1 text-muted-foreground" role="status">
+        {routing.summary}
+      </p>
+      <p className="mt-1 text-muted-foreground">
+        Selecting a model turns orchestration off for this draft.
+      </p>
     </div>
   );
 }
 
 export function TeamRoutingActions() {
   const routing = useComposerRouting();
-  if (!routing?.projectId) return null;
+  if (!routing?.available || !routing.allowRouting || !routing.projectId) return null;
   return (
-    <TeamRunControls
-      environmentId={routing.environmentId}
-      projectId={routing.projectId}
-      prompt={routing.prompt}
-      assessment={routing.assessment}
-      hasAttachments={routing.hasAttachments}
-      composing={routing.composing}
-      showStart={routing.enabled && !!routing.prompt.trim()}
-    />
+    <label className="flex shrink-0 cursor-pointer items-center gap-1.5 text-xs text-muted-foreground">
+      <Switch
+        size="sm"
+        checked={routing.orchestration}
+        disabled={routing.pending || routing.saving || !routing.settings.data}
+        onCheckedChange={(on) => void routing.setOrchestration(on)}
+      />
+      Orchestration
+    </label>
   );
+}
+
+export function TeamRoutingStatus() {
+  const routing = useComposerRouting();
+  const error = routing?.startError ?? routing?.modeError;
+  return error ? (
+    <p className="px-3 py-1 text-xs text-destructive" role="alert">
+      {error}
+    </p>
+  ) : null;
 }
 
 export function TeamManualModelControls({ children }: { children: ReactNode }) {

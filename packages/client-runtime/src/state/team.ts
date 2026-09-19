@@ -5,6 +5,10 @@ export function createTeamEnvironmentAtoms<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
 ) {
   return {
+    suggestPool: createEnvironmentRpcCommand(runtime, {
+      label: "team:suggest-pool",
+      tag: "team.suggestPool",
+    }),
     start: createEnvironmentRpcCommand(runtime, { label: "team:start", tag: "team.start" }),
     control: createEnvironmentRpcCommand(runtime, { label: "team:control", tag: "team.control" }),
     forThread: createEnvironmentRpcQueryAtomFamily(runtime, {

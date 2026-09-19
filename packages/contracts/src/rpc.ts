@@ -1,5 +1,6 @@
 import { ModelSelection } from "./orchestration.ts";
 import {
+  TeamPoolSuggestion,
   TeamThreadInput,
   TeamThreadView,
   TeamStart,
@@ -1422,6 +1423,11 @@ export const WsRpcGroup = RpcGroup.make(
   Rpc.make("team.resolve", {
     payload: TeamResolve,
     success: Schema.NullOr(ModelSelection),
+    error: TeamRpcError,
+  }),
+  Rpc.make("team.suggestPool", {
+    payload: Schema.Struct({}),
+    success: TeamPoolSuggestion,
     error: TeamRpcError,
   }),
   Rpc.make("team.settings", {

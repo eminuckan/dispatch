@@ -158,7 +158,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
 
   const handleInstanceModelChange = async (instanceId: ProviderInstanceId, model: string) => {
     if (props.disabled) return;
-    if (routing?.automatic && !(await routing.setMode("shadow"))) return;
+    if (routing?.automatic) await routing.setOrchestration(false);
     props.onInstanceModelChange(instanceId, model);
     setIsMenuOpen(false);
   };
