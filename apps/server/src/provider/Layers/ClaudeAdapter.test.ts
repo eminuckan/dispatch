@@ -436,6 +436,29 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect("disables native delegation only for managed team sessions", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+      assert.equal(harness.getLastCreateQueryInput()?.options.disallowedTools, undefined);
+      yield* adapter.startSession({
+        threadId: ThreadId.make("team-abcdef-1234-worker"),
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+      const tools = harness.getLastCreateQueryInput()?.options.disallowedTools;
+      assert.deepEqual(tools, ["Agent", "Task", "TeamCreate", "TeamDelete", "SendMessage"]);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect("derives bypass permission mode from full-access runtime policy", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {

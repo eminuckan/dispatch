@@ -67,6 +67,45 @@ returns to the remembered selection.
 
 Leaving reasoning level or service tier unset uses the provider's own configuration.
 
+## Jev routing and managed teams (experimental)
+
+On this fork's web and desktop clients, configure Jev in Settings → Providers.
+Add your own Jev API key and explicitly choose the allowed model profiles and
+reasoning options. Models in the ordinary picker are not automatically eligible.
+Choose a capable lead for complex or uncertain tasks; an absent model cannot be
+recommended. Enabling routing sends draft text to TypeSafe after a typing pause.
+The key is saved in the environment's private secret store.
+
+Shadow mode shows recommendations while preserving your selection. Automatic
+mode resolves the lead model again when sending a new text-only draft. Neither
+mode changes an existing lead or worker's model halfway through its conversation.
+Confidence describes classification certainty, not the chance that the code is correct.
+
+Use **Run team · full access** for a managed coding run. Teams currently support
+Codex and Claude, use isolated worktrees from committed HEAD, and preserve the
+original checkout. Uncommitted changes and attachments are not included. The lead
+plans work, workers receive persistent task contracts, and the lead reviews their
+results before integrating and verifying the combined change. Native subagent
+tools are disabled for these managed sessions.
+
+The active-agent limit includes the lead. The turn limit includes planning,
+worker attempts, review, repairs and integration; it is not a dollar cap. You can
+also set an estimated USD budget and per-profile turn estimates in Providers.
+Unknown estimates block admission with that cap enabled. This cap reserves whole
+attempt estimates; it cannot enforce actual API billing or subscription quota.
+**Pause admission** lets current work settle while preventing new turns;
+**Cancel team** requests interruption. An uncertain dispatch keeps its reservation
+until reconciled. Refresh the team panel to see its current state, open its lead
+or workers, resume paused work, or explicitly add turns. Completion does not push
+or merge the lead worktree into the original checkout.
+
+A review formatting failure is repaired by the lead without consuming another
+worker attempt. For a genuine worker failure, recovery can retain the worker,
+increase effort using another allowed profile of the same model, or create a new
+worker for a model change. Environment and context problems can pause the run.
+Checks and model review reduce risk but do not guarantee correctness or savings;
+subscription quota consumption is distinct from API prices.
+
 ## Quote an assistant response
 
 On web and desktop, select text within one assistant response and choose

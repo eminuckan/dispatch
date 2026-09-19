@@ -266,6 +266,14 @@
     "./file-preview": {
       "types": "./src/filePreview.ts",
       "default": "./src/filePreview.ts"
+    },
+    "./state/team": {
+      "types": "./src/state/team.ts",
+      "default": "./src/state/team.ts"
+    },
+    "./state/team-draft": {
+      "types": "./src/state/teamDraft.ts",
+      "default": "./src/state/teamDraft.ts"
     }
   },
   "scripts": {

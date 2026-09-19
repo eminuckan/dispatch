@@ -1,3 +1,4 @@
+import { isManagedTeamThread, managedClaudeDisallowedTools } from "../../team/nativeDelegation.ts";
 // @effect-diagnostics nodeBuiltinImport:off
 /**
  * ClaudeAdapterLive - Scoped live implementation for the Claude Agent provider adapter.
@@ -4911,6 +4912,9 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         serverConfig.attachmentsDir,
       ];
       const queryOptions: ClaudeQueryOptions = {
+        ...(isManagedTeamThread(input.threadId)
+          ? { disallowedTools: [...managedClaudeDisallowedTools] }
+          : {}),
         ...(input.cwd ? { cwd: input.cwd } : {}),
         ...(apiModelId ? { model: apiModelId } : {}),
         pathToClaudeCodeExecutable: claudeBinaryPath,

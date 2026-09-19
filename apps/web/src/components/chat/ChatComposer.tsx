@@ -1,3 +1,4 @@
+import { TeamRoutingPreview } from "./TeamRoutingPreview";
 import { DESKTOP_PASTE_AS_TEXT_EVENT } from "../../lib/desktopPasteAsText";
 import { isLocalEnvironmentDisabled } from "../../localEnvironment";
 import { usePrimaryEnvironmentId } from "../../state/environments";
@@ -1302,6 +1303,7 @@ export interface ChatComposerProps {
   >;
 
   // Thread context
+  teamProjectId: ProjectId | null;
   activeThreadId: ThreadId | null;
   activeThreadEnvironmentId: EnvironmentId | undefined;
   activeThread: Thread | undefined;
@@ -1575,6 +1577,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   attachmentTargetKeyRef.current = attachmentTargetKey;
   const questionPreparations = useQuestionAttachmentPreparation((state) => state.counts);
   const prompt = composerDraft.prompt;
+  const [teamComposing, setTeamComposing] = useState(false);
   const composerImages = attachmentDraft.images;
   const composerFiles = attachmentDraft.files;
   // A question answer has no chips: its files live in the question draft and show in the
@@ -6042,6 +6045,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   return (
     <form
       ref={composerFormRef}
+      onCompositionStartCapture={() => setTeamComposing(true)}
+      onCompositionEndCapture={() => setTeamComposing(false)}
       onSubmit={submitComposer}
       onPointerDownCapture={(event) => {
         const target = event.target;
@@ -6895,6 +6900,23 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               message={providerInputSubmissionError ?? composerSubmissionError}
             />
 
+            {(routeKind === "draft" || activeThreadId?.startsWith("team-")) &&
+            multipleModelSelections === null ? (
+              <TeamRoutingPreview
+                projectId={props.teamProjectId}
+                environmentId={environmentId}
+                prompt={routeKind === "draft" ? prompt : ""}
+                hasAttachments={
+                  composerImages.length +
+                    composerFiles.length +
+                    composerTerminalContexts.length +
+                    composerPreviewAnnotations.length +
+                    composerReviewComments.length >
+                  0
+                }
+                composing={teamComposing}
+              />
+            ) : null}
             {/* Bottom toolbar */}
             {isComposerCollapsedMobile || isComposerApprovalState ? null : (
               <div

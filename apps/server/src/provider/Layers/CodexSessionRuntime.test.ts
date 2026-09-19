@@ -1057,3 +1057,43 @@ describe("openCodexThread", () => {
     }),
   );
 });
+
+it.effect("disables native delegation for managed team threads on start and resume", () =>
+  Effect.gen(function* () {
+    const configs: unknown[] = [];
+    const response = makeThreadOpenResponse("native-managed");
+    const client = {
+      request: (
+        _method: "thread/start",
+        params: CodexRpc.ClientRequestParamsByMethod["thread/start"],
+      ) => {
+        configs.push(params.config);
+        return Effect.succeed(response);
+      },
+      raw: {
+        request: (
+          _method: "thread/resume",
+          params: CodexRpc.ClientRequestParamsByMethod["thread/resume"],
+        ) => {
+          configs.push(params.config);
+          return Effect.succeed(response);
+        },
+      },
+    };
+    for (const resumeThreadId of [undefined, "saved-managed"]) {
+      yield* openCodexThread({
+        client,
+        threadId: ThreadId.make("team-abcd-1234-worker"),
+        runtimeMode: "auto-accept-edits",
+        cwd: "/tmp/project",
+        requestedModel: "gpt-5.6-luna",
+        serviceTier: undefined,
+        resumeThreadId,
+      });
+    }
+    NodeAssert.deepStrictEqual(configs, [
+      { "features.multi_agent": false, "features.multi_agent_v2": false },
+      { "features.multi_agent": false, "features.multi_agent_v2": false },
+    ]);
+  }),
+);

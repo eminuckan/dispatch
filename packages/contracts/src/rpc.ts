@@ -1,3 +1,19 @@
+import { ModelSelection } from "./orchestration.ts";
+import {
+  TeamStart,
+  TeamControl,
+  TeamRun,
+  TeamRunId,
+  TeamRecoveryInput,
+  TeamRecoveryAdvice,
+  TeamResolve,
+  TeamSettings,
+  TeamSettingsUpdate,
+  TeamSecretUpdate,
+  TeamDraft,
+  TeamAssessment,
+  TeamError,
+} from "./team.ts";
 import * as Schema from "effect/Schema";
 import * as Rpc from "effect/unstable/rpc/Rpc";
 import * as RpcGroup from "effect/unstable/rpc/RpcGroup";
@@ -1381,7 +1397,42 @@ const WsSubscribeResourceTelemetryRpc = Rpc.make(WS_METHODS.subscribeResourceTel
   stream: true,
 });
 
+const TeamRpcError = Schema.Union([TeamError, EnvironmentAuthorizationError]);
 export const WsRpcGroup = RpcGroup.make(
+  Rpc.make("team.start", { payload: TeamStart, success: TeamRun, error: TeamRpcError }),
+  Rpc.make("team.control", { payload: TeamControl, success: TeamRun, error: TeamRpcError }),
+  Rpc.make("team.get", { payload: TeamRunId, success: TeamRun, error: TeamRpcError }),
+  Rpc.make("team.list", {
+    payload: Schema.Struct({}),
+    success: Schema.Array(TeamRun),
+    error: TeamRpcError,
+  }),
+  Rpc.make("team.recover", {
+    payload: TeamRecoveryInput,
+    success: TeamRecoveryAdvice,
+    error: TeamRpcError,
+  }),
+  Rpc.make("team.resolve", {
+    payload: TeamResolve,
+    success: Schema.NullOr(ModelSelection),
+    error: TeamRpcError,
+  }),
+  Rpc.make("team.settings", {
+    payload: Schema.Struct({}),
+    success: TeamSettings,
+    error: TeamRpcError,
+  }),
+  Rpc.make("team.saveSettings", {
+    payload: TeamSettingsUpdate,
+    success: TeamSettings,
+    error: TeamRpcError,
+  }),
+  Rpc.make("team.setSecret", {
+    payload: TeamSecretUpdate,
+    success: TeamSettings,
+    error: TeamRpcError,
+  }),
+  Rpc.make("team.assess", { payload: TeamDraft, success: TeamAssessment, error: TeamRpcError }),
   WsServerProbeRpc,
   WsServerGetConfigRpc,
   WsServerRefreshProvidersRpc,

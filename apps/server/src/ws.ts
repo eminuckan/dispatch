@@ -1,3 +1,5 @@
+import { TeamRuntime } from "./team/TeamRuntime.ts";
+import { TeamRouter } from "./team/TeamRouter.ts";
 import {
   sameUsageLimitCommandCoverage,
   withUsageLimitsCommands,
@@ -500,6 +502,8 @@ const makeWsRpcLayer = (
   WsRpcGroup.toLayer(
     Effect.gen(function* () {
       const currentSessionId = currentSession.sessionId;
+      const teamRouter = yield* TeamRouter;
+      const teamRuntime = yield* TeamRuntime;
       const crypto = yield* Crypto.Crypto;
       const sql = yield* SqlClient.SqlClient;
       const projectionSnapshotQuery = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
@@ -1819,6 +1823,7 @@ const makeWsRpcLayer = (
                   shellRevealInFileManager: true,
                   shellRevealInFileManagerKind: fileManagerRevealKind,
                 }),
+            teamRouting: true,
             threadResumeCompletionMarker: true,
             threadSnapshotPagination: true,
             reasoningMessages: true,
@@ -1831,6 +1836,19 @@ const makeWsRpcLayer = (
           .pipe(Effect.ignoreCause({ log: true }), Effect.forkDetach, Effect.asVoid);
 
       return WsRpcGroup.of({
+        "team.start": (input) => teamRuntime.start(input),
+        "team.control": (input) =>
+          teamRuntime
+            .control(input)
+            .pipe(Effect.tap(() => teamRuntime.tick().pipe(Effect.forkDetach))),
+        "team.get": ({ id }) => teamRuntime.get(id),
+        "team.list": () => teamRuntime.list,
+        "team.recover": (input) => teamRouter.recover(input),
+        "team.resolve": (input) => teamRouter.resolve(input),
+        "team.settings": () => teamRouter.settings,
+        "team.saveSettings": ({ policy }) => teamRouter.saveSettings(policy),
+        "team.setSecret": ({ apiKey }) => teamRouter.setSecret(apiKey),
+        "team.assess": (draft) => teamRouter.assess(draft),
         [ORCHESTRATION_WS_METHODS.dispatchCommand]: (command) =>
           observeRpcEffect(
             ORCHESTRATION_WS_METHODS.dispatchCommand,

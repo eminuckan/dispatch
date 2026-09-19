@@ -1,3 +1,6 @@
+import * as TeamRuntime from "./team/TeamRuntime.ts";
+import * as TeamRouter from "./team/TeamRouter.ts";
+import * as TeamStore from "./team/TeamStore.ts";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeSocket from "@effect/platform-node/NodeSocket";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -765,6 +768,13 @@ const buildAppUnderTest = (options?: {
         routerConfig: HTTP_ROUTER_CONFIG,
       },
     ).pipe(
+      Layer.provide(
+        TeamRuntime.layer.pipe(
+          Layer.provideMerge(TeamRouter.layer),
+          Layer.provideMerge(TeamStore.layer),
+          Layer.provide(SqlitePersistenceMemory),
+        ),
+      ),
       Layer.provide(
         Layer.mergeAll(
           Layer.mock(Keybindings.Keybindings)({

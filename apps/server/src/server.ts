@@ -1,3 +1,6 @@
+import * as TeamRuntime from "./team/TeamRuntime.ts";
+import * as TeamRouter from "./team/TeamRouter.ts";
+import * as TeamStore from "./team/TeamStore.ts";
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeHttp from "node:http";
 
@@ -485,6 +488,13 @@ const AntigravityInstallationRefreshLive = Layer.effectDiscard(
 );
 
 const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
+  Layer.provideMerge(
+    TeamRuntime.reactorLayer.pipe(
+      Layer.provideMerge(TeamRuntime.layer),
+      Layer.provideMerge(TeamRouter.layer),
+      Layer.provideMerge(TeamStore.layer),
+    ),
+  ),
   Layer.provideMerge(AntigravityInstallationRefreshLive),
   Layer.provideMerge(ProviderAuthServiceLive),
   // Core Services

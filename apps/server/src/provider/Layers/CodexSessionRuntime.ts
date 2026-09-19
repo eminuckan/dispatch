@@ -1,3 +1,4 @@
+import { isManagedTeamThread, managedCodexConfig } from "../../team/nativeDelegation.ts";
 import {
   ApprovalRequestId,
   DEFAULT_MODEL,
@@ -730,12 +731,16 @@ export const openCodexThread = (input: {
   readonly resumeThreadId: string | undefined;
 }): Effect.Effect<typeof CodexThreadResumeMetadata.Type, CodexErrors.CodexAppServerError> => {
   const resumeThreadId = input.resumeThreadId;
-  const startParams = buildThreadStartParams({
+  const baseStartParams = buildThreadStartParams({
     cwd: input.cwd,
     runtimeMode: input.runtimeMode,
     model: input.requestedModel,
     serviceTier: input.serviceTier,
   });
+  const startParams = {
+    ...baseStartParams,
+    ...(isManagedTeamThread(input.threadId) ? { config: managedCodexConfig } : {}),
+  };
 
   if (resumeThreadId === undefined) {
     return input.client.request("thread/start", startParams);

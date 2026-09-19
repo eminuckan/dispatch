@@ -1,3 +1,4 @@
+import { TeamSettingsPanel } from "../components/settings/TeamSettingsPanel";
 import { createFileRoute } from "@tanstack/react-router";
 import { EnvironmentId, ProviderInstanceId } from "@t3tools/contracts";
 
@@ -22,11 +23,14 @@ function SettingsProvidersRoute() {
     );
   }
   return (
-    <ProviderSettingsPanel
-      environmentId={environment.environmentId}
-      {...(target.instanceId ? { instanceId: target.instanceId } : {})}
-      scoped
-    />
+    <>
+      <ProviderSettingsPanel
+        environmentId={environment.environmentId}
+        {...(target.instanceId ? { instanceId: target.instanceId } : {})}
+        scoped
+      />
+      <TeamSettingsPanel environmentId={environment.environmentId} />
+    </>
   );
 }
 
