@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off - lifecycle tests observe real native subprocess ownership.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeNet from "node:net";
 
@@ -10,6 +11,7 @@ import {
   HostProcessPlatform,
 } from "@t3tools/shared/hostProcess";
 import * as Effect from "effect/Effect";
+import * as Data from "effect/Data";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
@@ -181,6 +183,8 @@ describe("verifyOpenCodeServerVersion", () => {
   );
 });
 
+class LifecycleError extends Data.TaggedError("LifecycleError")<{ readonly cause: unknown }> {}
+
 interface LifecycleEvent {
   readonly event: string;
   readonly pid: number;
@@ -219,12 +223,14 @@ const makeLifecycleControl = Effect.fn("makeLifecycleControl")(function* () {
           else reject(new Error("Lifecycle control server did not expose a TCP port."));
         });
       }),
-    catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
+    catch: (cause) => new LifecycleError({ cause }),
   });
   yield* Effect.addFinalizer(() =>
-    Effect.callback<void, Error>((resume) => {
+    Effect.callback<void, LifecycleError>((resume) => {
       for (const socket of sockets) socket.destroy();
-      server.close((error) => resume(error ? Effect.fail(error) : Effect.void));
+      server.close((error) =>
+        resume(error ? Effect.fail(new LifecycleError({ cause: error })) : Effect.void),
+      );
     }).pipe(Effect.ignore),
   );
 
@@ -327,7 +333,7 @@ control.on("connect", () => {
 
 const startUnrelatedSentinel = (executablePath: string) =>
   Effect.acquireRelease(
-    Effect.callback<NodeChildProcess.ChildProcess, Error>((resume) => {
+    Effect.callback<NodeChildProcess.ChildProcess, LifecycleError>((resume) => {
       const child = NodeChildProcess.spawn(
         executablePath,
         ["-e", "setInterval(() => {}, 60_000)"],
@@ -336,7 +342,7 @@ const startUnrelatedSentinel = (executablePath: string) =>
         },
       );
       child.once("spawn", () => resume(Effect.succeed(child)));
-      child.once("error", (error) => resume(Effect.fail(error)));
+      child.once("error", (error) => resume(Effect.fail(new LifecycleError({ cause: error }))));
     }),
     (child) =>
       Effect.callback<void>((resume) => {

@@ -1,3 +1,4 @@
+import type { SessionMessageInfo } from "@opencode/client";
 import { OpenCodeSettings, ProviderInstanceId, TextGenerationError } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
@@ -23,9 +24,11 @@ const runtimeMock = {
     authHeaders: [] as Array<string | null>,
     closeCalls: [] as string[],
     sessionCreateCalls: 0,
+    messageResult: undefined as SessionMessageInfo[] | undefined,
+    messageListOrder: undefined as string | undefined,
     connectionError: undefined as Error | undefined,
     sessionCreateError: undefined as unknown,
-    sessionResult: undefined as { data?: { id: string } } | undefined,
+    sessionResult: undefined as { id?: string } | undefined,
     promptRequestError: undefined as unknown,
     promptResult: undefined as
       | { data?: { info?: { error?: unknown }; parts?: Array<unknown> } }
@@ -38,6 +41,8 @@ const runtimeMock = {
     this.state.authHeaders.length = 0;
     this.state.closeCalls.length = 0;
     this.state.sessionCreateCalls = 0;
+    this.state.messageResult = undefined;
+    this.state.messageListOrder = undefined;
     this.state.connectionError = undefined;
     this.state.sessionCreateError = undefined;
     this.state.sessionResult = undefined;
@@ -69,7 +74,7 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntime.OpenCodeRuntimeShape = {
         ...(effectiveServerPassword !== undefined
           ? { serverPassword: effectiveServerPassword }
           : {}),
-        version: "1.14.19",
+        version: "2.0.7",
         isRunning: Effect.succeed(true),
         exitCode: Effect.never,
       };
@@ -78,7 +83,7 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntime.OpenCodeRuntimeShape = {
     runtimeMock.state.connectionError
       ? Effect.fail(
           new OpenCodeRuntime.OpenCodeRuntimeError({
-            operation: "global.health",
+            operation: "server.info",
             detail: runtimeMock.state.connectionError.message,
             cause: runtimeMock.state.connectionError,
           }),
@@ -86,7 +91,7 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntime.OpenCodeRuntimeShape = {
       : Effect.succeed({
           url: serverUrl ?? "http://127.0.0.1:4301",
           ...(serverPassword ? { serverPassword } : {}),
-          version: "1.14.19",
+          version: "2.0.7",
           exitCode: null,
           external: Boolean(serverUrl),
         }),
@@ -99,32 +104,50 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntime.OpenCodeRuntimeShape = {
           if (runtimeMock.state.sessionCreateError !== undefined) {
             throw runtimeMock.state.sessionCreateError;
           }
-          return runtimeMock.state.sessionResult ?? { data: { id: `${baseUrl}/session` } };
+          return runtimeMock.state.sessionResult ?? { id: `${baseUrl}/session` };
         },
-        prompt: async (input: { readonly parts: ReadonlyArray<unknown> }) => {
+        prompt: async (input: { readonly files: ReadonlyArray<unknown> }) => {
           runtimeMock.state.promptUrls.push(baseUrl);
-          runtimeMock.state.promptParts.push(input.parts);
+          runtimeMock.state.promptParts.push(input.files);
           runtimeMock.state.authHeaders.push(
             serverPassword ? `Basic ${btoa(`opencode:${serverPassword}`)}` : null,
           );
           if (runtimeMock.state.promptRequestError !== undefined) {
             throw runtimeMock.state.promptRequestError;
           }
-          return (
-            runtimeMock.state.promptResult ?? {
-              data: {
-                parts: [
-                  {
-                    type: "text",
-                    text: JSON.stringify({
-                      subject: "Improve OpenCode reuse",
-                      body: "Reuse one server for the full action.",
-                    }),
-                  },
-                ],
+          return { id: "msg_prompt" };
+        },
+        wait: async () => undefined,
+      },
+      message: {
+        list: async (input: { order?: string }) => {
+          runtimeMock.state.messageListOrder = input.order;
+          if (runtimeMock.state.messageResult)
+            return { data: runtimeMock.state.messageResult, cursor: {} };
+          const result = runtimeMock.state.promptResult ?? {
+            data: {
+              parts: [
+                {
+                  type: "text",
+                  text: JSON.stringify({
+                    subject: "Improve OpenCode reuse",
+                    body: "Reuse one server for the full action.",
+                  }),
+                },
+              ],
+            },
+          };
+          return {
+            data: [
+              {
+                id: "msg_answer",
+                type: "assistant",
+                content: result.data?.parts ?? [],
+                error: result.data?.info?.error,
               },
-            }
-          );
+            ],
+            cursor: {},
+          };
         },
       },
     }) as unknown as ReturnType<OpenCodeRuntime.OpenCodeRuntimeShape["createOpenCodeSdkClient"]>,
@@ -137,15 +160,6 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntime.OpenCodeRuntimeShape = {
       }),
     ),
   loadOpenCodeSkills: () => Effect.succeed([]),
-  loadInventoryFromCli: () =>
-    Effect.fail(
-      new OpenCodeRuntime.OpenCodeRuntimeError({
-        operation: "loadInventoryFromCli",
-        detail: "OpenCodeRuntimeTestDouble.loadInventoryFromCli not used in this test",
-        cause: null,
-      }),
-    ),
-  loadSkillsFromCli: () => Effect.succeed([]),
 };
 
 const DEFAULT_TEST_MODEL_SELECTION = {
@@ -235,6 +249,58 @@ const advanceIdleClock = Effect.gen(function* () {
 });
 
 it.layer(OpenCodeTextGenerationTestLayer)("OpenCodeTextGeneration", (it) => {
+  it.effect("uses the latest native v2 assistant response instead of earlier partial text", () =>
+    withOpenCodeTextGeneration(DEFAULT_OPENCODE_SETTINGS, (textGeneration) =>
+      Effect.gen(function* () {
+        const assistant = {
+          id: "msg_latest",
+          type: "assistant" as const,
+          agent: "build",
+          model: { id: "gpt-5", providerID: "openai" },
+          time: { created: 3, completed: 4 },
+          content: [
+            {
+              type: "text" as const,
+              text: '{"subject":"Use latest response","body":"Final result"}',
+            },
+          ],
+        };
+        runtimeMock.state.messageResult = [
+          assistant,
+          {
+            ...assistant,
+            id: "msg_earlier",
+            content: [{ type: "text", text: "Earlier partial output" }],
+          },
+        ];
+        const result = yield* textGeneration.generateCommitMessage(DEFAULT_COMMIT_MESSAGE_INPUT);
+        expect(result.subject).toBe("Use latest response");
+        expect(runtimeMock.state.messageListOrder).toBe("desc");
+      }),
+    ),
+  );
+  it.effect("surfaces a native v2 assistant failure even when partial text exists", () =>
+    withOpenCodeTextGeneration(DEFAULT_OPENCODE_SETTINGS, (textGeneration) =>
+      Effect.gen(function* () {
+        runtimeMock.state.messageResult = [
+          {
+            id: "msg_failed",
+            type: "assistant",
+            agent: "build",
+            model: { id: "gpt-5", providerID: "openai" },
+            time: { created: 1, completed: 2 },
+            content: [{ type: "text", text: "Partial output" }],
+            error: { type: "provider", message: "Go allowance exhausted" },
+          },
+        ];
+        const error = yield* textGeneration
+          .generateCommitMessage(DEFAULT_COMMIT_MESSAGE_INPUT)
+          .pipe(Effect.flip);
+        expect(error.message).toContain("Go allowance exhausted");
+      }),
+    ),
+  );
+
   it.effect("excludes generic files from thread title generation", () =>
     withOpenCodeTextGeneration(DEFAULT_OPENCODE_SETTINGS, (textGeneration) =>
       Effect.gen(function* () {
@@ -267,8 +333,7 @@ it.layer(OpenCodeTextGenerationTestLayer)("OpenCodeTextGeneration", (it) => {
         });
 
         expect(runtimeMock.state.promptParts[0]).toEqual([
-          expect.objectContaining({ type: "text" }),
-          expect.objectContaining({ type: "file", filename: "screenshot.png" }),
+          expect.objectContaining({ uri: expect.stringMatching(/^file:/), name: "screenshot.png" }),
         ]);
       }),
     ),

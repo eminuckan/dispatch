@@ -50,6 +50,12 @@ import {
 } from "./OpenCodeAdapter.ts";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 
+// Exercise lifecycle behavior with its normalized session client; native v2
+// transport is verified independently in OpenCodeSessionClient.test.ts.
+vi.mock("../OpenCodeSessionClient.ts", () => ({
+  makeOpenCodeSessionClient: (client: object) => ({ ...client, native: client }),
+}));
+
 // Test-local service tag so the rest of the file can keep using `yield* OpenCodeAdapter`.
 class OpenCodeAdapter extends Context.Service<OpenCodeAdapter, OpenCodeAdapterShape>()(
   "t3/provider/Layers/OpenCodeAdapter.test/OpenCodeAdapter",
@@ -562,15 +568,6 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
       }),
     ),
   loadOpenCodeSkills: () => Effect.succeed([]),
-  loadInventoryFromCli: () =>
-    Effect.fail(
-      new OpenCodeRuntimeError({
-        operation: "loadInventoryFromCli",
-        detail: "OpenCodeRuntimeTestDouble.loadInventoryFromCli not used in this test",
-        cause: null,
-      }),
-    ),
-  loadSkillsFromCli: () => Effect.succeed([]),
 };
 
 const providerSessionDirectoryTestLayer = Layer.succeed(ProviderSessionDirectory, {
@@ -667,6 +664,93 @@ const questionRequest = (id: string, sessionID: string): QuestionRequest => ({
 });
 
 it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
+  it.effect("completes once for the v2 execution-succeeded and session-idle notifications", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-v2-double-idle");
+      const push = makeOpenCodeEventQueue();
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.takeUntil((event) => event.type === "thread.metadata.updated"),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+      const turn = yield* adapter.sendTurn({
+        threadId,
+        input: "Hi",
+        modelSelection: createModelSelection(ProviderInstanceId.make("opencode"), "openai/gpt-5"),
+      });
+      const sessionID = "http://127.0.0.1:9999/session";
+      const prompt = runtimeMock.state.promptCalls[0];
+      NodeAssert.ok(typeof prompt === "object" && prompt !== null && "messageID" in prompt);
+      const messageID = prompt.messageID;
+      push({
+        id: "evt-user",
+        type: "message.updated",
+        properties: { info: { id: messageID, sessionID, role: "user" } },
+      });
+      for (const id of ["execution-succeeded", "session-idle"])
+        push({ id, type: "session.status", properties: { sessionID, status: { type: "idle" } } });
+      push({
+        id: "marker",
+        type: "session.updated",
+        properties: { info: { id: sessionID, title: "Processed both idle notifications" } },
+      });
+      const events = Array.from(yield* Fiber.join(eventsFiber));
+      NodeAssert.equal(
+        events.filter((event) => event.type === "turn.completed" && event.turnId === turn.turnId)
+          .length,
+        1,
+      );
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("settles a native permission rejection interruption without a provider failure", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-native-declined");
+      const push = makeOpenCodeEventQueue();
+      const aborted = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId && event.type === "turn.aborted"),
+        Stream.runHead,
+        Effect.forkChild,
+      );
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "approval-required",
+      });
+      const turn = yield* adapter.sendTurn({
+        threadId,
+        input: "Run pwd",
+        modelSelection: createModelSelection(ProviderInstanceId.make("opencode"), "openai/gpt-5"),
+      });
+      push({
+        id: "evt-declined",
+        type: "session.error",
+        properties: {
+          sessionID: "http://127.0.0.1:9999/session",
+          error: {
+            name: "MessageAbortedError",
+            data: { message: "OpenCode execution interrupted" },
+          },
+        },
+      });
+      const result = yield* Fiber.join(aborted);
+      NodeAssert.equal(Option.getOrThrow(result).turnId, turn.turnId);
+      const sessions = yield* adapter.listSessions();
+      NodeAssert.equal(sessions[0]?.status, "ready");
+      NodeAssert.equal(sessions[0]?.activeTurnId, undefined);
+      NodeAssert.equal(sessions[0]?.lastError, undefined);
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
   it.effect("reuses a configured OpenCode server URL instead of spawning a local server", () =>
     Effect.gen(function* () {
       const adapter = yield* OpenCodeAdapter;

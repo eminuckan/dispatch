@@ -2,15 +2,19 @@
 
 Install and authenticate OpenCode on the machine running your environment, then
 enable it in **Settings > Providers**. See [provider setup](./install.md#providers).
-T3 Code requires OpenCode 1.14.19 or newer, including when you connect an existing
-OpenCode server.
+T3 Code supports OpenCode v2 (`>=2.0.0 <3.0.0`), including when you connect an
+existing OpenCode server. Upgrade v1 installations before enabling the provider.
+
+An existing OpenCode Go login is reused; choose an **OpenCode Go** model from
+the model selector after refreshing provider status.
 
 ## Local or external server
 
 Leave **Server URL** empty to let T3 Code start OpenCode locally. A password in
 provider settings applies to both that server and T3 Code's connection. With no
 password setting, the local server uses `OPENCODE_SERVER_PASSWORD` from its
-environment.
+environment. If neither is set, T3 Code generates a private password for its
+local server.
 
 To use an existing OpenCode server, set **Server URL** and its password in provider
 settings. T3 Code uses only that configured password for an external server; it
@@ -29,8 +33,8 @@ modes even though normal file reads do not; `.env.example` is allowed.
 
 **Allow for workspace** applies to matching requests in other OpenCode sessions
 using the same workspace. It is broader than the current thread, especially on a
-shared external server. Use **Allow once** for a single request. Denying an action
-does not stop the whole turn.
+shared external server. Use **Allow once** for a single request. In OpenCode v2, denying a permission
+stops the current execution; send a follow-up to continue.
 
 ## Refresh models, commands, and skills
 

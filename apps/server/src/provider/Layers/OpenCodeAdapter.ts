@@ -1,3 +1,4 @@
+import { makeOpenCodeSessionClient, type OpenCodeSessionClient } from "../OpenCodeSessionClient.ts";
 import { isManagedTeamThread } from "../../team/nativeDelegation.ts";
 import {
   EventId,
@@ -128,8 +129,11 @@ export function isOpenCodeNotFound(cause: unknown): boolean {
       continue;
     }
 
-    const name = record.name;
-    if (typeof name === "string" && name.toLowerCase() === "notfounderror") {
+    const name = record._tag ?? record.name;
+    if (
+      typeof name === "string" &&
+      ["notfounderror", "sessionnotfounderror"].includes(name.toLowerCase())
+    ) {
       return true;
     }
 
@@ -339,7 +343,7 @@ type OpenCodeStepUsage = Pick<Extract<Part, { readonly type: "step-finish" }>, "
 
 interface OpenCodeSessionContext {
   session: ProviderSession;
-  readonly client: OpencodeClient;
+  readonly client: OpenCodeSessionClient;
   readonly server: OpenCodeServerConnection;
   readonly directory: string;
   openCodeSessionId: string;
@@ -509,7 +513,11 @@ function toToolLifecycleItemType(toolName: string): ToolLifecycleItemType {
   if (normalized === "todowrite" || normalized === "todoread") {
     return "dynamic_tool_call";
   }
-  if (normalized.includes("bash") || normalized.includes("command")) {
+  if (
+    normalized.includes("bash") ||
+    normalized.includes("shell") ||
+    normalized.includes("command")
+  ) {
     return "command_execution";
   }
   if (
@@ -1403,8 +1411,8 @@ export function makeOpenCodeAdapter(
             }
           }
 
-          // Native command responses wait for generation. Recover their receipt
-          // first, then let sendTurn acknowledge admission before reconciling idle.
+          // Recover a command receipt when its response is delayed, then let
+          // sendTurn acknowledge admission before reconciling idle.
           if (promptAdmission.requiresMessageReceipt && !promptAdmission.accepted) {
             if (!promptAdmission.messageObserved) {
               yield* Effect.sleep(`${Math.min(250 * 2 ** retryCount, 2_000)} millis`);
@@ -1750,7 +1758,7 @@ export function makeOpenCodeAdapter(
       }
       const patterns = request.patterns.filter((pattern) => pattern !== "*");
       const detail =
-        request.permission === "bash" && patterns.length > 0
+        (request.permission === "bash" || request.permission === "shell") && patterns.length > 0
           ? patterns.join("\n")
           : [request.permission.replaceAll("_", " "), ...patterns].join("\n");
       context.autoRepliedRequestIds.delete(request.id);
@@ -2662,6 +2670,32 @@ export function makeOpenCodeAdapter(
             if (context.interruptedTurnId !== undefined || context.reconcileIdleStatus) {
               break;
             }
+            // v2 also interrupts execution when a permission is declined or
+            // another client stops it. This is a stopped turn, not a model error.
+            yield* cancelIdleReconciliation(context);
+            const tokenUsage = activeTurnId
+              ? takeOpenCodeTurnTokenUsage(context, false)
+              : undefined;
+            context.activeTurnId = undefined;
+            context.activeAgent = undefined;
+            context.activeVariant = undefined;
+            yield* updateProviderSession(
+              context,
+              { status: "ready" },
+              { clearActiveTurnId: true, clearLastError: true },
+            );
+            yield* clearPendingOpenCodeRequests(context, event);
+            if (activeTurnId)
+              yield* emit({
+                ...(yield* buildEventBase({
+                  threadId: context.session.threadId,
+                  turnId: activeTurnId,
+                  raw: event,
+                })),
+                type: "turn.aborted",
+                payload: { reason: message, tokenUsage },
+              });
+            break;
           }
           yield* cancelIdleReconciliation(context);
           const terminalCancellation =
@@ -2862,11 +2896,13 @@ export function makeOpenCodeAdapter(
                   mcpSession,
                 ),
               });
-              const client = openCodeRuntime.createOpenCodeSdkClient({
-                baseUrl: server.url,
+              const client = makeOpenCodeSessionClient(
+                openCodeRuntime.createOpenCodeSdkClient({
+                  baseUrl: server.url,
+                  ...(server.serverPassword ? { serverPassword: server.serverPassword } : {}),
+                }),
                 directory,
-                ...(server.serverPassword ? { serverPassword: server.serverPassword } : {}),
-              });
+              );
               if (mcpSession && !server.external) {
                 yield* runOpenCodeSdk("mcp.add", () =>
                   client.mcp.add({
@@ -3129,7 +3165,7 @@ export function makeOpenCodeAdapter(
       const text = input.input?.trim();
       const commandMatch = text?.match(/^\/([^\s/]+)(?:\s+([\s\S]*))?$/);
       const nativeCommand = commandMatch
-        ? (yield* loadOpenCodeCommands(context.client).pipe(
+        ? (yield* loadOpenCodeCommands(context.client.native, context.directory).pipe(
             Effect.timeout("10 seconds"),
             Effect.orElseSucceed(() => []),
           )).find((command) => command.name === commandMatch[1])
@@ -3274,8 +3310,8 @@ export function makeOpenCodeAdapter(
                     { signal },
                   ),
                 ).pipe(Effect.asVoid),
-                // A command response waits for generation. Only bound admission;
-                // the user-message receipt proves OpenCode accepted the command.
+                // Bound command admission independently of execution; a recovered
+                // user-message receipt also proves OpenCode accepted the command.
                 Deferred.await(promptAdmission.messageReceipt).pipe(
                   Effect.timeout("10 seconds"),
                   Effect.andThen(Effect.never),
