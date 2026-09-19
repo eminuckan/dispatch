@@ -762,9 +762,23 @@ export const make = Effect.gen(function* () {
                   })
                   .pipe(Effect.orElseSucceed(() => null))
               : null;
-          if (advice && !["correct", "increase_effort", "new_worker"].includes(advice.action))
+          // Jev advises model recovery; the lead owns the acceptance review.
+          // An uncertain diagnosis must not veto a correction the lead already
+          // supplied. Keep that worker/model and let retryTask enforce limits
+          // and reject repeated corrections or unchanged results.
+          const continueLeadCorrection =
+            proposal.action === "correct" &&
+            advice?.action === "lead_review" &&
+            advice.profileId === review.profileId;
+          if (
+            advice &&
+            !continueLeadCorrection &&
+            !["correct", "increase_effort", "new_worker"].includes(advice.action)
+          )
             return yield* pause(run, `${advice.reason} Lead correction: ${proposal.summary}`);
-          const profileId = advice?.profileId ?? review.profileId;
+          const profileId = continueLeadCorrection
+            ? review.profileId
+            : (advice?.profileId ?? review.profileId);
           run = yield* store.update(
             run.id,
             run.revision,

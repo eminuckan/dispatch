@@ -13,6 +13,7 @@ import {
   TurnId,
   type OrchestrationCommand,
   type TeamRun,
+  type TeamRecoveryAdvice,
   type ServerProvider,
 } from "@t3tools/contracts";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
@@ -81,7 +82,16 @@ const initial: TeamRun = {
     notice: null,
   },
 };
-function fixture(failAcknowledgement = false, driver = "codex") {
+function fixture(
+  failAcknowledgement = false,
+  driver = "codex",
+  recovery: TeamRecoveryAdvice = {
+    action: "correct",
+    reason: "Apply lead correction",
+    profileId: "p",
+    source: "policy",
+  },
+) {
   const commands: OrchestrationCommand[] = [];
   const lifecycleActivities: Array<
     Extract<OrchestrationCommand, { type: "thread.activity.append" }>
@@ -239,6 +249,7 @@ function fixture(failAcknowledgement = false, driver = "codex") {
   };
   const layers = Layer.mergeAll(
     Layer.mock(TeamRouter)({
+      recover: () => Effect.succeed(recovery),
       assess: (draft) =>
         Effect.succeed({
           draftId: draft.draftId,
@@ -792,6 +803,140 @@ it.effect(
     }).pipe(Effect.provide(SqlitePersistenceMemory));
   },
 );
+
+for (const resumePausedRun of [false, true]) {
+  it.effect(
+    `follows the lead correction despite uncertain routing and completes acceptance${resumePausedRun ? " after resume" : ""}`,
+    () => {
+      const f = fixture(false, "codex", {
+        action: "lead_review",
+        reason: "Failure diagnosis is uncertain; no automatic escalation.",
+        profileId: "p",
+        source: "policy",
+      });
+      return Effect.gen(function* () {
+        const store = yield* Store.make;
+        yield* store.create(initial);
+        const runtime = yield* make.pipe(
+          Effect.provideService(Store.TeamStore, store),
+          Effect.provide(f.layers),
+        );
+        const finish = (index: number, text: string) => {
+          const command = f.commands[index]!;
+          if (command.type !== "thread.turn.start") throw new Error("Expected turn");
+          f.complete(command, text);
+          return command;
+        };
+        yield* runtime.tick();
+        finish(
+          0,
+          '{"acceptance":["Combined result"],"tasks":[{"id":"edit","objective":"Edit label","acceptance":["Exact label check"],"dependencies":[],"profileId":"p","context":"contract"}],"rationale":"bounded worker"}',
+        );
+        yield* runtime.tick();
+        const worker = finish(1, "Worker complete; commit abc, but boundary coverage missing.");
+        yield* runtime.tick();
+        finish(
+          2,
+          '{"action":"correct","summary":"Add a real child-process cancellation check; the current test mocks the owner and does not exercise runtime cleanup.","checks":[]}',
+        );
+        if (resumePausedRun) {
+          const run = yield* store.get(initial.id);
+          yield* runtime.control({
+            id: run.id,
+            revision: run.revision,
+            action: "pause",
+          });
+          yield* runtime.tick();
+          expect(f.commands).toHaveLength(3);
+          const paused = yield* store.get(initial.id);
+          yield* runtime.control({ id: paused.id, revision: paused.revision, action: "resume" });
+        }
+        yield* runtime.tick();
+        let run = yield* store.get(initial.id);
+        expect(run.status).toBe("running");
+        expect(run.tasks[0]?.attempts).toBe(2);
+        const correction = f.commands[3];
+        if (correction?.type !== "thread.turn.start")
+          throw new Error("Expected correction dispatch");
+        expect(correction.threadId).toBe(worker.threadId);
+        expect(correction.modelSelection).toEqual(worker.modelSelection);
+        expect(correction.message.text).toContain("real child-process cancellation check");
+        yield* runtime.tick();
+        expect(f.commands).toHaveLength(4);
+        finish(3, "Added real child-process cancellation coverage; commit def; checks pass.");
+        yield* runtime.tick();
+        finish(
+          4,
+          '{"action":"accept","summary":"Worker correction verified","checks":[{"criterionIndex":0,"criterion":"Exact label check","command":"python3","args":[]}]}',
+        );
+        yield* runtime.tick();
+        expect((yield* store.get(initial.id)).status).not.toBe("completed");
+        finish(
+          5,
+          '{"action":"accept","summary":"Integrated worker commit def and verified the combined result.","checks":[{"criterionIndex":0,"criterion":"Combined result","command":"python3","args":[]}]}',
+        );
+        yield* runtime.tick();
+        run = yield* store.get(initial.id);
+        expect(run.status).toBe("completed");
+        expect(run.execution?.notice).toBe(
+          "Integrated worker commit def and verified the combined result.",
+        );
+        expect(run.tasks[0]?.status).toBe("accepted");
+        expect(f.checks).toEqual(["python3", "python3"]);
+        expect(f.lifecycleActivities.map((command) => command.activity.kind)).toContain(
+          "team.worker-correction",
+        );
+      }).pipe(Effect.provide(SqlitePersistenceMemory));
+    },
+  );
+}
+
+for (const advice of [
+  { action: "stop", profileId: "p" },
+  { action: "wait", profileId: "p" },
+  { action: "repair_environment", profileId: "p" },
+  { action: "supply_context", profileId: "p" },
+  { action: "lead_review", profileId: null },
+] as const) {
+  it.effect(
+    `does not bypass recovery blocker ${advice.action} with profile ${advice.profileId}`,
+    () => {
+      const f = fixture(false, "codex", {
+        ...advice,
+        reason: "Explicit recovery blocker",
+        source: "policy",
+      });
+      return Effect.gen(function* () {
+        const store = yield* Store.make;
+        yield* store.create(initial);
+        const runtime = yield* make.pipe(
+          Effect.provideService(Store.TeamStore, store),
+          Effect.provide(f.layers),
+        );
+        const finish = (index: number, text: string) => {
+          const command = f.commands[index]!;
+          if (command.type !== "thread.turn.start") throw new Error("Expected turn");
+          f.complete(command, text);
+        };
+        yield* runtime.tick();
+        finish(
+          0,
+          '{"acceptance":["Combined result"],"tasks":[{"id":"edit","objective":"Edit label","acceptance":["Exact label check"],"dependencies":[],"profileId":"p","context":"contract"}],"rationale":"bounded worker"}',
+        );
+        yield* runtime.tick();
+        finish(1, "Worker result");
+        yield* runtime.tick();
+        finish(2, '{"action":"correct","summary":"Add a real cleanup check","checks":[]}');
+        yield* runtime.tick();
+        const run = yield* store.get(initial.id);
+        expect(run.status).toBe("paused");
+        expect(run.execution?.notice).toContain("Explicit recovery blocker");
+        expect(run.tasks[0]?.attempts).toBe(1);
+        expect(f.commands).toHaveLength(3);
+      }).pipe(Effect.provide(SqlitePersistenceMemory));
+    },
+  );
+}
 
 it.effect("retains an uncertain dispatch reservation and interrupts it on cancellation", () => {
   const f = fixture(true);
