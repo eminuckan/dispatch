@@ -77,7 +77,7 @@ describe("DesktopEnvironment", () => {
       assert.equal(environment.serverRoot, "/repo");
       assert.equal(environment.backendEntryPath, "/repo/apps/server/dist/bin.mjs");
       assert.equal(environment.backendCwd, "/repo");
-      assert.equal(environment.appUserModelId, "com.t3tools.t3code.dev");
+      assert.equal(environment.appUserModelId, "com.eminuckan.t3jev.dev");
       assert.equal(environment.linuxWmClass, "t3code-dev");
       assert.equal(environment.linuxDesktopEntryName, "com.t3tools.T3Code.Development.desktop");
       assert.deepEqual(
@@ -163,8 +163,12 @@ describe("DesktopEnvironment", () => {
       );
       const production = yield* makeEnvironment();
 
-      assert.equal(development.stateDir, "/Users/alice/.t3/dev");
-      assert.equal(production.stateDir, "/Users/alice/.t3/userdata");
+      assert.equal(development.stateDir, "/Users/alice/.t3-jev/dev");
+      assert.equal(production.stateDir, "/Users/alice/.t3-jev/userdata");
+      assert.equal(production.userDataDirName, "t3-jev");
+      assert.equal(production.legacyUserDataDirName, "T3 Jev (Alpha)");
+      assert.equal(production.displayName, "T3 Jev (Alpha)");
+      assert.equal(production.appUserModelId, "com.eminuckan.t3jev");
     }),
   );
 

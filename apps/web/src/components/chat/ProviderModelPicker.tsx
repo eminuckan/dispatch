@@ -1,3 +1,5 @@
+import { RouteIcon } from "lucide-react";
+import { TeamRoutingPickerDetails, useComposerRouting } from "./TeamRoutingPreview";
 import {
   ANTIGRAVITY_DEFAULT_MODEL,
   type ProviderInstanceId,
@@ -59,6 +61,9 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   getModelDisabledReason?: (instanceId: ProviderInstanceId, model: string) => string | null;
   onInstanceModelChange: (instanceId: ProviderInstanceId, model: string) => void;
 }) {
+  const contextRouting = useComposerRouting();
+  const routing = props.isComposerOwned ? contextRouting : null;
+  const routedLabel = routing?.automatic ? `Auto · ${routing.summary}` : undefined;
   const composerFloatingLayerProps = useComposerMenuProps();
   const [uncontrolledIsMenuOpen, setUncontrolledIsMenuOpen] = useState(false);
   const isMenuOpen = props.open ?? uncontrolledIsMenuOpen;
@@ -151,8 +156,9 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
     };
   }, [isMenuOpen]);
 
-  const handleInstanceModelChange = (instanceId: ProviderInstanceId, model: string) => {
+  const handleInstanceModelChange = async (instanceId: ProviderInstanceId, model: string) => {
     if (props.disabled) return;
+    if (routing?.automatic && !(await routing.setMode("shadow"))) return;
     props.onInstanceModelChange(instanceId, model);
     setIsMenuOpen(false);
   };
@@ -189,8 +195,8 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
     ? selectedEntries.map((selection) => selection.label).join(", ") || "Choose models"
     : undefined;
   const triggerTooltipContent = shortcutLabel
-    ? `${props.triggerLabel ?? allModelNames ?? triggerLabel} · ${shortcutLabel}`
-    : (props.triggerLabel ?? allModelNames ?? triggerLabel);
+    ? `${props.triggerLabel ?? routedLabel ?? allModelNames ?? triggerLabel} · ${shortcutLabel}`
+    : (props.triggerLabel ?? routedLabel ?? allModelNames ?? triggerLabel);
 
   return (
     <Popover
@@ -222,7 +228,9 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
         <span
           className={cn("flex min-w-0 flex-1 items-center", size === "xs" ? "gap-1" : "gap-1.5")}
         >
-          {selectedEntries && props.triggerLabel === undefined ? (
+          {routing?.automatic ? (
+            <RouteIcon className="size-4 shrink-0" />
+          ) : selectedEntries && props.triggerLabel === undefined ? (
             <span className="flex shrink-0 items-center -space-x-1" aria-hidden="true">
               {selectedEntries
                 .slice(0, 3)
@@ -268,7 +276,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
                 />
               }
             >
-              {props.triggerLabel ?? multipleLabel ?? triggerTitle}
+              {props.triggerLabel ?? routedLabel ?? multipleLabel ?? triggerTitle}
             </TooltipTrigger>
             <TooltipPopup side="top">{triggerTooltipContent}</TooltipPopup>
           </Tooltip>
@@ -288,6 +296,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
         className="before:hidden [--viewport-inline-padding:0]"
         viewportClassName="overflow-hidden! rounded-[calc(var(--radius-lg)-1px)] p-0 [clip-path:inset(0_round_calc(var(--radius-lg)-1px))]"
       >
+        {props.isComposerOwned && <TeamRoutingPickerDetails />}
         <ModelPickerContent
           activeInstanceId={activeInstanceId}
           model={props.model}

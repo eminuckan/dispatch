@@ -270,3 +270,5 @@ automatically. HTML previews cannot access your T3 Code session.
 
 On mobile, select a PDF attachment or link to open it. iOS uses the native viewer;
 Android opens a compatible installed file viewer.
+
+Jev routing lives in the model picker. Choose Manual, Preview, or Auto there; decision details stay collapsed until needed. Selecting a model while Auto is enabled returns to Preview, so Send uses the model you selected. The Team control beside the attachment/send actions opens team launch and run controls.

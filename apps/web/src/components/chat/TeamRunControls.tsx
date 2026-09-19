@@ -1,3 +1,5 @@
+import { UsersIcon, ChevronDownIcon } from "lucide-react";
+import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { useState } from "react";
 import type { EnvironmentId, ProjectId, TeamAssessment, TeamRun } from "@t3tools/contracts";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
@@ -88,106 +90,130 @@ export function TeamRunControls({
   const projectRuns = (runs.data ?? []).filter((run) => run.projectId === projectId).slice(0, 5);
   if (!showStart && projectRuns.length === 0) return null;
   return (
-    <div className="mt-2 border-t pt-2 text-xs">
-      {showStart && (
-        <div className="flex flex-wrap items-center gap-2">
+    <Popover>
+      <PopoverTrigger
+        render={
           <Button
             size="sm"
-            variant="outline"
-            disabled={pending || !assessment?.selection || hasAttachments || composing}
-            onClick={() => void submit()}
-          >
-            Run team · full access
-          </Button>
-          <label>
-            Turn limit{" "}
-            <input
-              aria-label="Team turn limit"
-              className="w-14 rounded border bg-background px-1"
-              type="number"
-              min={1}
-              max={100}
-              value={maxTurns}
-              onChange={(e) => setMaxTurns(Math.min(100, Math.max(1, Number(e.target.value) || 1)))}
-            />
-          </label>
-          <Button size="sm" variant="ghost" onClick={runs.refresh}>
-            Refresh teams
-          </Button>
-        </div>
-      )}
-      <p className="mt-1">
-        Experimental. Uses committed HEAD in isolated worktrees. The limit includes lead turns,
-        workers and retries; it is not a dollar budget.
-      </p>
-      {!showStart && (
-        <Button size="sm" variant="ghost" onClick={runs.refresh}>
-          Refresh teams
-        </Button>
-      )}
-      {projectRuns.map((run) => (
-        <div key={run.id} className="mt-2 border-t pt-2">
-          <div>
-            {run.objective.slice(0, 100)} · {run.status} · {run.execution?.turns.length ?? 0}/
-            {run.execution?.maxTurns ?? 0} turns
-          </div>
-          {run.execution && (
-            <a className="underline" href={`/${environmentId}/${run.execution.leadThreadId}`}>
-              Open lead
-            </a>
+            variant="ghost"
+            className="shrink-0 gap-1.5 font-normal text-muted-foreground"
+            aria-label="Team controls"
+          />
+        }
+      >
+        <UsersIcon className="size-3.5" />
+        Team
+        {projectRuns.some((run) => !["completed", "cancelled", "failed"].includes(run.status))
+          ? " · active"
+          : ""}
+        <ChevronDownIcon className="size-3" />
+      </PopoverTrigger>
+      <PopoverPopup side="top" align="end" className="w-96 max-w-[calc(100vw-2rem)] text-xs">
+        <div className="max-h-96 space-y-3 overflow-y-auto leading-relaxed">
+          <p className="font-medium text-foreground">Managed team</p>
+          {showStart && (
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={pending || !assessment?.selection || hasAttachments || composing}
+                onClick={() => void submit()}
+              >
+                Start team
+              </Button>
+              <label>
+                Turn limit{" "}
+                <input
+                  aria-label="Team turn limit"
+                  className="ml-1 w-16 rounded-md border bg-background px-2 py-1 tabular-nums"
+                  type="number"
+                  min={1}
+                  max={100}
+                  value={maxTurns}
+                  onChange={(e) =>
+                    setMaxTurns(Math.min(100, Math.max(1, Number(e.target.value) || 1)))
+                  }
+                />
+              </label>
+              <Button size="sm" variant="ghost" onClick={runs.refresh}>
+                Refresh teams
+              </Button>
+            </div>
           )}
-          {run.tasks.map((task) => (
-            <div key={task.id}>
-              {task.objective.slice(0, 70)} · {task.status} · attempt {task.attempts}
-              {task.threadId && (
-                <>
-                  {" "}
-                  ·{" "}
-                  <a className="underline" href={`/${environmentId}/${task.threadId}`}>
-                    Open worker
-                  </a>
-                </>
+          <p className="text-muted-foreground">
+            Runs with full access in separate worktrees, starting from your latest commit. Unsaved
+            changes are excluded. The turn limit includes the lead, workers and retries.
+          </p>
+          {!showStart && (
+            <Button size="sm" variant="ghost" onClick={runs.refresh}>
+              Refresh teams
+            </Button>
+          )}
+          {projectRuns.map((run) => (
+            <div key={run.id} className="mt-2 border-t pt-2">
+              <div>
+                {run.objective.slice(0, 100)} · {run.status} · {run.execution?.turns.length ?? 0}/
+                {run.execution?.maxTurns ?? 0} turns
+              </div>
+              {run.execution && (
+                <a className="underline" href={`/${environmentId}/${run.execution.leadThreadId}`}>
+                  Open lead
+                </a>
+              )}
+              {run.tasks.map((task) => (
+                <div key={task.id}>
+                  {task.objective.slice(0, 70)} · {task.status} · attempt {task.attempts}
+                  {task.threadId && (
+                    <>
+                      {" "}
+                      ·{" "}
+                      <a className="underline" href={`/${environmentId}/${task.threadId}`}>
+                        Open worker
+                      </a>
+                    </>
+                  )}
+                </div>
+              ))}
+              {run.execution?.notice && <p>{run.execution.notice}</p>}
+              {!["completed", "cancelled", "failed"].includes(run.status) && (
+                <div className="flex gap-2">
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    disabled={pending}
+                    onClick={() => void change(run, run.status === "paused" ? "resume" : "pause")}
+                  >
+                    {run.status === "paused" ? "Resume" : "Pause admission"}
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    disabled={pending}
+                    onClick={() => void change(run, "cancel")}
+                  >
+                    Cancel team
+                  </Button>
+                  {(run.execution?.maxTurns ?? 100) < 100 && (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      disabled={pending}
+                      onClick={() => void change(run, "extend_budget")}
+                    >
+                      Add up to 5 turns
+                    </Button>
+                  )}
+                </div>
               )}
             </div>
           ))}
-          {run.execution?.notice && <p>{run.execution.notice}</p>}
-          {!["completed", "cancelled", "failed"].includes(run.status) && (
-            <div className="flex gap-2">
-              <Button
-                size="sm"
-                variant="ghost"
-                disabled={pending}
-                onClick={() => void change(run, run.status === "paused" ? "resume" : "pause")}
-              >
-                {run.status === "paused" ? "Resume" : "Pause admission"}
-              </Button>
-              <Button
-                size="sm"
-                variant="ghost"
-                disabled={pending}
-                onClick={() => void change(run, "cancel")}
-              >
-                Cancel team
-              </Button>
-              {(run.execution?.maxTurns ?? 100) < 100 && (
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  disabled={pending}
-                  onClick={() => void change(run, "extend_budget")}
-                >
-                  Add up to 5 turns
-                </Button>
-              )}
-            </div>
+          {(message || runs.error) && (
+            <p role="status" className="mt-2">
+              {message ?? runs.error}
+            </p>
           )}
         </div>
-      ))}
-      {(message || runs.error) && (
-        <p role="status" className="mt-2">
-          {message ?? runs.error}
-        </p>
-      )}
-    </div>
+      </PopoverPopup>
+    </Popover>
   );
 }
