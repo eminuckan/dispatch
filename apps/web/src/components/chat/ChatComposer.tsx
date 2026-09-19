@@ -6345,11 +6345,16 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             ref={composerMainSurfaceRef}
             className={composerProviderState.composerFrameClassName}
           >
-            {teamRouting.orchestration && (
-              <span className="orchestration-composer-border" aria-hidden="true">
-                <span />
+            <span
+              className="orchestration-composer-border"
+              data-active={teamRouting.orchestration}
+              aria-hidden="true"
+            >
+              <span className="orchestration-border-plume">
+                <span className="orchestration-border-colors" />
               </span>
-            )}
+              <span className="orchestration-border-ignition" />
+            </span>
             <div
               ref={composerSurfaceRef}
               data-chat-composer-surface="true"
