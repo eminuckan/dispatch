@@ -1244,7 +1244,11 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     },
   });
   const openPrLink = useOpenPrLink();
-  const sidebarThreads = useThreadShellsForProjectRefs(project.memberProjectRefs);
+  const allsidebarThreads = useThreadShellsForProjectRefs(project.memberProjectRefs);
+  const sidebarThreads = useMemo(
+    () => allsidebarThreads.filter((thread) => !thread.managedTeamWorker),
+    [allsidebarThreads],
+  );
   const sidebarThreadByKey = useMemo(
     () =>
       new Map(
@@ -3137,7 +3141,11 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
 
 export default function LegacySidebar() {
   const projects = useProjects();
-  const sidebarThreads = useThreadShells();
+  const allsidebarThreads = useThreadShells();
+  const sidebarThreads = useMemo(
+    () => allsidebarThreads.filter((thread) => !thread.managedTeamWorker),
+    [allsidebarThreads],
+  );
   const projectExpandedById = useUiStateStore((store) => store.projectExpandedById);
   const projectOrder = useUiStateStore((store) => store.projectOrder);
   const reorderProjects = useUiStateStore((store) => store.reorderProjects);

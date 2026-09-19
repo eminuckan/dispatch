@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./teamAgentNames": {
+      "types": "./src/teamAgentNames.ts",
+      "import": "./src/teamAgentNames.ts"
+    },
     "./legacyCliLauncher": {
       "types": "./src/legacyCliLauncher.ts",
       "import": "./src/legacyCliLauncher.ts"

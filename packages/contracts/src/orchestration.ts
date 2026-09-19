@@ -858,6 +858,8 @@ export const OrchestrationProjectShell = Schema.Struct({
 export type OrchestrationProjectShell = typeof OrchestrationProjectShell.Type;
 
 export const OrchestrationThreadShell = Schema.Struct({
+  /** Managed workers remain addressable but are omitted from top-level thread lists. */
+  managedTeamWorker: Schema.optional(Schema.Boolean),
   id: ThreadId,
   projectId: ProjectId,
   title: TrimmedNonEmptyString,

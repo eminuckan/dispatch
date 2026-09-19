@@ -128,6 +128,7 @@ const ProjectionThreadPullRequestDbRowSchema = ProjectionThreadPullRequest.mapFi
 );
 const ProjectionThreadDbRowSchema = ProjectionThread.mapFields(
   Struct.assign({
+    managedTeamWorker: Schema.Int,
     modelSelection: Schema.fromJsonString(ModelSelection),
     titleState: Schema.NullOr(Schema.fromJsonString(ThreadTitleState)),
     linkedPullRequest: Schema.NullOr(Schema.fromJsonString(ThreadLinkedPullRequest)),
@@ -593,6 +594,11 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           pending_approval_count AS "pendingApprovalCount",
           pending_user_input_count AS "pendingUserInputCount",
           has_actionable_proposed_plan AS "hasActionableProposedPlan",
+          thread_id IN (
+            SELECT json_extract(member.value, '$.command.threadId')
+            FROM team_runs, json_each(team_runs.payload, '$.execution.turns') AS member
+            WHERE json_extract(member.value, '$.role') = 'worker'
+          ) AS "managedTeamWorker",
           deleted_at AS "deletedAt"
         FROM projection_threads
         ORDER BY created_at ASC, thread_id ASC
@@ -634,6 +640,11 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           pending_approval_count AS "pendingApprovalCount",
           pending_user_input_count AS "pendingUserInputCount",
           has_actionable_proposed_plan AS "hasActionableProposedPlan",
+          thread_id IN (
+            SELECT json_extract(member.value, '$.command.threadId')
+            FROM team_runs, json_each(team_runs.payload, '$.execution.turns') AS member
+            WHERE json_extract(member.value, '$.role') = 'worker'
+          ) AS "managedTeamWorker",
           deleted_at AS "deletedAt"
         FROM projection_threads
         WHERE deleted_at IS NULL
@@ -707,6 +718,11 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           pending_approval_count AS "pendingApprovalCount",
           pending_user_input_count AS "pendingUserInputCount",
           has_actionable_proposed_plan AS "hasActionableProposedPlan",
+          thread_id IN (
+            SELECT json_extract(member.value, '$.command.threadId')
+            FROM team_runs, json_each(team_runs.payload, '$.execution.turns') AS member
+            WHERE json_extract(member.value, '$.role') = 'worker'
+          ) AS "managedTeamWorker",
           deleted_at AS "deletedAt"
         FROM projection_threads
         WHERE deleted_at IS NULL
@@ -1272,6 +1288,11 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           pending_approval_count AS "pendingApprovalCount",
           pending_user_input_count AS "pendingUserInputCount",
           has_actionable_proposed_plan AS "hasActionableProposedPlan",
+          thread_id IN (
+            SELECT json_extract(member.value, '$.command.threadId')
+            FROM team_runs, json_each(team_runs.payload, '$.execution.turns') AS member
+            WHERE json_extract(member.value, '$.role') = 'worker'
+          ) AS "managedTeamWorker",
           deleted_at AS "deletedAt"
         FROM projection_threads
         WHERE thread_id = ${threadId}
@@ -2716,6 +2737,7 @@ pending_approval_requests AS (
                 threads: Arr.filterMap(threadRows, (row) =>
                   row.deletedAt === null
                     ? Result.succeed({
+                        ...(row.managedTeamWorker === 1 ? { managedTeamWorker: true } : {}),
                         id: row.threadId,
                         projectId: row.projectId,
                         title: row.title,
@@ -2879,6 +2901,7 @@ pending_approval_requests AS (
                     : Result.failVoid,
                 ),
                 threads: threadRows.map((row): OrchestrationThreadShell => ({
+                  ...(row.managedTeamWorker === 1 ? { managedTeamWorker: true } : {}),
                   id: row.threadId,
                   projectId: row.projectId,
                   title: row.title,
@@ -3232,6 +3255,7 @@ pending_approval_requests AS (
       }
 
       return Option.some({
+        ...(threadRow.value.managedTeamWorker === 1 ? { managedTeamWorker: true } : {}),
         id: threadRow.value.threadId,
         projectId: threadRow.value.projectId,
         title: threadRow.value.title,

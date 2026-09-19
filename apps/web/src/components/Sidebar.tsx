@@ -2152,7 +2152,11 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
 export default function Sidebar() {
   const projects = useProjects();
   const projectOrder = useUiStateStore((store) => store.projectOrder);
-  const threads = useThreadShells();
+  const allthreads = useThreadShells();
+  const threads = useMemo(
+    () => allthreads.filter((thread) => !thread.managedTeamWorker),
+    [allthreads],
+  );
   const router = useRouter();
   const { isMobile, setOpenMobile } = useSidebar();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);

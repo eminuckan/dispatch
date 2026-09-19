@@ -90,10 +90,14 @@ plans work, workers receive persistent task contracts, and the lead reviews thei
 results before integrating and verifying the combined change. Native subagent
 tools are disabled for these managed sessions.
 
-Open a lead or worker to see the team hierarchy, assignments, model and effort,
-attempts, and readable results. Active teams refresh automatically. Expand activity
-rows for worker reports and lead review summaries; internal coordination messages
-are kept out of the conversation. Messages you send yourself remain in Conversation.
+Only the lead appears in the sidebar; worker conversations remain accessible from
+the team. Open **Agents** in the right panel to see the team hierarchy, assignments, model
+and effort, attempts, and review details. The chat shows compact activity and the
+current agent’s result. Click an agent name to open its conversation. Agent names
+come from a fixed science-inspired catalog and stay the same across retries and
+reloads; replacement workers receive separate names. Active teams refresh
+automatically. Internal coordination messages stay out of chat; messages you send
+yourself remain in Conversation.
 
 The active-agent limit includes the lead. The turn limit includes planning,
 worker attempts, review, repairs and integration. Orchestration settings use agent

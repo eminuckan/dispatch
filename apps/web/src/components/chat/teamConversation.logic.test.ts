@@ -1,7 +1,13 @@
 import { expect, it } from "vite-plus/test";
-import { MessageId, TurnId } from "@t3tools/contracts";
+import {
+  MessageId,
+  TurnId,
+  ThreadId,
+  ProviderInstanceId,
+  type TeamThreadView,
+} from "@t3tools/contracts";
 import type { TimelineEntry } from "../../session-logic";
-import { teamFollowUpEntries } from "./teamConversation.logic";
+import { teamFollowUpEntries, teamTurnLabel } from "./teamConversation.logic";
 function message(
   id: string,
   role: "user" | "assistant",
@@ -66,4 +72,64 @@ it("keeps a newly dispatched coordination turn hidden before the ledger refresh 
     message("manual", "user", "manual-turn", "Explain"),
   ];
   expect(teamFollowUpEntries(entries, []).map((entry) => entry.id)).toEqual(["manual"]);
+});
+
+it("does not confuse a finished worker response with lead acceptance", () => {
+  const worker = {
+    id: "turn",
+    role: "worker",
+    taskId: "task",
+    threadId: ThreadId.make("worker"),
+    model: "luna",
+    effort: "max",
+    status: "settled",
+    succeeded: true,
+    summary: "Done",
+  } as const;
+  const run: TeamThreadView = {
+    id: "run",
+    coordinationMessageIds: [],
+    revision: 0,
+    objective: "Build",
+    status: "running",
+    lead: {
+      id: "profile",
+      label: "Luna",
+      selection: { instanceId: ProviderInstanceId.make("codex"), model: "luna" },
+      tier: "economy",
+      lead: true,
+      worker: true,
+      estimatedAttemptUsd: null,
+    },
+    leadThreadId: ThreadId.make("lead"),
+    phase: "workers",
+    notice: null,
+    maxTurns: 20,
+    tasks: [
+      {
+        id: "task",
+        objective: "Build",
+        acceptance: ["Works"],
+        dependencies: [],
+        profileId: "profile",
+        status: "review",
+        generation: 0,
+        attempts: 1,
+        threadId: worker.threadId,
+      },
+    ],
+    turns: [worker],
+  };
+  expect(teamTurnLabel(run, worker)).toBe("reported result");
+  const accepted = {
+    ...run,
+    tasks: run.tasks.map((task) => ({ ...task, status: "accepted" as const })),
+  };
+  expect(teamTurnLabel(accepted, worker)).toBe("accepted by lead");
+  expect(teamTurnLabel(run, { ...worker, status: "reserved" })).toBe("queued");
+  expect(teamTurnLabel(run, { ...worker, status: "dispatched" })).toBe("working");
+  expect(teamTurnLabel(run, { ...worker, succeeded: false })).toBe("needs attention");
+  expect(teamTurnLabel({ ...accepted, turns: [worker, { ...worker, id: "retry" }] }, worker)).toBe(
+    "reported result",
+  );
 });

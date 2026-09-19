@@ -643,6 +643,35 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
         assert.deepEqual(threadShell.value, shellSnapshot.threads[0]);
       }
 
+      // Sidebar membership comes from durable execution identity, not a title or ID prefix.
+      const leadPayload = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))({
+        execution: { turns: [{ role: "plan", command: { threadId: "thread-1" } }] },
+      });
+      yield* sql`INSERT INTO team_runs (id, command_id, revision, payload) VALUES ('membership', 'membership', 0, ${leadPayload})`;
+      assert.equal(
+        (yield* snapshotQuery.getShellSnapshot()).threads[0]?.managedTeamWorker,
+        undefined,
+      );
+      const workerPayload = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))({
+        tasks: [{ threadId: "replacement" }],
+        execution: { turns: [{ role: "worker", command: { threadId: "thread-1" } }] },
+      });
+      yield* sql`UPDATE team_runs SET payload = ${workerPayload} WHERE id = 'membership'`;
+      assert.equal((yield* snapshotQuery.getShellSnapshot()).threads[0]?.managedTeamWorker, true);
+      const workerShell = yield* snapshotQuery.getThreadShellById(ThreadId.make("thread-1"));
+      assert.equal(Option.isSome(workerShell) && workerShell.value.managedTeamWorker, true);
+      assert.equal(
+        Option.isSome(yield* snapshotQuery.getThreadDetailById(ThreadId.make("thread-1"))),
+        true,
+      );
+      yield* sql`UPDATE projection_threads SET archived_at = '2026-02-25T00:00:00.000Z' WHERE thread_id = 'thread-1'`;
+      assert.equal(
+        (yield* snapshotQuery.getArchivedShellSnapshot()).threads[0]?.managedTeamWorker,
+        true,
+      );
+      yield* sql`UPDATE projection_threads SET archived_at = NULL WHERE thread_id = 'thread-1'`;
+      yield* sql`DELETE FROM team_runs WHERE id = 'membership'`;
+
       const commandReadModel = yield* snapshotQuery.getCommandReadModel();
       assert.deepEqual(commandReadModel.threads[0]?.pullRequests, expectedPullRequests);
       assert.deepEqual(

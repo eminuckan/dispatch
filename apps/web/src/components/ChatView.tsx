@@ -367,7 +367,7 @@ import { createPageScrollController, type PageScrollKey } from "./chat/pageScrol
 import { DraftHeroHeadline } from "./chat/DraftHeroHeadline";
 import { ExpandedImageDialog } from "./chat/ExpandedImageDialog";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
-import { TeamConversation } from "./chat/TeamConversation";
+import { TeamConversation, TeamAgentsPanel } from "./chat/TeamConversation";
 import { MessagesTimeline } from "./chat/MessagesTimeline";
 import type { AssistantCitationRequest } from "./chat/AssistantCitationSource";
 import { resolveTimelineIsAtEnd, worktreeSetupAgentStarted } from "./chat/MessagesTimeline.logic";
@@ -9746,11 +9746,17 @@ export default function ChatView(props: ChatViewProps) {
     ) : renderedRightPanelSurface?.kind === "pull-requests" && activeThreadRef ? (
       <ThreadPullRequestsPanel threadRef={activeThreadRef} />
     ) : renderedRightPanelSurface?.kind === "agents" ? (
-      <AgentsPanel
-        model={agentPanelModel}
+      <TeamAgentsPanel
         environmentId={activeThreadRef?.environmentId ?? null}
         threadId={activeThreadRef?.threadId ?? null}
-      />
+        cwd={gitCwd ?? undefined}
+      >
+        <AgentsPanel
+          model={agentPanelModel}
+          environmentId={activeThreadRef?.environmentId ?? null}
+          threadId={activeThreadRef?.threadId ?? null}
+        />
+      </TeamAgentsPanel>
     ) : renderedRightPanelSurface?.kind === "device" ? (
       <Suspense fallback={null}>
         <DevicePanel
@@ -9949,6 +9955,7 @@ export default function ChatView(props: ChatViewProps) {
                 }
                 bottomInset={composerTimelineInset}
                 entries={displayedTimeline.entries}
+                onOpenAgents={addAgentsSurface}
               >
                 {(visibleTeamEntries) => (
                   <MessagesTimeline

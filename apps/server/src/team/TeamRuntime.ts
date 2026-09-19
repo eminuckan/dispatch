@@ -1,3 +1,4 @@
+import { teamAgentDisplayName } from "@t3tools/shared/teamAgentNames";
 import { teamThreadView } from "./presentation.ts";
 import {
   isOrchestrationCommandRejection,
@@ -105,6 +106,15 @@ export const make = Effect.gen(function* () {
       .pipe(Effect.mapError(mapError));
     const createdAt = yield* now;
     const id = NodeCrypto.randomUUID();
+    const agentName = teamAgentDisplayName(
+      run.id,
+      [
+        execution.leadThreadId,
+        ...execution.turns.filter((t) => t.role === "worker").map((t) => t.command.threadId),
+        threadId,
+      ],
+      threadId,
+    );
     const turn: TeamExecutionTurn = {
       id,
       estimatedAttemptUsd: profile.estimatedAttemptUsd,
@@ -129,8 +139,8 @@ export const make = Effect.gen(function* () {
                   projectId: run.projectId,
                   title:
                     role === "worker"
-                      ? `Worker: ${task!.objective.slice(0, 80)}`
-                      : `Lead: ${run.objective.slice(0, 80)}`,
+                      ? `${agentName} · Worker: ${task!.objective.slice(0, 80)}`
+                      : `${agentName} · Lead: ${run.objective.slice(0, 80)}`,
                   modelSelection: profile.selection,
                   runtimeMode: "full-access" as const,
                   interactionMode: "default" as const,
