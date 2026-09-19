@@ -17,6 +17,8 @@ import {
   type TeamRun,
   type TeamExecutionTurn,
   type TeamModelProfile,
+  type TeamPeerMessage,
+  type OrchestrationEvent,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -51,7 +53,7 @@ import { openRequests } from "../orchestration/decider.ts";
 
 const encode = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const liveProgressGuidance =
-  "Use the provider's normal tool, reasoning, and progress events while working so the live conversation stays visible, and emit brief natural-language progress or commentary between meaningful steps. If a decision genuinely requires the user, emit the provider's native approval or question request and wait for the response; never invent an answer. When a structured final format is requested, keep the final assistant message exactly in that format, without prepended or appended commentary, so the scheduler can parse it.";
+  "Use team_read_messages before each meaningful work step and before reporting a result. Use team_send_message to ask teammates for advice, share findings, or request corrections during work; set replyRequested when an answer is needed. Reply to received questions using team_send_message; reading does not answer them. The lead is responsible for staying aware of worker progress and helping unblock them. Use the provider's normal tool, reasoning, and progress events while working so the live conversation stays visible, and emit brief natural-language progress or commentary between meaningful steps. If a decision genuinely requires the user, emit the provider's native approval or question request and wait for the response; never invent an answer. When a structured final format is requested, keep the final assistant message exactly in that format, without prepended or appended commentary, so the scheduler can parse it.";
 const asyncQuestionRequestId = (activity: { readonly kind: string; readonly payload: unknown }) => {
   if (
     activity.kind !== "user-input.requested" ||
@@ -62,6 +64,18 @@ const asyncQuestionRequestId = (activity: { readonly kind: string; readonly payl
     return null;
   return activity.payload.requestId;
 };
+const watchedWorkerActivityKinds = new Set([
+  "tool.started",
+  "tool.completed",
+  "task.started",
+  "task.completed",
+  "turn.plan.updated",
+  "runtime.error",
+  "runtime.warning",
+  "tool.denied",
+  "approval.requested",
+  "user-input.requested",
+]);
 const safeError = () =>
   new TeamError({
     code: "unavailable",
@@ -168,16 +182,26 @@ export const make = Effect.gen(function* () {
     role: TeamExecutionTurn["role"],
     taskId: string | null,
     text: string,
+    recipient?: ThreadId,
   ) {
     const execution = run.execution!;
-    const task = run.tasks.find((t) => t.id === taskId);
+    const task = run.tasks.find((t) => (recipient ? t.threadId === recipient : t.id === taskId));
     const profile =
-      role === "worker" ? run.policy.profiles.find((p) => p.id === task?.profileId)! : run.lead;
+      role === "worker" || (role === "consult" && recipient !== execution.leadThreadId)
+        ? run.policy.profiles.find((p) => p.id === task?.profileId)!
+        : run.lead;
     yield* checkProfile(profile);
     const threadId =
-      role === "worker"
+      recipient ??
+      (role === "worker"
         ? (task?.threadId ?? ThreadId.make(`team-${run.id}-${NodeCrypto.randomUUID()}`))
-        : execution.leadThreadId;
+        : execution.leadThreadId);
+    if (
+      execution.turns.some(
+        (turn) => turn.command.threadId === threadId && turn.status !== "settled",
+      )
+    )
+      return run;
     const existing = yield* projection
       .getThreadDetailById(threadId)
       .pipe(Effect.mapError(mapError));
@@ -201,8 +225,13 @@ export const make = Effect.gen(function* () {
       ],
       threadId,
     );
+    const observedMessageSequence =
+      role === "consult"
+        ? run.messages?.find((message) => message.id === taskId)?.sourceSequence
+        : undefined;
     const turn: TeamExecutionTurn = {
       id,
+      ...(observedMessageSequence !== undefined ? { observedMessageSequence } : {}),
       estimatedAttemptUsd: profile.estimatedAttemptUsd,
       role,
       taskId,
@@ -535,6 +564,11 @@ export const make = Effect.gen(function* () {
           );
         continue;
       }
+      const consultationMessage =
+        turn.role === "consult"
+          ? run.messages?.find((message) => message.id === turn.taskId)
+          : undefined;
+      const completedAt = settledTurn.completedAt ?? (yield* now);
       run = yield* store.update(
         run.id,
         run.revision,
@@ -550,6 +584,34 @@ export const make = Effect.gen(function* () {
               : r;
           return {
             ...next,
+            ...(consultationMessage
+              ? {
+                  messages: [
+                    ...(next.messages ?? []).map((message) =>
+                      message.id === consultationMessage.id &&
+                      message.sourceSequence === turn.observedMessageSequence
+                        ? { ...message, readAt: completedAt }
+                        : message,
+                    ),
+                    ...(consultationMessage.replyRequested
+                      ? [
+                          {
+                            id: `reply:${turn.id}`,
+                            inReplyTo: consultationMessage.id,
+                            fromThreadId: turn.command.threadId,
+                            toThreadId: consultationMessage.fromThreadId,
+                            text: succeeded
+                              ? result.slice(0, 8000)
+                              : `Consultation failed: ${result.slice(0, 7900)}`,
+                            replyRequested: false,
+                            createdAt: completedAt,
+                            readAt: null,
+                          },
+                        ]
+                      : []),
+                  ],
+                }
+              : {}),
             execution: {
               ...next.execution!,
               turns: next.execution!.turns.map((t) =>
@@ -560,6 +622,29 @@ export const make = Effect.gen(function* () {
         },
         "turn-settled",
       );
+      if (turn.role === "consult") {
+        const reply = run.messages?.find((message) => message.id === `reply:${turn.id}`);
+        if (reply) {
+          const id = `team-reply:${turn.id}`;
+          yield* engine
+            .dispatch({
+              type: "thread.activity.append",
+              commandId: CommandId.make(id),
+              threadId: reply.toThreadId,
+              activity: {
+                id: EventId.make(id),
+                kind: "team.message",
+                tone: "info",
+                summary: "Reply from teammate",
+                payload: { threadId: reply.fromThreadId, detail: reply.text },
+                turnId: null,
+                createdAt: reply.createdAt,
+              },
+              createdAt: reply.createdAt,
+            })
+            .pipe(Effect.ignoreCause({ log: true }));
+        }
+      }
       yield* appendWorkerLifecycle({
         run,
         turn,
@@ -574,6 +659,32 @@ export const make = Effect.gen(function* () {
     let run = yield* reconcile(id);
     const execution = run.execution;
     if (!execution || ["paused", "cancelled", "completed", "failed"].includes(run.status))
+      return run;
+    for (const message of run.messages ?? []) {
+      if (
+        message.readAt !== null ||
+        run.execution!.turns.some(
+          (turn) =>
+            turn.role === "consult" && turn.taskId === message.id && turn.status !== "settled",
+        )
+      )
+        continue;
+      if (
+        run.execution!.turns.filter((turn) => turn.status !== "settled").length >=
+        run.policy.maxActive
+      )
+        break;
+      const before = run.execution!.turns.length;
+      run = yield* reserve(
+        run,
+        "consult",
+        message.id,
+        `${message.origin === "progress" ? "Worker progress changed. Actively inspect the current work and identify drift, failures, or opportunities to help. Send a concrete correction or advice with team_send_message when useful; do not send a generic acknowledgement to the worker." : "A teammate sent you a message while work is in progress."} Read team_read_messages for current progress and any other messages. This is a consultation, not acceptance of the task. Provide advice without modifying files; implementation belongs to the assigned worker or integration turn. ${message.replyRequested ? "Answer this request in your final natural-language message; it will be delivered to the sender automatically." : "Read and consider this update. No reply is required unless you have useful new information; use team_send_message if needed."} Never answer user permissions or approvals on their behalf. If you are the lead, help the worker within the existing acceptance contract. Sender: ${message.fromThreadId}. Message: ${message.text}\n\n${liveProgressGuidance}`,
+        message.toThreadId,
+      );
+      if (run.execution!.turns.length > before) return run;
+    }
+    if (run.execution!.turns.some((turn) => turn.role === "consult" && turn.status !== "settled"))
       return run;
     if (execution.phase === "plan") {
       const plan = execution.turns.find((t) => t.role === "plan");
@@ -669,7 +780,7 @@ export const make = Effect.gen(function* () {
             run,
             "review",
             workerTurn.id,
-            `Review worker output against every acceptance criterion. Do not spawn subagents or modify the worker worktree. Inspect files at ${worker.value.worktreePath}. Return ONLY JSON {action:"accept"|"correct",summary:string,checks:[{criterionIndex:number,criterion:string,command:string,args:string[]}]}. For accept, provide a reproducible non-destructive check for EVERY criterion. criterionIndex MUST be its zero-based index in the acceptance array; do not infer new criteria. Checks execute in the worker worktree without a shell. For correct, identify the unmet criterion, observed failure, and a materially different next action in summary. Never resend a previous correction unchanged. Worker contract and output: ${encode(review)}\n\n${liveProgressGuidance}`,
+            `Review worker output against every acceptance criterion. Do not spawn subagents or modify the worker worktree. Inspect files at ${worker.value.worktreePath}. Return ONLY JSON {action:"accept"|"correct"|"blocked",summary:string,checks:[{criterionIndex:number,criterion:string,command:string,args:string[]}]}. For accept, provide a reproducible non-destructive check for EVERY criterion. criterionIndex MUST be its zero-based index in the acceptance array; do not infer new criteria. Checks execute in the worker worktree without a shell. Use blocked only for a concrete external blocker requiring user intervention; first try to resolve it yourself or consult the worker with team_send_message. For correct, identify the unmet criterion, observed failure, and a materially different next action in summary. Never resend a previous correction unchanged. Worker contract and output: ${encode(review)}\n\n${liveProgressGuidance}`,
           );
         }
         if (reviewTurn.status !== "settled") return run;
@@ -680,20 +791,13 @@ export const make = Effect.gen(function* () {
           catch: () =>
             new TeamError({ code: "invalid", message: "Lead returned an invalid review." }),
         });
+        if (proposal.action === "blocked") return yield* pause(run, proposal.summary);
         if (proposal.action === "accept" && !reviewCoverage(review.acceptance, proposal.checks)) {
-          const priorReviews = run.execution!.turns.filter(
-            (t) => t.role === "review" && t.taskId === workerTurn.id,
-          );
-          if (priorReviews.length >= 2)
-            return yield* pause(
-              run,
-              "Lead review omitted acceptance IDs twice. Worker is retained without another attempt.",
-            );
           return yield* reserve(
             run,
             "review",
             workerTurn.id,
-            `Your review could not be matched to the acceptance contract. This is a review protocol repair, NOT a worker failure. Return ONLY JSON {action:"accept"|"correct",summary:string,checks:[{criterionIndex:number,criterion:string,command:string,args:string[]}]}. Include checks covering EACH zero-based criterionIndex in ${encode(review.acceptance)}. Reuse your valid prior checks where appropriate. Prior review: ${reviewTurn.result}\n\n${liveProgressGuidance}`,
+            `Your review could not be matched to the acceptance contract. This is a review protocol repair, NOT a worker failure. Return ONLY JSON {action:"accept"|"correct"|"blocked",summary:string,checks:[{criterionIndex:number,criterion:string,command:string,args:string[]}]}. Include checks covering EACH zero-based criterionIndex in ${encode(review.acceptance)}. Reuse your valid prior checks where appropriate. Prior review: ${reviewTurn.result}\n\n${liveProgressGuidance}`,
           );
         }
         const evidence =
@@ -739,10 +843,18 @@ export const make = Effect.gen(function* () {
             tone: "error",
             detail: correction,
           });
-          if (review.attempts >= run.policy.maxAttempts)
-            return yield* pause(
+          if (
+            review.recoveryHistory?.some(
+              (entry) =>
+                entry.correction.trim().replace(/\s+/g, " ").toLowerCase() ===
+                correction.trim().replace(/\s+/g, " ").toLowerCase(),
+            )
+          )
+            return yield* reserve(
               run,
-              "Worker attempt limit reached. Review evidence before creating a new worker.",
+              "review",
+              workerTurn.id,
+              `The worker has already received this correction. Inspect its current evidence, identify what is preventing acceptance, and choose a materially different action. Use team_send_message to ask the worker for clarification if needed. Do not repeat the same correction. Return the usual review JSON. Worker contract: ${encode(review)}. Prior review: ${reviewTurn.result}\n\n${liveProgressGuidance}`,
             );
           const latestPolicy = yield* store.getPolicy;
           const advice =
@@ -768,7 +880,8 @@ export const make = Effect.gen(function* () {
           // and reject repeated corrections or unchanged results.
           const continueLeadCorrection =
             proposal.action === "correct" &&
-            advice?.action === "lead_review" &&
+            advice !== null &&
+            ["lead_review", "repair_environment", "supply_context"].includes(advice.action) &&
             advice.profileId === review.profileId;
           if (
             advice &&
@@ -836,13 +949,14 @@ export const make = Effect.gen(function* () {
         run,
         "integrate",
         null,
-        `Finish and verify the combined objective in your isolated lead worktree. Never spawn native subagents. Integrate accepted worker commits, resolve conflicts, and run relevant combined checks. If no workers were needed, implement directly. Preserve the original checkout; do not push. Return ONLY JSON {action:"accept"|"correct",summary:string,checks:[{criterionIndex:number,criterion:string,command:string,args:string[]}]}. Verify EVERY persisted run acceptance criterion using its zero-based criterionIndex, without changing or dropping criteria. Provide meaningful non-destructive combined verification commands; commands run without a shell in your worktree. Objective: ${run.objective}. Run acceptance: ${encode(run.execution!.acceptance ?? [])}. Accepted worker artifacts: ${encode(artifacts)}\n\n${liveProgressGuidance}`,
+        `Finish and verify the combined objective in your isolated lead worktree. Never spawn native subagents. Integrate accepted worker commits, resolve conflicts, and run relevant combined checks. If no workers were needed, implement directly. Preserve the original checkout; do not push. Return ONLY JSON {action:"accept"|"correct"|"blocked",summary:string,checks:[{criterionIndex:number,criterion:string,command:string,args:string[]}]}. Verify EVERY persisted run acceptance criterion using its zero-based criterionIndex, without changing or dropping criteria. Provide meaningful non-destructive combined verification commands; commands run without a shell in your worktree. Objective: ${run.objective}. Run acceptance: ${encode(run.execution!.acceptance ?? [])}. Accepted worker artifacts: ${encode(artifacts)}\n\n${liveProgressGuidance}`,
       );
     }
     const final = run.execution!.turns.findLast((t) => t.role === "integrate");
     if (final?.status === "settled") {
       if (!final.succeeded)
         return yield* pause(run, "Lead integration failed; its worktree is preserved.");
+      if ((run.messages ?? []).some((message) => message.readAt === null)) return run;
       const proposal = yield* Effect.try({
         try: () => parseProposal(LeadReview, final.result!),
         catch: () =>
@@ -851,6 +965,7 @@ export const make = Effect.gen(function* () {
             message: "Lead returned invalid integration evidence.",
           }),
       });
+      if (proposal.action === "blocked") return yield* pause(run, proposal.summary);
       const criteria = run.execution!.acceptance;
       if (!criteria?.length)
         return yield* pause(
@@ -883,16 +998,11 @@ export const make = Effect.gen(function* () {
           }),
           "integration-correction",
         );
-        if (run.execution!.turns.filter((t) => t.role === "integrate").length >= 2)
-          return yield* pause(
-            run,
-            "Combined acceptance remains unresolved after correction. Inspect the saved evidence; automatic retries stopped.",
-          );
         return yield* reserve(
           run,
           "integrate",
           null,
-          `Correct the combined result in your existing lead worktree. Do not delegate or change acceptance criteria. Do not repeat a failed action unchanged. Return ONLY JSON {action:"accept"|"correct",summary:string,checks:[{criterionIndex:number,criterion:string,command:string,args:string[]}]}. Verify EVERY criterion with a meaningful non-destructive check. If blocked, return correct and explain the missing input. Objective: ${run.objective}. Persisted acceptance: ${encode(criteria)}. Previous result and independently executed evidence: ${correction}\n\n${liveProgressGuidance}`,
+          `Correct the combined result in your existing lead worktree. Do not delegate or change acceptance criteria. Do not repeat a failed action unchanged. Return ONLY JSON {action:"accept"|"correct"|"blocked",summary:string,checks:[{criterionIndex:number,criterion:string,command:string,args:string[]}]}. Verify EVERY criterion with a meaningful non-destructive check. If user input or permission is required, use the native question/approval flow; return blocked only for a concrete external blocker you cannot resolve, explaining the missing input. Objective: ${run.objective}. Persisted acceptance: ${encode(criteria)}. Previous result and independently executed evidence: ${correction}\n\n${liveProgressGuidance}`,
         );
       }
       return yield* store.update(
@@ -1123,7 +1233,229 @@ export const make = Effect.gen(function* () {
           ),
         );
   }, schedulerLock.withPermits(1));
+  const observeWorkerEvent = Effect.fnUntraced(function* (event: OrchestrationEvent) {
+    let threadId: ThreadId;
+    let detail: string;
+    if (
+      event.type === "thread.message-sent" &&
+      event.payload.role === "assistant" &&
+      !event.payload.streaming
+    ) {
+      threadId = event.payload.threadId;
+      detail = event.payload.text.slice(-4000);
+    } else if (
+      event.type === "thread.activity-appended" &&
+      watchedWorkerActivityKinds.has(event.payload.activity.kind)
+    ) {
+      threadId = event.payload.threadId;
+      const activity = event.payload.activity;
+      const payload = encode(activity.payload);
+      // Observing the mailbox tools would generate supervision of supervision.
+      if (
+        /team_(?:read_messages|send_message)|Read team messages|Message teammate/i.test(
+          `${activity.summary} ${payload}`,
+        )
+      )
+        return;
+      detail = `${activity.kind}: ${activity.summary}\n${payload.slice(0, 3000)}`;
+    } else return;
+    if (!detail.trim()) return;
+    const run = yield* store.findByThread(threadId);
+    if (
+      !run?.execution ||
+      !["running", "review"].includes(run.status) ||
+      !run.tasks.some((task) => task.threadId === threadId && task.status === "running")
+    )
+      return;
+    const latest = run.messages?.findLast(
+      (message) => message.origin === "progress" && message.fromThreadId === threadId,
+    );
+    if ((latest?.sourceSequence ?? -1) >= event.sequence) return;
+    // One unread observation per worker accumulates a burst while the lead is busy.
+    const pending = latest?.readAt === null ? latest : undefined;
+    const message: TeamPeerMessage = {
+      id: pending?.id ?? `watch:${run.id}:${event.sequence}`,
+      fromThreadId: threadId,
+      toThreadId: run.execution.leadThreadId,
+      text: pending ? `${pending.text}\n\n${detail}`.slice(-7800) : detail,
+      replyRequested: false,
+      origin: "progress",
+      sourceSequence: event.sequence,
+      createdAt: pending?.createdAt ?? event.occurredAt,
+      readAt: null,
+    };
+    yield* store.update(
+      run.id,
+      run.revision,
+      (current) => ({
+        ...current,
+        messages: pending
+          ? current.messages?.map((entry) => (entry.id === pending.id ? message : entry))
+          : [...(current.messages ?? []), message],
+      }),
+      "worker-progress-observed",
+    );
+  }, lock.withPermits(1));
+  const peerRun = Effect.fnUntraced(function* (threadId: ThreadId) {
+    const run = yield* store.findByThread(threadId);
+    if (
+      !run?.execution ||
+      (threadId !== run.execution.leadThreadId &&
+        !run.tasks.some((task) => task.threadId === threadId))
+    )
+      return yield* new TeamError({
+        code: "not-found",
+        message: "This provider thread is not a current team member.",
+      });
+    return run;
+  });
+  const sendMessage = Effect.fnUntraced(function* (
+    fromThreadId: ThreadId,
+    input: {
+      id: string;
+      toThreadId: ThreadId;
+      text: string;
+      replyRequested: boolean;
+      inReplyTo?: string | undefined;
+    },
+  ) {
+    const run = yield* peerRun(fromThreadId);
+    if (["completed", "cancelled", "failed", "paused"].includes(run.status))
+      return yield* new TeamError({
+        code: "conflict",
+        message: "Resume an active team before sending agent messages.",
+      });
+    if (
+      input.toThreadId === fromThreadId ||
+      (input.toThreadId !== run.execution!.leadThreadId &&
+        !run.tasks.some((task) => task.threadId === input.toThreadId))
+    )
+      return yield* new TeamError({
+        code: "invalid",
+        message: "Recipient must be another current member of the same team.",
+      });
+    if (
+      input.inReplyTo &&
+      !run.messages?.some(
+        (message) =>
+          message.id === input.inReplyTo &&
+          message.fromThreadId === input.toThreadId &&
+          message.toThreadId === fromThreadId,
+      )
+    )
+      return yield* new TeamError({
+        code: "invalid",
+        message: "Reply must refer to a message received from this teammate.",
+      });
+    const existing = run.messages?.find((message) => message.id === input.id);
+    if (
+      existing &&
+      (existing.fromThreadId !== fromThreadId ||
+        existing.toThreadId !== input.toThreadId ||
+        existing.text !== input.text ||
+        existing.replyRequested !== input.replyRequested ||
+        existing.inReplyTo !== input.inReplyTo)
+    )
+      return yield* new TeamError({
+        code: "conflict",
+        message: "Message ID already belongs to different content.",
+      });
+    const message: TeamPeerMessage = existing ?? {
+      ...input,
+      fromThreadId,
+      createdAt: yield* now,
+      readAt: null,
+    };
+    if (!existing)
+      yield* store.update(
+        run.id,
+        run.revision,
+        (current) => ({ ...current, messages: [...(current.messages ?? []), message] }),
+        "peer-message",
+      );
+    // Native activity events both expose the message and wake the scheduler.
+    for (const threadId of [fromThreadId, input.toThreadId]) {
+      const id = `team-message:${run.id}:${input.id}:${threadId}`;
+      yield* engine
+        .dispatch({
+          type: "thread.activity.append",
+          commandId: CommandId.make(id),
+          threadId,
+          activity: {
+            id: EventId.make(id),
+            kind: "team.message",
+            tone: "info",
+            summary:
+              threadId === fromThreadId ? "Sent message to teammate" : "Message from teammate",
+            payload: {
+              threadId: threadId === fromThreadId ? input.toThreadId : fromThreadId,
+              detail: input.text,
+              replyRequested: input.replyRequested,
+            },
+            turnId: null,
+            createdAt: message.createdAt,
+          },
+          createdAt: message.createdAt,
+        })
+        .pipe(Effect.mapError(mapError));
+    }
+    return message;
+  }, lock.withPermits(1));
+  const readMessages = Effect.fnUntraced(function* (threadId: ThreadId, includeRead = false) {
+    const run = yield* peerRun(threadId);
+    const inbox = (run.messages ?? []).filter((message) => message.toThreadId === threadId);
+    const messages = includeRead
+      ? inbox.slice(-40)
+      : inbox.filter((message) => message.readAt === null).slice(0, 40);
+    const readAt = yield* now;
+    const members = yield* Effect.forEach(
+      [
+        run.execution!.leadThreadId,
+        ...run.tasks.flatMap((task) => (task.threadId ? [task.threadId] : [])),
+      ],
+      (id) =>
+        projection.getThreadDetailById(id).pipe(
+          Effect.map((detail) => ({
+            threadId: id,
+            role: id === run.execution!.leadThreadId ? ("lead" as const) : ("worker" as const),
+            state: Option.isSome(detail) ? (detail.value.latestTurn?.state ?? "idle") : "idle",
+            activity: Option.isSome(detail)
+              ? (detail.value.activities.at(-1)?.summary.slice(0, 1000) ?? "")
+              : "",
+            needsUserInput: Option.isSome(detail) && openRequests(detail.value).size > 0,
+            summary: Option.isSome(detail)
+              ? (detail.value.messages
+                  .findLast((message) => message.role === "assistant")
+                  ?.text.slice(-1500) ?? "")
+              : "",
+          })),
+          Effect.mapError(mapError),
+        ),
+    );
+    if (messages.some((message) => message.readAt === null))
+      yield* store.update(
+        run.id,
+        run.revision,
+        (current) => ({
+          ...current,
+          messages: current.messages?.map((message) =>
+            messages.some((entry) => entry.id === message.id) ? { ...message, readAt } : message,
+          ),
+        }),
+        "peer-messages-read",
+      );
+    return {
+      runId: run.id,
+      status: run.status,
+      leadThreadId: run.execution!.leadThreadId,
+      members,
+      messages,
+    };
+  }, lock.withPermits(1));
   return {
+    observeWorkerEvent,
+    sendMessage,
+    readMessages,
     start,
     control,
     tick,
@@ -1158,17 +1490,22 @@ export const reactorLayer = Layer.effectDiscard(
                   event.type === "thread.turn-diff-completed" ||
                   (event.type === "thread.message-sent" && !event.payload.streaming) ||
                   (event.type === "thread.activity-appended" &&
-                    [
-                      "approval.resolved",
-                      "user-input.resolved",
-                      "user-input.answer-submitted",
-                      "provider.approval.respond.failed",
-                      "provider.user-input.respond.failed",
-                      "provider.turn.start.failed",
-                    ].includes(event.payload.activity.kind))),
+                    (watchedWorkerActivityKinds.has(event.payload.activity.kind) ||
+                      [
+                        "team.message",
+                        "approval.resolved",
+                        "user-input.resolved",
+                        "user-input.answer-submitted",
+                        "provider.approval.respond.failed",
+                        "provider.user-input.respond.failed",
+                        "provider.turn.start.failed",
+                      ].includes(event.payload.activity.kind)))),
             ),
           ),
-          () => runtime.tick().pipe(Effect.ignoreCause({ log: true })),
+          (event) =>
+            runtime
+              .observeWorkerEvent(event)
+              .pipe(Effect.andThen(runtime.tick()), Effect.ignoreCause({ log: true })),
         ),
       ).pipe(
         Effect.catchCause(() =>

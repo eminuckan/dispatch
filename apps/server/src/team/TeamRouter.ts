@@ -236,7 +236,6 @@ export const make = Effect.gen(function* () {
     const fallback = recoveryAdvice(input, policy, null);
     if (
       input.inFlight ||
-      input.attemptsMade >= policy.maxAttempts ||
       policy.mode === "off" ||
       !policy.profiles.some((p) => p.id === input.currentProfileId && p.worker)
     )

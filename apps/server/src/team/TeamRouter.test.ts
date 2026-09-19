@@ -144,34 +144,31 @@ it.effect("reuses one evaluation across draft identities and refreshes after key
     expect(f.calls()).toBe(2);
   }).pipe(Effect.provide(f.layer));
 });
-it.effect(
-  "does not pay for oversized state, attachments, or recovery blocked by hard limits",
-  () => {
-    const f = fixture(successful);
-    return Effect.gen(function* () {
-      const router = yield* make;
-      yield* router.setSecret("fixture-key");
-      yield* router.saveSettings(policy);
-      const large = yield* router.assess({ ...draft, prompt: "界".repeat(9000) });
-      expect(large.source).toBe("fallback");
-      yield* router.assess({ ...draft, hasAttachments: true });
-      const recovery = {
-        policyRevision: 1,
-        currentProfileId: "lead",
-        objective: "Fix",
-        evidence: "Failure",
-        correction: "",
-        attemptsMade: 2,
-        inFlight: false,
-      };
-      expect((yield* router.recover(recovery)).action).toBe("stop");
-      expect((yield* router.recover({ ...recovery, attemptsMade: 1, inFlight: true })).action).toBe(
-        "wait",
-      );
-      expect(f.calls()).toBe(0);
-    }).pipe(Effect.provide(f.layer));
-  },
-);
+it.effect("skips oversized state and in-flight recovery without imposing an attempt cap", () => {
+  const f = fixture(successful);
+  return Effect.gen(function* () {
+    const router = yield* make;
+    yield* router.setSecret("fixture-key");
+    yield* router.saveSettings(policy);
+    const large = yield* router.assess({ ...draft, prompt: "界".repeat(9000) });
+    expect(large.source).toBe("fallback");
+    yield* router.assess({ ...draft, hasAttachments: true });
+    const recovery = {
+      policyRevision: 1,
+      currentProfileId: "lead",
+      objective: "Fix",
+      evidence: "Failure",
+      correction: "",
+      attemptsMade: 2,
+      inFlight: false,
+    };
+    expect((yield* router.recover(recovery)).action).toBe("lead_review");
+    expect((yield* router.recover({ ...recovery, attemptsMade: 1, inFlight: true })).action).toBe(
+      "wait",
+    );
+    expect(f.calls()).toBe(1);
+  }).pipe(Effect.provide(f.layer));
+});
 it.effect("rejects a different Jev version rather than trusting its calibration", () => {
   const f = fixture({ ...successful, model: "jev-unpinned" });
   return Effect.gen(function* () {

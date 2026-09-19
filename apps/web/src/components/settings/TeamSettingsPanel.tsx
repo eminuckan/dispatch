@@ -551,19 +551,6 @@ function TeamSettingsForm({
             />
           }
         />
-        <SettingsRow
-          title="Attempts per worker"
-          description="Includes the first attempt and corrections for one work item. Repeated failures pause the team for review."
-          control={
-            <Choice
-              label="Attempts per worker"
-              value={String(policy.maxAttempts)}
-              options={[1, 2, 3].map((n) => ({ value: String(n), label: String(n) }))}
-              onChange={(v) => setPolicy((p) => ({ ...p, maxAttempts: Number(v) }))}
-              disabled={pending}
-            />
-          }
-        />
       </SettingsSection>
       <div className="flex flex-wrap items-center gap-3 px-3 sm:px-4">
         <Button size="sm" disabled={pending || !dirty} onClick={() => void persist("policy")}>

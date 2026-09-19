@@ -47,7 +47,10 @@ export function teamThreadView(run: TeamRun | null): TeamThreadView | null {
       })(),
       status: turn.status,
       succeeded: turn.succeeded,
-      summary: turn.role === "worker" ? turn.result : protocolSummary(turn.result),
+      summary:
+        turn.role === "worker" || turn.role === "consult"
+          ? turn.result
+          : protocolSummary(turn.result),
     })),
   };
 }

@@ -1,7 +1,12 @@
+import { TeamToolkit } from "../mcp/toolkits/team/tools.ts";
+import { TeamToolkitHandlersLive } from "../mcp/toolkits/team/handlers.ts";
+import { McpInvocationContext } from "../mcp/McpInvocationContext.ts";
+import * as Stream from "effect/Stream";
 import { OrchestrationProjectorDecodeError } from "../orchestration/Errors.ts";
 import { GitWorkflowService } from "../git/GitWorkflowService.ts";
 import { expect, it } from "@effect/vitest";
 import {
+  EnvironmentId,
   CommandId,
   EventId,
   MessageId,
@@ -13,6 +18,7 @@ import {
   TurnId,
   type OrchestrationCommand,
   type TeamRun,
+  type OrchestrationEvent,
   type TeamRecoveryAdvice,
   type ServerProvider,
 } from "@t3tools/contracts";
@@ -33,8 +39,9 @@ import { ProcessRunner } from "../processRunner.ts";
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import * as Store from "./TeamStore.ts";
 import { TeamRouter } from "./TeamRouter.ts";
-import { make } from "./TeamRuntime.ts";
+import { make, TeamRuntime } from "./TeamRuntime.ts";
 import { defaultTeamPolicy } from "./routing.ts";
+const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const decodeThread = Schema.decodeUnknownSync(OrchestrationThread);
 const date = "2026-09-19T00:00:00.000Z";
 const provider: ServerProvider = {
@@ -894,8 +901,6 @@ for (const resumePausedRun of [false, true]) {
 for (const advice of [
   { action: "stop", profileId: "p" },
   { action: "wait", profileId: "p" },
-  { action: "repair_environment", profileId: "p" },
-  { action: "supply_context", profileId: "p" },
   { action: "lead_review", profileId: null },
 ] as const) {
   it.effect(
@@ -979,7 +984,7 @@ it.effect("admits ready providers through the common adapter contract", () => {
 });
 
 it.effect(
-  "rejects incomplete combined acceptance, allows one correction, and never loops on resume",
+  "continues combined corrections beyond the legacy limit and pauses only for an explicit blocker",
   () => {
     const f = fixture();
     return Effect.gen(function* () {
@@ -1010,15 +1015,21 @@ it.effect(
       expect(f.checks).toEqual([]);
       expect(f.commands).toHaveLength(3);
       expect(run.decisions.join(" ")).toContain("Constraints preserved");
-      finish(2, '{"action":"correct","summary":"Missing external input","checks":[]}');
+      finish(
+        2,
+        '{"action":"correct","summary":"Need to exercise the second boundary","checks":[]}',
+      );
+      yield* runtime.tick();
+      expect(f.commands).toHaveLength(4);
+      finish(3, '{"action":"blocked","summary":"Missing external input","checks":[]}');
       yield* runtime.tick();
       run = yield* store.get(initial.id);
       expect(run.status).toBe("paused");
-      expect(run.execution?.notice).toContain("automatic retries stopped");
+      expect(run.execution?.notice).toBe("Missing external input");
       yield* runtime.control({ id: run.id, revision: run.revision, action: "resume" });
       yield* runtime.tick();
       yield* runtime.tick();
-      expect(f.commands).toHaveLength(3);
+      expect(f.commands).toHaveLength(4);
       expect((yield* store.get(initial.id)).status).toBe("paused");
     }).pipe(Effect.provide(SqlitePersistenceMemory));
   },
@@ -1042,3 +1053,304 @@ it.effect("does not admit workers when the plan omits whole-objective acceptance
     expect(f.commands).toHaveLength(1);
   }).pipe(Effect.provide(SqlitePersistenceMemory));
 });
+
+it.effect(
+  "delivers a live worker question to the lead and returns advice without settling the worker",
+  () => {
+    const f = fixture();
+    return Effect.gen(function* () {
+      const store = yield* Store.make;
+      yield* store.create(initial);
+      const runtime = yield* make.pipe(
+        Effect.provideService(Store.TeamStore, store),
+        Effect.provide(f.layers),
+      );
+      yield* runtime.tick();
+      const plan = f.commands[0]!;
+      if (plan.type !== "thread.turn.start") throw new Error("Expected plan");
+      f.complete(
+        plan,
+        '{"acceptance":["Combined result"],"tasks":[{"id":"edit","objective":"Edit label","acceptance":["Exact label check"],"dependencies":[],"profileId":"p","context":"contract"}],"rationale":"worker"}',
+      );
+      yield* runtime.tick();
+      const worker = f.commands[1]!;
+      if (worker.type !== "thread.turn.start") throw new Error("Expected worker");
+      const question = {
+        id: "boundary-question",
+        toThreadId: plan.threadId,
+        text: "Does cancellation need to terminate the owned child process?",
+        replyRequested: true,
+      };
+      const toolkit = yield* TeamToolkit.pipe(
+        Effect.provide(
+          TeamToolkitHandlersLive.pipe(Layer.provide(Layer.succeed(TeamRuntime, runtime))),
+        ),
+      );
+      yield* toolkit.handle("team_send_message", question).pipe(
+        Stream.unwrap,
+        Stream.runCollect,
+        Effect.provideService(TeamRuntime, runtime),
+        Effect.provideService(McpInvocationContext, {
+          environmentId: EnvironmentId.make("test-environment"),
+          threadId: worker.threadId,
+          providerSessionId: "worker-session",
+          providerInstanceId: provider.instanceId,
+          capabilities: new Set(["pull-requests"] as const),
+          issuedAt: 0,
+        }),
+      );
+      yield* runtime.sendMessage(worker.threadId, question);
+      expect((yield* store.get(initial.id)).messages).toHaveLength(1);
+      yield* runtime.tick();
+      const consultation = f.commands[2]!;
+      if (consultation.type !== "thread.turn.start") throw new Error("Expected consultation");
+      expect(consultation.threadId).toBe(plan.threadId);
+      expect(consultation.message.text).toContain(question.text);
+      expect((yield* store.get(initial.id)).tasks[0]?.status).toBe("running");
+      yield* runtime.tick();
+      expect(f.commands).toHaveLength(3);
+      f.complete(
+        consultation,
+        "Yes. Test the real child-process boundary and preserve unrelated processes.",
+      );
+      yield* runtime.tick();
+      const run = yield* store.get(initial.id);
+      expect(run.tasks[0]?.attempts).toBe(1);
+      expect(run.tasks[0]?.status).toBe("running");
+      expect(run.messages).toHaveLength(2);
+      expect(run.messages?.[1]?.replyRequested).toBe(false);
+      expect(run.messages?.[1]?.inReplyTo).toBe(question.id);
+      // Recreate the runtime over the same durable store; unread advice is retained.
+      const resumed = yield* make.pipe(
+        Effect.provideService(Store.TeamStore, store),
+        Effect.provide(f.layers),
+      );
+      const inbox = yield* resumed.readMessages(worker.threadId);
+      expect(inbox.messages.map((message) => message.text)).toEqual([
+        "Yes. Test the real child-process boundary and preserve unrelated processes.",
+      ]);
+      expect((yield* resumed.readMessages(worker.threadId)).messages).toEqual([]);
+      expect((yield* resumed.readMessages(worker.threadId, true)).messages).toHaveLength(1);
+      expect(inbox.members.map((member) => member.threadId)).toEqual([
+        plan.threadId,
+        worker.threadId,
+      ]);
+      expect(f.commands).toHaveLength(3);
+      expect(
+        f.lifecycleActivities.some((event) => event.activity.summary === "Reply from teammate"),
+      ).toBe(true);
+      const forged = yield* resumed
+        .sendMessage(ThreadId.make("unrelated-thread"), question)
+        .pipe(Effect.flip);
+      expect(forged.code).toBe("not-found");
+      const outside = yield* resumed
+        .sendMessage(worker.threadId, {
+          ...question,
+          id: "outside",
+          toThreadId: ThreadId.make("other-team"),
+        })
+        .pipe(Effect.flip);
+      expect(outside.code).toBe("invalid");
+      const changed = yield* resumed
+        .sendMessage(worker.threadId, { ...question, text: "changed content" })
+        .pipe(Effect.flip);
+      expect(changed.code).toBe("conflict");
+      const current = yield* store.get(initial.id);
+      yield* resumed.control({ id: current.id, revision: current.revision, action: "pause" });
+      const paused = yield* resumed
+        .sendMessage(worker.threadId, { ...question, id: "while-paused" })
+        .pipe(Effect.flip);
+      expect(paused.code).toBe("conflict");
+    }).pipe(Effect.provide(SqlitePersistenceMemory));
+  },
+);
+
+it.effect(
+  "a lead correction reaches a running worker inbox without starting a competing turn",
+  () => {
+    const f = fixture();
+    return Effect.gen(function* () {
+      const store = yield* Store.make;
+      yield* store.create(initial);
+      const runtime = yield* make.pipe(
+        Effect.provideService(Store.TeamStore, store),
+        Effect.provide(f.layers),
+      );
+      yield* runtime.tick();
+      const plan = f.commands[0]!;
+      if (plan.type !== "thread.turn.start") throw new Error("Expected plan");
+      f.complete(
+        plan,
+        '{"acceptance":["Combined result"],"tasks":[{"id":"edit","objective":"Edit label","acceptance":["Exact label check"],"dependencies":[],"profileId":"p","context":"contract"}],"rationale":"worker"}',
+      );
+      yield* runtime.tick();
+      const worker = f.commands[1]!;
+      if (worker.type !== "thread.turn.start") throw new Error("Expected worker");
+      yield* runtime.sendMessage(plan.threadId, {
+        id: "lead-guidance",
+        toThreadId: worker.threadId,
+        text: "Use the real runtime boundary; the owner mock does not verify cleanup.",
+        replyRequested: false,
+      });
+      yield* runtime.tick();
+      expect(f.commands).toHaveLength(2);
+      const inbox = yield* runtime.readMessages(worker.threadId);
+      expect(inbox.messages[0]?.fromThreadId).toBe(plan.threadId);
+      expect(inbox.messages[0]?.text).toContain("real runtime boundary");
+      f.complete(worker, "Worker implemented the real cleanup check.");
+      yield* runtime.tick();
+      expect((yield* store.get(initial.id)).execution?.turns.map((turn) => turn.role)).toEqual([
+        "plan",
+        "worker",
+        "review",
+      ]);
+    }).pipe(Effect.provide(SqlitePersistenceMemory));
+  },
+);
+
+it.effect(
+  "keeps correcting beyond legacy worker limits and sends repeated advice back to the lead",
+  () => {
+    const f = fixture();
+    return Effect.gen(function* () {
+      const store = yield* Store.make;
+      yield* store.create({ ...initial, policy: { ...initial.policy, maxAttempts: 1 } });
+      const runtime = yield* make.pipe(
+        Effect.provideService(Store.TeamStore, store),
+        Effect.provide(f.layers),
+      );
+      const finishLatest = (text: string) => {
+        const command = f.commands.at(-1)!;
+        if (command.type !== "thread.turn.start") throw new Error("Expected turn");
+        f.complete(command, text);
+      };
+      yield* runtime.tick();
+      finishLatest(
+        '{"acceptance":["Combined result"],"tasks":[{"id":"edit","objective":"Edit label","acceptance":["Exact label check"],"dependencies":[],"profileId":"p","context":"contract"}],"rationale":"worker"}',
+      );
+      yield* runtime.tick();
+      for (let attempt = 1; attempt <= 4; attempt++) {
+        finishLatest(`Worker evidence from attempt ${attempt}`);
+        yield* runtime.tick();
+        finishLatest(
+          encodeJson({
+            action: "correct",
+            summary: `Exercise missing boundary ${attempt}`,
+            checks: [],
+          }),
+        );
+        yield* runtime.tick();
+        expect((yield* store.get(initial.id)).tasks[0]?.attempts).toBe(attempt + 1);
+      }
+      finishLatest("More worker evidence");
+      yield* runtime.tick();
+      finishLatest('{"action":"correct","summary":"Exercise missing boundary 4","checks":[]}');
+      yield* runtime.tick();
+      let run = yield* store.get(initial.id);
+      expect(run.status).toBe("running");
+      expect(run.tasks[0]?.attempts).toBe(5);
+      expect(run.execution?.turns.at(-1)?.role).toBe("review");
+      finishLatest(
+        '{"action":"accept","summary":"Evidence now covers it","checks":[{"criterionIndex":0,"criterion":"Exact label check","command":"python3","args":[]}]}',
+      );
+      yield* runtime.tick();
+      finishLatest(
+        '{"action":"accept","summary":"Combined result verified","checks":[{"criterionIndex":0,"criterion":"Combined result","command":"python3","args":[]}]}',
+      );
+      yield* runtime.tick();
+      run = yield* store.get(initial.id);
+      expect(run.status).toBe("completed");
+      expect(run.tasks[0]?.recoveryHistory).toHaveLength(4);
+    }).pipe(Effect.provide(SqlitePersistenceMemory));
+  },
+);
+
+it.effect(
+  "actively supervises worker progress, coalesces bursts and ignores coordination-tool echoes",
+  () => {
+    const f = fixture();
+    return Effect.gen(function* () {
+      const store = yield* Store.make;
+      yield* store.create(initial);
+      const runtime = yield* make.pipe(
+        Effect.provideService(Store.TeamStore, store),
+        Effect.provide(f.layers),
+      );
+      yield* runtime.tick();
+      const plan = f.commands[0]!;
+      if (plan.type !== "thread.turn.start") throw new Error("Expected plan");
+      f.complete(
+        plan,
+        '{"acceptance":["Combined result"],"tasks":[{"id":"edit","objective":"Edit label","acceptance":["Exact label check"],"dependencies":[],"profileId":"p","context":"contract"}],"rationale":"worker"}',
+      );
+      yield* runtime.tick();
+      const worker = f.commands[1]!;
+      if (worker.type !== "thread.turn.start") throw new Error("Expected worker");
+      const activity = (
+        sequence: number,
+        summary: string,
+        kind = "tool.completed",
+      ): OrchestrationEvent => ({
+        type: "thread.activity-appended",
+        sequence,
+        eventId: EventId.make(`progress-${sequence}`),
+        aggregateKind: "thread",
+        aggregateId: worker.threadId,
+        occurredAt: date,
+        commandId: null,
+        causationEventId: null,
+        correlationId: null,
+        metadata: {},
+        payload: {
+          threadId: worker.threadId,
+          activity: {
+            id: EventId.make(`tool-${sequence}`),
+            tone: "tool",
+            kind,
+            summary,
+            payload: {},
+            turnId: null,
+            createdAt: date,
+          },
+        },
+      });
+      yield* runtime.observeWorkerEvent(activity(1, "Running cleanup test"));
+      yield* runtime.tick();
+      const consultation = f.commands[2]!;
+      if (consultation.type !== "thread.turn.start")
+        throw new Error("Expected proactive lead turn");
+      expect(consultation.threadId).toBe(plan.threadId);
+      expect(consultation.message.text).toContain("Actively inspect");
+      for (let sequence = 2; sequence <= 6; sequence++) {
+        yield* runtime.observeWorkerEvent(activity(sequence, `Boundary check ${sequence}`));
+        yield* runtime.tick();
+      }
+      expect(f.commands).toHaveLength(3);
+      let run = yield* store.get(initial.id);
+      expect(run.messages).toHaveLength(1);
+      expect(run.messages?.[0]?.text).toContain("Boundary check 6");
+      yield* runtime.observeWorkerEvent(activity(6, "Duplicate receipt must not append"));
+      yield* runtime.observeWorkerEvent(activity(7, "mcp__t3_code__team_read_messages"));
+      expect((yield* store.get(initial.id)).messages?.[0]?.sourceSequence).toBe(6);
+      // New progress after the lead's initial snapshot must get another look,
+      // even if the provider did not call the inbox tool before finishing.
+      f.complete(consultation, "Initial check reviewed.");
+      yield* runtime.tick();
+      expect(f.commands).toHaveLength(4);
+      const next = f.commands[3]!;
+      if (next.type !== "thread.turn.start") throw new Error("Expected follow-up inspection");
+      expect(next.message.text).toContain("Boundary check 6");
+      yield* runtime.readMessages(plan.threadId);
+      f.complete(next, "Current progress checked; no intervention needed.");
+      yield* runtime.tick();
+      expect(f.commands).toHaveLength(4);
+      run = yield* store.get(initial.id);
+      expect(run.tasks[0]?.status).toBe("running");
+      expect(run.messages?.every((message) => !message.replyRequested)).toBe(true);
+      yield* runtime.control({ id: run.id, revision: run.revision, action: "pause" });
+      yield* runtime.observeWorkerEvent(activity(8, "Paused progress"));
+      yield* runtime.tick();
+      expect(f.commands).toHaveLength(4);
+    }).pipe(Effect.provide(SqlitePersistenceMemory));
+  },
+);

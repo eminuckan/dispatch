@@ -2,7 +2,7 @@ import { TeamError, type TeamExecutionTurn, type TeamRun } from "@t3tools/contra
 import * as Schema from "effect/Schema";
 
 export const LeadReview = Schema.Struct({
-  action: Schema.Literals(["accept", "correct"]),
+  action: Schema.Literals(["accept", "correct", "blocked"]),
   summary: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(8000)),
   checks: Schema.Array(
     Schema.Struct({
@@ -31,6 +31,27 @@ export function admitExecutionTurn(run: TeamRun, turn: TeamExecutionTurn): TeamR
   };
   const execution = run.execution;
   if (!execution) return fail("Run has no execution contract.");
+  if (turn.role === "consult") {
+    const message = run.messages?.find(
+      (entry) => entry.id === turn.taskId && entry.toThreadId === turn.command.threadId,
+    );
+    const profile =
+      turn.command.threadId === execution.leadThreadId
+        ? run.lead
+        : run.policy.profiles.find((p) =>
+            run.tasks.some(
+              (task) => task.threadId === turn.command.threadId && task.profileId === p.id,
+            ),
+          );
+    if (
+      !message ||
+      !profile ||
+      turn.command.modelSelection?.instanceId !== profile.selection.instanceId ||
+      turn.command.modelSelection?.model !== profile.selection.model
+    )
+      fail("Consultation must target the message's existing teammate and model.");
+    return { ...run, execution: { ...execution, turns: [...execution.turns, turn] } };
+  }
   if (turn.role !== "worker") {
     if (
       turn.command.threadId !== execution.leadThreadId ||
@@ -41,8 +62,7 @@ export function admitExecutionTurn(run: TeamRun, turn: TeamExecutionTurn): TeamR
     return { ...run, execution: { ...execution, turns: [...execution.turns, turn] } };
   }
   const task = run.tasks.find((t) => t.id === turn.taskId);
-  if (!task || task.status !== "pending" || task.attempts >= run.policy.maxAttempts)
-    return fail("Worker is not ready or its attempt budget is exhausted.");
+  if (!task || task.status !== "pending") return fail("Worker is not ready.");
   if (
     task.dependencies.some((id) => !run.tasks.some((t) => t.id === id && t.status === "accepted"))
   )

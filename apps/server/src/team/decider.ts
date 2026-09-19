@@ -76,12 +76,7 @@ export function readyTasks(run: TeamRun, unresolvedEffects: number): ReadonlyArr
   // Keep one slot available to the lead. Unknown dispatches retain their slot.
   const slots = Math.max(0, run.policy.maxActive - 1 - unresolvedEffects);
   return run.tasks
-    .filter(
-      (t) =>
-        t.status === "pending" &&
-        t.attempts < run.policy.maxAttempts &&
-        t.dependencies.every((id) => accepted.has(id)),
-    )
+    .filter((t) => t.status === "pending" && t.dependencies.every((id) => accepted.has(id)))
     .slice(0, slots);
 }
 export function receiveResult(
@@ -131,22 +126,9 @@ export function retryTask(
   const task = run.tasks.find((t) => t.id === taskId);
   if (!task || !["review", "failed"].includes(task.status))
     return invalid("Only settled attempts may be retried.");
-  if (task.attempts >= run.policy.maxAttempts)
-    invalid(
-      "Recovery exhausted without acceptance. Inspect the unresolved criteria before continuing.",
-    );
   const normalize = (text: string) => text.trim().replace(/\s+/g, " ").toLowerCase();
   if (task.recoveryHistory?.some((entry) => normalize(entry.correction) === normalize(reason)))
     invalid("Repeated correction without a new approach. Work is preserved for lead review.");
-  if (
-    task.result?.trim() &&
-    task.recoveryHistory?.some(
-      (entry) => entry.result && normalize(entry.result) === normalize(task.result!),
-    )
-  )
-    invalid(
-      "Worker repeated a previous result without acceptance. Work is preserved for lead review.",
-    );
   if (!run.policy.profiles.some((p) => p.id === nextProfileId && p.worker))
     invalid("Retry profile is outside the allowed pool.");
   const previous = run.policy.profiles.find((p) => p.id === task.profileId);

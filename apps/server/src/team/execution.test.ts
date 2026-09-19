@@ -87,7 +87,7 @@ describe("durable team admission", () => {
     expect(admitted.execution?.turns[0]?.command.commandId).toBe("cmd-turn");
     expect(() => admitExecutionTurn(admitted, turn)).toThrow();
   });
-  it("rejects model substitution, unmet dependencies and exhausted attempts", () => {
+  it("rejects model substitution and unmet dependencies but allows continued corrections", () => {
     expect(() =>
       admitExecutionTurn(run, {
         ...turn,
@@ -105,7 +105,7 @@ describe("durable team admission", () => {
         { ...run, tasks: run.tasks.map((t) => ({ ...t, attempts: run.policy.maxAttempts })) },
         turn,
       ),
-    ).toThrow();
+    ).not.toThrow();
   });
   it("never changes the lead identity or rebinds an existing worker", () => {
     expect(() => admitExecutionTurn(run, { ...turn, role: "plan" })).toThrow();

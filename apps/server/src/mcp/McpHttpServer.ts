@@ -1,3 +1,5 @@
+import { TeamToolkit } from "./toolkits/team/tools.ts";
+import { TeamToolkitHandlersLive } from "./toolkits/team/handlers.ts";
 import * as NodeCrypto from "node:crypto";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
@@ -628,7 +630,12 @@ const McpTransportLive = McpServer.layerHttp({
   protocols: [McpProtocol.v2025_06_18],
 }).pipe(Layer.provide(McpAuthMiddlewareLive));
 
+export const TeamToolkitRegistrationLive = McpServer.toolkit(TeamToolkit).pipe(
+  Layer.provide(TeamToolkitHandlersLive),
+);
+
 export const layer = Layer.mergeAll(
+  TeamToolkitRegistrationLive,
   PreviewToolkitRegistrationLive,
   PullRequestsToolkitRegistrationLive,
   DeviceToolkitRegistrationLive,

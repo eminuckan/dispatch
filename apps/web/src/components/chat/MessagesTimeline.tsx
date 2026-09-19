@@ -5012,7 +5012,7 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
           onKeyDown={stopRowToggle}
           className="ms-7 mt-1 w-fit text-xs text-muted-foreground underline underline-offset-4 hover:text-foreground"
         >
-          Open worker conversation
+          Open agent conversation
         </Link>
       ) : null}
       {expanded && viewedImage && threadRef ? (

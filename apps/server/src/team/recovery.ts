@@ -69,8 +69,6 @@ export function recoveryAdvice(
   ): TeamRecoveryAdvice => ({ action, reason, profileId, source });
   if (input.inFlight)
     return advice("wait", "Settle or reconcile the active attempt before recovery.");
-  if (input.attemptsMade >= policy.maxAttempts)
-    return advice("stop", "The attempt limit is reached.");
   const current = policy.profiles.find((p) => p.id === input.currentProfileId && p.worker);
   if (!current || policy.mode === "off")
     return advice(
@@ -78,20 +76,34 @@ export function recoveryAdvice(
       "Recovery needs an enabled policy and allowed worker profile.",
       null,
     );
+  if (!result)
+    return advice(
+      "lead_review",
+      "No valid Jev recovery response is available; continue with the lead's assessment without model escalation.",
+    );
+  if (result.model !== JEV_MODEL)
+    return advice(
+      "lead_review",
+      "Jev returned an unsupported classifier version; the lead retains the decision.",
+    );
   if (
-    !result ||
-    result.model !== JEV_MODEL ||
-    !validChoice(result.answers.cause, [
-      "environment",
-      "context",
-      "local",
-      "reasoning",
-      "unknown",
-    ]) ||
-    result.answers.cause.confidence < policy.confidenceThreshold
+    !validChoice(result.answers.cause, ["environment", "context", "local", "reasoning", "unknown"])
   )
-    return advice("lead_review", "Failure diagnosis is uncertain; no automatic escalation.");
+    return advice(
+      "lead_review",
+      "Jev returned an invalid cause classification; the lead retains the decision.",
+    );
+  if (result.answers.cause.confidence < policy.confidenceThreshold)
+    return advice(
+      "lead_review",
+      `Jev cause confidence ${result.answers.cause.confidence} is below the required ${policy.confidenceThreshold}; the lead retains the decision.`,
+    );
   const cause = result.answers.cause.choice;
+  if (cause === "unknown")
+    return advice(
+      "lead_review",
+      "Jev could not distinguish the cause from the supplied evidence; the lead retains the decision.",
+    );
   if (cause === "environment")
     return advice(
       "repair_environment",

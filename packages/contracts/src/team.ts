@@ -30,6 +30,7 @@ export const TeamPolicy = Schema.Struct({
   mode: Schema.Literals(["off", "shadow", "auto"]),
   profiles: Schema.Array(TeamModelProfile).check(Schema.isMaxLength(40)),
   maxActive: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 5 })),
+  // Legacy setting; acceptance, pause/cancel and explicit budgets govern continuation.
   maxAttempts: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 3 })),
   estimatedBudgetUsd: Schema.optional(
     Schema.NullOr(
@@ -103,18 +104,19 @@ export const TeamTask = Schema.Struct({
         result: Schema.NullOr(Schema.String),
         correction: TrimmedNonEmptyString,
       }),
-    ).check(Schema.isMaxLength(3)),
+    ),
   ),
 });
 export type TeamTask = typeof TeamTask.Type;
 export const TeamExecutionTurn = Schema.Struct({
   id: Id,
+  observedMessageSequence: Schema.optional(Count),
   estimatedAttemptUsd: Schema.optional(
     Schema.NullOr(
       Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0), Schema.isLessThanOrEqualTo(1_000_000)),
     ),
   ),
-  role: Schema.Literals(["plan", "worker", "review", "integrate"]),
+  role: Schema.Literals(["plan", "worker", "review", "integrate", "consult"]),
   taskId: Schema.NullOr(Id),
   command: ThreadTurnStartCommand,
   status: Schema.Literals(["reserved", "dispatching", "dispatched", "settled"]),
@@ -135,6 +137,19 @@ export const TeamExecution = Schema.Struct({
   phase: Schema.Literals(["plan", "workers", "integrate", "done"]),
   notice: Schema.NullOr(Schema.String),
 });
+export const TeamPeerMessage = Schema.Struct({
+  id: Id,
+  fromThreadId: ThreadId,
+  toThreadId: ThreadId,
+  text: TrimmedNonEmptyString.check(Schema.isMaxLength(8000)),
+  replyRequested: Schema.Boolean,
+  inReplyTo: Schema.optional(Id),
+  origin: Schema.optional(Schema.Literal("progress")),
+  sourceSequence: Schema.optional(Count),
+  createdAt: Schema.String,
+  readAt: Schema.NullOr(Schema.String),
+});
+export type TeamPeerMessage = typeof TeamPeerMessage.Type;
 export const TeamRun = Schema.Struct({
   id: Id,
   commandId: Id,
@@ -154,6 +169,7 @@ export const TeamRun = Schema.Struct({
   ]),
   tasks: Schema.Array(TeamTask),
   decisions: Schema.Array(Schema.String),
+  messages: Schema.optional(Schema.Array(TeamPeerMessage)),
   createdAt: Schema.String,
   updatedAt: Schema.String,
   /** Persisted upload references that must survive queued team turns and restarts. */
@@ -197,7 +213,7 @@ export const TeamRecoveryInput = Schema.Struct({
   objective: TrimmedNonEmptyString.check(Schema.isMaxLength(4000)),
   evidence: TrimmedNonEmptyString.check(Schema.isMaxLength(8000)),
   correction: Schema.String.check(Schema.isMaxLength(4000)),
-  attemptsMade: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 3 })),
+  attemptsMade: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
   inFlight: Schema.Boolean,
 });
 export type TeamRecoveryInput = typeof TeamRecoveryInput.Type;

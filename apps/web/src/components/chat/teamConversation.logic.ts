@@ -34,6 +34,8 @@ export function teamTurnLabel(
   turn: import("@t3tools/contracts").TeamThreadView["turns"][number],
 ): string {
   if (turn.status === "reserved") return "queued";
+  if (turn.role === "consult")
+    return turn.status === "settled" ? "consultation finished" : "responding to teammate";
   if (turn.status !== "settled")
     return turn.role === "review"
       ? "reviewing worker"

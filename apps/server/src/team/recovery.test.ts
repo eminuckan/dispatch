@@ -97,13 +97,13 @@ describe("recovery advice", () => {
       recoveryAdvice({ ...cheap, attemptsMade: 2 }, policy, response("reasoning")).action,
     ).toBe("new_worker");
   });
-  it("keeps hard limits and uncertainty above Jev advice", () => {
+  it("waits for in-flight work without imposing a correction attempt ceiling", () => {
     expect(recoveryAdvice({ ...input, inFlight: true }, policy, response("reasoning")).action).toBe(
       "wait",
     );
     expect(
       recoveryAdvice({ ...input, attemptsMade: 3 }, policy, response("reasoning")).action,
-    ).toBe("stop");
+    ).toBe("increase_effort");
     const base = response("reasoning");
     const uncertain = {
       ...base,
@@ -114,4 +114,22 @@ describe("recovery advice", () => {
       recoveryAdvice(input, policy, { ...response("reasoning"), model: "different" }).action,
     ).toBe("lead_review");
   });
+});
+
+it("distinguishes missing responses, low confidence, unsupported versions and unknown causes", () => {
+  expect(recoveryAdvice(input, policy, null).reason).toContain("No valid Jev recovery response");
+  const low = response("local");
+  const lowConfidence = {
+    ...low,
+    answers: { ...low.answers, cause: { ...low.answers.cause, confidence: 0.55 } },
+  };
+  expect(recoveryAdvice(input, policy, lowConfidence).reason).toContain(
+    "0.55 is below the required 0.9",
+  );
+  expect(recoveryAdvice(input, policy, { ...low, model: "unexpected" }).reason).toContain(
+    "unsupported classifier version",
+  );
+  expect(recoveryAdvice(input, policy, response("unknown")).reason).toContain(
+    "could not distinguish",
+  );
 });

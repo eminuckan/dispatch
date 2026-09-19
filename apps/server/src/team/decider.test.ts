@@ -122,13 +122,13 @@ describe("team decider", () => {
   });
   it("does not mark zero-worker work complete without lead acceptance", () =>
     expect(acceptPlan(run, { tasks: [], rationale: "lead handles it" }).status).toBe("review"));
-  it("enforces the attempt cap and does not retry unknown running effects", () => {
+  it("allows further corrections but does not retry unknown running effects", () => {
     const planned = acceptPlan(run, proposal);
     const capped = {
       ...planned,
       tasks: planned.tasks.map((t) => ({ ...t, status: "failed" as const, attempts: 2 })),
     };
-    expect(() => retryTask(capped, "a", "allowed", "retry")).toThrow(/exhausted/);
+    expect(retryTask(capped, "a", "allowed", "retry").tasks[0]?.status).toBe("pending");
     const running = {
       ...planned,
       tasks: planned.tasks.map((t) => ({ ...t, status: "running" as const })),
@@ -137,7 +137,7 @@ describe("team decider", () => {
   });
 });
 
-it("stops duplicate corrections and repeated results across persisted worker handoffs", () => {
+it("requires changed corrections while preserving repeated-result evidence across handoffs", () => {
   const planned = acceptPlan(run, proposal);
   const stalled: TeamRun = {
     ...planned,
@@ -164,9 +164,9 @@ it("stops duplicate corrections and repeated results across persisted worker han
     ...stalled,
     tasks: stalled.tasks.map((t) => ({ ...t, result: " SAME failure " })),
   };
-  expect(() => retryTask(repeated, "a", "allowed", "A different suggestion", "handoff")).toThrow(
-    /repeated a previous result/,
-  );
+  expect(
+    retryTask(repeated, "a", "allowed", "A different suggestion", "handoff").tasks[0]?.status,
+  ).toBe("pending");
   expect(retryTask(stalled, "a", "allowed", "Handle the missing null case").tasks[0]?.status).toBe(
     "pending",
   );

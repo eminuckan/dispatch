@@ -118,10 +118,10 @@ agents’ responses use the normal conversation.
 
 The active-agent limit includes the lead. Teams finish when all planned acceptance
 criteria pass independent checks in the combined lead worktree; there is no total
-turn limit. Repeated corrections or unchanged failed results pause work instead
-of starting an automatic retry loop. Failed combined checks receive one focused
-correction before pausing with saved evidence. Orchestration settings use agent
-and attempt limits, without dollar estimates. They do not measure or enforce your
+turn or correction-attempt limit. The lead keeps reviewing corrections until the
+criteria pass. A repeated correction goes back to the lead to choose a different
+approach. A concrete external blocker can pause work with an explanation.
+Orchestration settings limit concurrent agents, without dollar estimates. They do not measure or enforce your
 remaining subscription quota. Saving removes legacy estimated-dollar limits for
 new teams; existing runs keep their frozen policy.
 The **Agents** panel’s **Pause** control lets current work settle while preventing new turns;
@@ -133,7 +133,15 @@ or merge the lead worktree into the original checkout.
 A review formatting failure is repaired by the lead without consuming another
 worker attempt. For a genuine worker failure, recovery can retain the worker,
 increase effort using another allowed profile of the same model, or create a new
-worker for a model change. Environment and context problems can pause the run.
+worker for a model change. Routing advice does not override the lead's correction.
+
+Agents can exchange questions, advice, and corrections during work through their
+existing T3 tools. Messages appear in both conversations and survive a restart.
+Worker progress messages, tool starts/results, plans, and errors also prompt the
+lead to inspect progress and send guidance when needed. Updates arriving while
+the lead is busy are combined. An idle recipient is woken for a consultation;
+an active agent reads its inbox between work steps. A consultation is separate from acceptance of the work.
+User permission and approval requests remain yours to answer.
 Checks and model review reduce risk but do not guarantee correctness or savings;
 subscription quota consumption is distinct from API prices.
 
