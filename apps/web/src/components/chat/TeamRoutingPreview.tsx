@@ -60,7 +60,7 @@ function useRoutingState({
     });
     setSaving(false);
     if (result._tag === "Failure") {
-      setModeError("Could not change routing. Check Providers settings and try again.");
+      setModeError("Could not change routing. Check Orchestration settings and try again.");
       return false;
     }
     setModeError(null);
@@ -197,7 +197,7 @@ export function TeamRoutingPickerDetails() {
                 .map((p) => p.label)
                 .join(", ")}
             </p>
-            <p>Manage models in Settings → Providers.</p>
+            <p>Manage models in Settings → Orchestration.</p>
           </div>
         </details>
       )}

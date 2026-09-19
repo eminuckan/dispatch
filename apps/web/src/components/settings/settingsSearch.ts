@@ -17,6 +17,7 @@ export type SettingsPath =
   | "/settings/appearance"
   | "/settings/keybindings"
   | "/settings/snap-shot"
+  | "/settings/orchestration"
   | "/settings/providers"
   | "/settings/integrations"
   | "/settings/source-control"
@@ -87,6 +88,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/keybindings": "Keybindings",
   "/settings/snap-shot": "SnapShots",
   "/settings/providers": "Providers",
+  "/settings/orchestration": "Orchestration",
   "/settings/integrations": "Integrations",
   "/settings/source-control": "Source Control",
   "/settings/storage": "Storage",
@@ -482,6 +484,22 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/keybindings",
     searchTerms: ["keyboard shortcuts hotkeys commands bindings json"],
   },
+  {
+    id: "routing-jev",
+    title: "Jev API key",
+    to: "/settings/orchestration",
+    targetId: "routing-connection",
+    searchTerms: ["routing", "automatic", "models", "key", "team"],
+    environmentOnly: true,
+  },
+  {
+    id: "routing-models",
+    title: "Allowed routing models",
+    to: "/settings/orchestration",
+    targetId: "routing-models",
+    searchTerms: ["lead", "worker", "effort", "pool"],
+    environmentOnly: true,
+  },
   ...KEYBINDING_SEARCH_ITEMS,
   {
     id: "snap-shot-enabled",
@@ -805,6 +823,7 @@ const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScop
   // environment at any selection. Neither needs a particular scope to render.
   "/settings/keybindings": null,
   "/settings/providers": null,
+  "/settings/orchestration": null,
   "/settings/integrations": null,
   "/settings/source-control": "environment-defaults",
   "/settings/storage": "project-defaults",

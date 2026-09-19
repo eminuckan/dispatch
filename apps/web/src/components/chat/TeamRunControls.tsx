@@ -1,4 +1,17 @@
-import { UsersIcon, ChevronDownIcon } from "lucide-react";
+import {
+  NumberField,
+  NumberFieldGroup,
+  NumberFieldInput,
+  NumberFieldDecrement,
+  NumberFieldIncrement,
+} from "../ui/number-field";
+import {
+  UsersIcon,
+  ChevronDownIcon,
+  RefreshCwIcon,
+  ArrowUpRightIcon,
+  LockKeyholeIcon,
+} from "lucide-react";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { useState } from "react";
 import type { EnvironmentId, ProjectId, TeamAssessment, TeamRun } from "@t3tools/contracts";
@@ -108,107 +121,178 @@ export function TeamRunControls({
           : ""}
         <ChevronDownIcon className="size-3" />
       </PopoverTrigger>
-      <PopoverPopup side="top" align="end" className="w-96 max-w-[calc(100vw-2rem)] text-xs">
-        <div className="max-h-96 space-y-3 overflow-y-auto leading-relaxed">
-          <p className="font-medium text-foreground">Managed team</p>
+      <PopoverPopup
+        side="top"
+        align="end"
+        className="w-96 max-w-[calc(100vw-2rem)]"
+        viewportClassName="max-h-[70vh] overflow-y-auto"
+      >
+        <div className="space-y-4 text-xs leading-relaxed">
+          <div>
+            <h2 className="text-sm font-medium text-foreground">Team</h2>
+            <p className="mt-1 text-muted-foreground">
+              A lead coordinates workers and checks their results.
+            </p>
+          </div>
           {showStart && (
-            <div className="flex flex-wrap items-center gap-2">
+            <>
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <p className="font-medium text-foreground">Turn limit</p>
+                  <p className="mt-0.5 text-muted-foreground">
+                    Lead, workers and retries combined.
+                  </p>
+                </div>
+                <NumberField
+                  aria-label="Team turn limit"
+                  size="sm"
+                  className="w-28 shrink-0"
+                  min={1}
+                  max={100}
+                  step={1}
+                  value={maxTurns}
+                  onValueChange={(value) => setMaxTurns(value ?? 20)}
+                  disabled={pending}
+                >
+                  <NumberFieldGroup>
+                    <NumberFieldDecrement aria-label="Decrease team turn limit" />
+                    <NumberFieldInput aria-label="Team turn limit" />
+                    <NumberFieldIncrement aria-label="Increase team turn limit" />
+                  </NumberFieldGroup>
+                </NumberField>
+              </div>
+              <div className="flex items-start gap-2 text-muted-foreground">
+                <LockKeyholeIcon className="mt-0.5 size-3.5 shrink-0" />
+                <p>
+                  Full access in separate worktrees. Starts from your latest commit; uncommitted
+                  changes are excluded.
+                </p>
+              </div>
               <Button
+                className="w-full"
                 size="sm"
-                variant="outline"
                 disabled={pending || !assessment?.selection || hasAttachments || composing}
                 onClick={() => void submit()}
               >
-                Start team
+                {pending ? "Starting…" : "Start team"}
               </Button>
-              <label>
-                Turn limit{" "}
-                <input
-                  aria-label="Team turn limit"
-                  className="ml-1 w-16 rounded-md border bg-background px-2 py-1 tabular-nums"
-                  type="number"
-                  min={1}
-                  max={100}
-                  value={maxTurns}
-                  onChange={(e) =>
-                    setMaxTurns(Math.min(100, Math.max(1, Number(e.target.value) || 1)))
-                  }
-                />
-              </label>
-              <Button size="sm" variant="ghost" onClick={runs.refresh}>
-                Refresh teams
-              </Button>
-            </div>
+              {hasAttachments ? (
+                <p className="text-muted-foreground">
+                  Team runs currently support text-only requests.
+                </p>
+              ) : (
+                !assessment?.selection && (
+                  <p className="text-muted-foreground">
+                    Waiting for an eligible lead. Check Orchestration settings if no model becomes
+                    available.
+                  </p>
+                )
+              )}
+            </>
           )}
-          <p className="text-muted-foreground">
-            Runs with full access in separate worktrees, starting from your latest commit. Unsaved
-            changes are excluded. The turn limit includes the lead, workers and retries.
-          </p>
-          {!showStart && (
-            <Button size="sm" variant="ghost" onClick={runs.refresh}>
-              Refresh teams
-            </Button>
-          )}
-          {projectRuns.map((run) => (
-            <div key={run.id} className="mt-2 border-t pt-2">
-              <div>
-                {run.objective.slice(0, 100)} · {run.status} · {run.execution?.turns.length ?? 0}/
-                {run.execution?.maxTurns ?? 0} turns
+          {(projectRuns.length > 0 || runs.error) && (
+            <div className="border-t pt-3">
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <h3 className="font-medium text-foreground">Recent teams</h3>
+                <Button
+                  size="icon-xs"
+                  variant="ghost"
+                  onClick={runs.refresh}
+                  aria-label="Refresh teams"
+                >
+                  <RefreshCwIcon className="size-3.5" />
+                </Button>
               </div>
-              {run.execution && (
-                <a className="underline" href={`/${environmentId}/${run.execution.leadThreadId}`}>
-                  Open lead
-                </a>
-              )}
-              {run.tasks.map((task) => (
-                <div key={task.id}>
-                  {task.objective.slice(0, 70)} · {task.status} · attempt {task.attempts}
-                  {task.threadId && (
-                    <>
-                      {" "}
-                      ·{" "}
-                      <a className="underline" href={`/${environmentId}/${task.threadId}`}>
-                        Open worker
-                      </a>
-                    </>
-                  )}
-                </div>
-              ))}
-              {run.execution?.notice && <p>{run.execution.notice}</p>}
-              {!["completed", "cancelled", "failed"].includes(run.status) && (
-                <div className="flex gap-2">
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    disabled={pending}
-                    onClick={() => void change(run, run.status === "paused" ? "resume" : "pause")}
-                  >
-                    {run.status === "paused" ? "Resume" : "Pause admission"}
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    disabled={pending}
-                    onClick={() => void change(run, "cancel")}
-                  >
-                    Cancel team
-                  </Button>
-                  {(run.execution?.maxTurns ?? 100) < 100 && (
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      disabled={pending}
-                      onClick={() => void change(run, "extend_budget")}
-                    >
-                      Add up to 5 turns
-                    </Button>
-                  )}
-                </div>
-              )}
+              <div className="divide-y divide-border/50">
+                {projectRuns.map((run) => (
+                  <div key={run.id} className="space-y-2 py-3 first:pt-0 last:pb-0">
+                    <div className="flex items-start justify-between gap-3">
+                      <p className="line-clamp-2 min-w-0 font-medium text-foreground">
+                        {run.objective}
+                      </p>
+                      {run.execution && (
+                        <a
+                          aria-label="Open team lead"
+                          className="shrink-0 rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
+                          href={`/${environmentId}/${run.execution.leadThreadId}`}
+                        >
+                          <ArrowUpRightIcon className="size-3.5" />
+                        </a>
+                      )}
+                    </div>
+                    <div className="flex items-center justify-between text-muted-foreground">
+                      <span className="capitalize">{run.status}</span>
+                      <span className="tabular-nums">
+                        {run.execution?.turns.length ?? 0} / {run.execution?.maxTurns ?? 0} turns
+                      </span>
+                    </div>
+                    {(run.tasks.length > 0 || run.execution?.notice) && (
+                      <details className="text-muted-foreground">
+                        <summary className="w-fit cursor-pointer hover:text-foreground">
+                          {run.tasks.length ? `${run.tasks.length} work items` : "Run details"}
+                        </summary>
+                        <div className="mt-2 space-y-2">
+                          {run.tasks.map((task) => (
+                            <div key={task.id} className="space-y-1">
+                              <p>{task.objective}</p>
+                              <div className="flex justify-between gap-2">
+                                <span>
+                                  {task.status} · attempt {task.attempts}
+                                </span>
+                                {task.threadId && (
+                                  <a
+                                    className="underline underline-offset-2"
+                                    href={`/${environmentId}/${task.threadId}`}
+                                  >
+                                    Open worker
+                                  </a>
+                                )}
+                              </div>
+                            </div>
+                          ))}
+                          {run.execution?.notice && <p>{run.execution.notice}</p>}
+                        </div>
+                      </details>
+                    )}
+                    {!["completed", "cancelled", "failed"].includes(run.status) && (
+                      <div className="flex flex-wrap items-center gap-1">
+                        <Button
+                          size="xs"
+                          variant="outline"
+                          disabled={pending}
+                          onClick={() =>
+                            void change(run, run.status === "paused" ? "resume" : "pause")
+                          }
+                        >
+                          {run.status === "paused" ? "Resume" : "Pause admission"}
+                        </Button>
+                        {(run.execution?.maxTurns ?? 100) < 100 && (
+                          <Button
+                            size="xs"
+                            variant="ghost"
+                            disabled={pending}
+                            onClick={() => void change(run, "extend_budget")}
+                          >
+                            Add up to 5 turns
+                          </Button>
+                        )}
+                        <Button
+                          size="xs"
+                          variant="ghost"
+                          disabled={pending}
+                          onClick={() => void change(run, "cancel")}
+                        >
+                          Cancel
+                        </Button>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
             </div>
-          ))}
+          )}
           {(message || runs.error) && (
-            <p role="status" className="mt-2">
+            <p role="status" className="border-t pt-3 text-muted-foreground">
               {message ?? runs.error}
             </p>
           )}

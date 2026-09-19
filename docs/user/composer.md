@@ -69,10 +69,12 @@ Leaving reasoning level or service tier unset uses the provider's own configurat
 
 ## Jev routing and managed teams (experimental)
 
-On this fork's web and desktop clients, configure Jev in Settings → Providers.
+On this fork's web and desktop clients, configure Jev in Settings → Orchestration.
 Add your own Jev API key and explicitly choose the allowed model profiles and
 reasoning options. Models in the ordinary picker are not automatically eligible.
-Choose a capable lead for complex or uncertain tasks; an absent model cannot be
+Known model families receive an editable starting task group, not a benchmark score.
+Use Customize to change a model’s group, effort or lead/worker permissions.
+Choose a lead for complex or uncertain tasks; an absent model cannot be
 recommended. Enabling routing sends draft text to TypeSafe after a typing pause.
 The key is saved in the environment's private secret store.
 
@@ -81,7 +83,7 @@ mode resolves the lead model again when sending a new text-only draft. Neither
 mode changes an existing lead or worker's model halfway through its conversation.
 Confidence describes classification certainty, not the chance that the code is correct.
 
-Use **Run team · full access** for a managed coding run. Teams currently support
+Use **Team → Start team** for a managed coding run. Teams currently support
 Codex and Claude, use isolated worktrees from committed HEAD, and preserve the
 original checkout. Uncommitted changes and attachments are not included. The lead
 plans work, workers receive persistent task contracts, and the lead reviews their
@@ -89,10 +91,10 @@ results before integrating and verifying the combined change. Native subagent
 tools are disabled for these managed sessions.
 
 The active-agent limit includes the lead. The turn limit includes planning,
-worker attempts, review, repairs and integration; it is not a dollar cap. You can
-also set an estimated USD budget and per-profile turn estimates in Providers.
-Unknown estimates block admission with that cap enabled. This cap reserves whole
-attempt estimates; it cannot enforce actual API billing or subscription quota.
+worker attempts, review, repairs and integration. Orchestration settings use agent
+and attempt limits, without dollar estimates. They do not measure or enforce your
+remaining subscription quota. Saving removes legacy estimated-dollar limits for
+new teams; existing runs keep their frozen policy.
 **Pause admission** lets current work settle while preventing new turns;
 **Cancel team** requests interruption. An uncertain dispatch keeps its reservation
 until reconciled. Refresh the team panel to see its current state, open its lead

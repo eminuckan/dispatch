@@ -117,7 +117,7 @@ export const make = Effect.gen(function* () {
     if (policy.mode !== "off" && Option.isNone(key))
       return yield* new TeamError({
         code: "unavailable",
-        message: "Jev API key is required. Configure it in Providers settings.",
+        message: "Jev API key is required. Configure it in Orchestration settings.",
       });
     const request = jevRequest(draft.prompt);
     if (
