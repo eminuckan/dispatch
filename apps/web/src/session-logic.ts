@@ -27,7 +27,7 @@ import {
   type OrchestrationThreadActivity,
   type OrchestrationProposedPlanId,
   type ToolLifecycleItemType,
-  type ThreadId,
+  ThreadId,
   type TurnId,
 } from "@t3tools/contracts";
 
@@ -78,6 +78,8 @@ export interface WorkLogEntry {
   toolLifecycleStatus?: WorkLogToolLifecycleStatus;
   /** Originating orchestration activity kind (e.g. `user-input.requested`) for row chrome. */
   sourceActivityKind?: OrchestrationThreadActivity["kind"];
+  /** Managed orchestration milestones link to the worker's ordinary conversation. */
+  teamThreadId?: ThreadId;
   /** Grouping key for subagent lifecycle rows (one row per agent). */
   taskId?: string;
   /** Agent role (subagent_type) for labeled timeline rows. */
@@ -590,6 +592,13 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
           : activity.tone,
     sourceActivityKind: activity.kind,
   };
+  if (
+    activity.kind.startsWith("team.") &&
+    typeof payload?.threadId === "string" &&
+    payload.threadId.trim()
+  ) {
+    entry.teamThreadId = ThreadId.make(payload.threadId);
+  }
   if (activity.kind === "user-input.answer-submitted") {
     const answer = decodeQuestionAttachmentAnswer(payload);
     if (Option.isSome(answer)) entry.questionAnswer = answer.value;

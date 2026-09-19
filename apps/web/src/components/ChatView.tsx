@@ -9872,10 +9872,6 @@ export default function ChatView(props: ChatViewProps) {
                 key={displayedTimelineKey}
                 environmentId={displayedThreadRef?.environmentId ?? activeThread.environmentId}
                 threadId={displayedThreadRef?.threadId ?? activeThread.id}
-                cwd={
-                  (paintOnlyDisplayedTimeline ? heldPaintContext?.markdownCwd : gitCwd) ?? undefined
-                }
-                bottomInset={composerTimelineInset}
                 entries={displayedTimeline.entries}
                 onOpenAgents={addAgentsSurface}
               >

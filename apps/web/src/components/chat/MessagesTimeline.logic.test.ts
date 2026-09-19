@@ -124,6 +124,45 @@ describe("streaming row projection", () => {
     return { messages, work, timeline, input, time, turnId, historyTurnId };
   }
 
+  it.each([true, false])(
+    "keeps managed worker milestones visible outside work folds (working=%s)",
+    (isWorking) => {
+      const initial = fixture("Finished planning");
+      const milestone: WorkLogEntry = {
+        id: "team-dispatched",
+        createdAt: initial.time(6),
+        turnId: initial.turnId,
+        label: "Noether started working",
+        tone: "info",
+        sourceActivityKind: "team.worker-dispatched",
+        teamThreadId: ThreadId.make("team-worker"),
+      };
+      const messages = initial.messages.map((message) => ({
+        ...message,
+        streaming: isWorking && message.streaming,
+      }));
+      const rows = deriveMessagesTimelineRows({
+        ...initial.input,
+        isWorking,
+        runningTurnId: isWorking ? initial.turnId : null,
+        latestTurn: {
+          ...initial.input.latestTurn,
+          state: isWorking ? "running" : "completed",
+          completedAt: isWorking ? null : initial.time(8),
+        },
+        timelineEntries: deriveTimelineEntries(messages, [], [...initial.work, milestone]),
+      });
+      expect(
+        rows.some(
+          (row) =>
+            row.kind === "work" &&
+            row.groupedEntries.length === 1 &&
+            row.groupedEntries[0]?.id === milestone.id,
+        ),
+      ).toBe(true);
+    },
+  );
+
   it.each([
     ["", "Now visible"],
     [" \n", "Now visible"],

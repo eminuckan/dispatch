@@ -1,4 +1,5 @@
 import { ArrowUpIcon, ClockIcon } from "lucide-react";
+import { Link } from "@tanstack/react-router";
 import { ReadOnlySourcePreview } from "../files/AttachmentFilePreview";
 import { useRightPanelStore } from "~/rightPanelStore";
 import {
@@ -4547,6 +4548,7 @@ const toolCallExpandedBodyClassName =
   "max-h-64 cursor-text overflow-auto whitespace-pre-wrap break-words font-mono text-secondary-label text-[length:var(--font-size-code,0.6875rem)] leading-relaxed select-text";
 
 function workEntryIconName(workEntry: TimelineWorkEntry): WorkEntryIconName {
+  if (workEntry.teamThreadId) return "bot";
   if (
     workEntry.questionAnswer ||
     workEntry.sourceActivityKind === "user-input.requested" ||
@@ -4859,6 +4861,7 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
       : null;
   const canExpand =
     Boolean(workEntry.questionAnswer) ||
+    Boolean(workEntry.teamThreadId) ||
     (showFailedIndicator && previewText.trim().length > 0) ||
     (workEntry.itemType === "mcp_tool_call" && workEntry.toolData !== undefined) ||
     Boolean(
@@ -4992,6 +4995,26 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
           </span>
         </div>
       </div>
+      {expanded && workEntry.teamThreadId && threadRef ? (
+        <Link
+          to="/$environmentId/$threadId"
+          params={{ environmentId: threadRef.environmentId, threadId: workEntry.teamThreadId }}
+          onClick={(event) => {
+            event.stopPropagation();
+            useRightPanelStore
+              .getState()
+              .open(
+                { environmentId: threadRef.environmentId, threadId: workEntry.teamThreadId! },
+                "agents",
+              );
+          }}
+          onPointerDown={stopRowToggle}
+          onKeyDown={stopRowToggle}
+          className="ms-7 mt-1 w-fit text-xs text-muted-foreground underline underline-offset-4 hover:text-foreground"
+        >
+          Open worker conversation
+        </Link>
+      ) : null}
       {expanded && viewedImage && threadRef ? (
         <div
           className="mt-1 ms-7 cursor-default"

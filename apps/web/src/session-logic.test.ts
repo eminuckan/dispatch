@@ -477,6 +477,26 @@ describe("workEntryIndicatesToolNeutralStatus", () => {
 });
 
 describe("deriveWorkLogEntries", () => {
+  it("keeps distinct managed worker milestones linked to their conversation", () => {
+    const activities = ["dispatched", "result", "correction", "accepted"].map((phase, index) =>
+      makeActivity({
+        id: `team-${phase}`,
+        kind: `team.worker-${phase}`,
+        summary: `Worker ${phase}`,
+        sequence: index,
+        payload: { threadId: "team-worker", detail: "Inspect the worker conversation" },
+      }),
+    );
+    const entries = deriveWorkLogEntries(activities);
+    expect(entries.map((entry) => entry.id)).toEqual(activities.map((activity) => activity.id));
+    expect(entries.every((entry) => entry.teamThreadId === "team-worker")).toBe(true);
+    expect(entries[0]?.detail).toBe("Inspect the worker conversation");
+    expect(
+      deriveWorkLogEntries([makeActivity({ payload: { threadId: "ordinary-thread" } })])[0]
+        ?.teamThreadId,
+    ).toBeUndefined();
+  });
+
   it("keeps the latest task progress without emitting plan-update log entries", () => {
     const activities = [
       makeActivity({ id: "before", kind: "tool.completed", summary: "Read files", sequence: 0 }),

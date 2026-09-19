@@ -82,7 +82,7 @@ function isStaleRequestFailureDetail(payload: Record<string, unknown> | null): b
 // Scans the read model's activities, which the projector caps at the most
 // recent 500 plus pending async questions. Async questions remain actionable
 // while the agent works, so they must not expire with the activity window.
-function openRequests(thread: Pick<OrchestrationThread, "activities">) {
+export function openRequests(thread: Pick<OrchestrationThread, "activities">) {
   const requests = new Map<string, OrchestrationThreadActivity>();
   for (const activity of thread.activities) {
     const payload =

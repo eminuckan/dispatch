@@ -96,7 +96,8 @@ Enter to start a managed coding run. With the switch off, draft classification,
 automatic model selection, and team creation are disabled for that draft; normal
 send uses your selected model. Teams currently support
 ready configured provider adapters, use isolated worktrees from committed HEAD, and preserve the
-original checkout. Uncommitted changes and attachments are not included. The lead
+original checkout. Uncommitted changes are not included. Images and files attached
+to the composer are available to the lead and its workers. The lead
 plans work, workers receive persistent task contracts, and the lead reviews their
 results before integrating and verifying the combined change. Native subagent
 tools are disabled in managed Codex, Claude, and OpenCode sessions. Other adapters
@@ -105,12 +106,15 @@ block; the active-agent limit counts scheduler-managed agents.
 
 Only the lead appears in the sidebar; worker conversations remain accessible from
 the team. Open **Agents** in the right panel to see the team hierarchy, assignments, model
-and effort, attempts, and review details. The chat shows compact activity and the
-current agent’s result. Click an agent name to open its conversation. Agent names
+and effort, attempts, and review details. Each agent’s conversation shows its live
+messages, tool activity, and results. The lead’s chat also records worker dispatch,
+results, and review feedback; expand a worker activity to read its details or open
+that conversation.
+Pending questions and approval requests link to the agent that needs your response. Agent names
 come from a fixed science-inspired catalog and stay the same across retries and
 reloads; replacement workers receive separate names. Active teams refresh
-automatically. Internal coordination messages stay out of chat; messages you send
-yourself remain in Conversation.
+automatically. Internal task instructions stay out of chat; your messages and the
+agents’ responses use the normal conversation.
 
 The active-agent limit includes the lead. Teams finish when all planned acceptance
 criteria pass independent checks in the combined lead worktree; there is no total
