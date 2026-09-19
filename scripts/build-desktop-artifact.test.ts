@@ -254,8 +254,8 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
   });
 
   it("switches desktop packaging product names to nightly for nightly builds", () => {
-    assert.equal(resolveDesktopProductName("0.0.17"), "T3 Jev (Alpha)");
-    assert.equal(resolveDesktopProductName("0.0.17-nightly.20260413.42"), "T3 Jev (Nightly)");
+    assert.equal(resolveDesktopProductName("0.0.17"), "Dispatch");
+    assert.equal(resolveDesktopProductName("0.0.17-nightly.20260413.42"), "Dispatch (Nightly)");
   });
 
   it("switches desktop packaging icons to the nightly artwork for nightly versions", () => {
@@ -632,6 +632,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         { from: "apps/desktop/prod-resources/browser-secret", to: "browser-secret" },
       ]);
       assert.deepStrictEqual(win.extraResources, [
+        { from: "apps/desktop/resources/T3-LICENSE.txt", to: "T3-LICENSE.txt" },
         {
           from: "apps/desktop/prod-resources/resource-monitor",
           to: "resource-monitor",
@@ -642,6 +643,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       // No Linux CLI archive means staging never writes the runtime, so
       // listing it here would fail the build on a missing source file.
       assert.deepStrictEqual(winWithoutWslRuntime.extraResources, [
+        { from: "apps/desktop/resources/T3-LICENSE.txt", to: "T3-LICENSE.txt" },
         {
           from: "apps/desktop/prod-resources/resource-monitor",
           to: "resource-monitor",
@@ -658,7 +660,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         "**/*.map",
       ]);
       assert.deepStrictEqual(mac.dmg, {
-        title: "T3 Jev (Alpha) 1.2.3 Installer",
+        title: "Dispatch 1.2.3 Installer",
         background: "dmg/dmg-background-latest.png",
         window: { width: 640, height: 432 },
         contents: [
@@ -1917,6 +1919,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
 
   it("stages the resource monitor as an external executable resource", () => {
     assert.deepStrictEqual(DESKTOP_EXTRA_RESOURCES, [
+      { from: "apps/desktop/resources/T3-LICENSE.txt", to: "T3-LICENSE.txt" },
       {
         from: "apps/desktop/prod-resources/resource-monitor",
         to: "resource-monitor",

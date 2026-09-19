@@ -3217,7 +3217,7 @@ export function GeneralSettingsPanel() {
         />
         <SettingsRow
           {...searchableSetting("open-source-licenses")}
-          description="Notices for dependencies, assets, and optional tools used by T3 Code."
+          description="Dispatch is an independent fork of T3 Code by T3 Tools Inc. Original MIT license and third-party notices are retained."
           control={
             <Button
               render={<Link to="/settings/open-source-licenses" />}

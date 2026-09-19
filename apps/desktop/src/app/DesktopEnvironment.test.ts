@@ -167,7 +167,7 @@ describe("DesktopEnvironment", () => {
       assert.equal(production.stateDir, "/Users/alice/.t3-jev/userdata");
       assert.equal(production.userDataDirName, "t3-jev");
       assert.equal(production.legacyUserDataDirName, "T3 Jev (Alpha)");
-      assert.equal(production.displayName, "T3 Jev (Alpha)");
+      assert.equal(production.displayName, "Dispatch (Alpha)");
       assert.equal(production.appUserModelId, "com.eminuckan.t3jev");
     }),
   );

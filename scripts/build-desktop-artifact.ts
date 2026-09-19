@@ -1065,6 +1065,7 @@ export const WSL_RUNTIME_EXTRA_RESOURCES = [
   WSL_RUNTIME_ARCHIVE_HASH_EXTRA_RESOURCE,
 ] as const;
 export const DESKTOP_EXTRA_RESOURCES = [
+  { from: "apps/desktop/resources/T3-LICENSE.txt", to: "T3-LICENSE.txt" },
   {
     from: "apps/desktop/prod-resources/resource-monitor",
     to: "resource-monitor",
@@ -2614,8 +2615,8 @@ export function resolvePackageManagerUserAgent(packageManager: string): string {
 
 export function resolveDesktopProductName(version: string): string {
   return resolveDesktopUpdateChannel(version) === "nightly"
-    ? "T3 Jev (Nightly)"
-    : (desktopPackageJson.productName ?? "T3 Code");
+    ? "Dispatch (Nightly)"
+    : (desktopPackageJson.productName ?? "Dispatch");
 }
 
 export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
@@ -2640,7 +2641,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   const buildConfig: Record<string, unknown> = {
     appId: DESKTOP_APP_ID,
     productName: resolveDesktopProductName(version),
-    artifactName: "T3-Jev-${version}-${arch}.${ext}",
+    artifactName: "Dispatch-${version}-${arch}.${ext}",
     electronLanguages: [...DESKTOP_ELECTRON_LANGUAGES],
     files: [
       ...DESKTOP_FILE_EXCLUSIONS,
@@ -2691,7 +2692,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       category: "public.app-category.developer-tools",
       extendInfo: {
         NSScreenCaptureUsageDescription:
-          "T3 Code captures the active window when you use the window capture shortcut.",
+          "Dispatch captures the active window when you use the window capture shortcut.",
       },
       // Keep upstream T3 URL associations untouched in this local macOS fork.
       // Electron still registers its private renderer scheme internally.
@@ -3566,6 +3567,11 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     verbose: options.verbose,
   });
 
+  yield* fs.copyFile(
+    path.join(repoRoot, "LICENSE"),
+    path.join(stageResourcesDir, "T3-LICENSE.txt"),
+  );
+
   yield* assertPlatformBuildResources(
     options.platform,
     stageResourcesDir,
@@ -3582,7 +3588,9 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   yield* fs.copy(stageResourcesDir, stageProdResourcesDir);
 
   const configuredMacPasskeySigning =
-    options.platform === "mac" && options.signed
+    options.platform === "mac" &&
+    options.signed &&
+    loadRepoEnv({ repoRoot }).T3CODE_MACOS_PROVISIONING_PROFILE
       ? yield* Effect.try({
           try: () => resolveMacPasskeySigningConfiguration(loadRepoEnv({ repoRoot })),
           catch: MacPasskeySigningConfigurationResolutionError.fromCause,
