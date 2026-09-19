@@ -206,3 +206,102 @@ it("does not confuse a finished worker response with lead acceptance", () => {
     "reported result",
   );
 });
+
+const protocolTurn: TeamThreadView["turns"][number] = {
+  id: "review",
+  role: "review",
+  taskId: "task",
+  threadId: ThreadId.make("lead"),
+  model: "lead",
+  effort: "high",
+  status: "settled",
+  succeeded: true,
+  summary: "Check complete.",
+  providerTurnId: TurnId.make("managed"),
+  resultMessageId: MessageId.make("final"),
+};
+it("presents the canonical review as prose while preserving other JSON and commentary", () => {
+  const json =
+    '{"action":"correct","summary":"Add the missing timeout check.","checks":[{"command":"PRIVATE_COMMAND"}]}';
+  const entries = [
+    message("commentary", "assistant", "managed", json),
+    message("final", "assistant", "managed", json),
+    message("manual", "assistant", "manual", json),
+    message("worker", "assistant", "worker", json),
+  ];
+  const result = teamConversationEntries(entries, [], undefined, [protocolTurn]);
+  expect(result[0]).toBe(entries[0]);
+  expect(result[1]).toEqual({
+    ...entries[1],
+    message: { ...entries[1]!.message, text: "Add the missing timeout check." },
+  });
+  expect(result[2]).toBe(entries[2]);
+  expect(result[3]).toBe(entries[3]);
+});
+it("suppresses only partial protocol responses during a managed turn", () => {
+  const turn = { ...protocolTurn, resultMessageId: undefined, status: "dispatched" as const };
+  const partial = message("partial", "assistant", "managed", '{"action":"correct","summary":"');
+  partial.message = { ...partial.message, streaming: true };
+  const progress = message("progress", "assistant", "managed", "Checking the timeout behavior.");
+  progress.message = { ...progress.message, streaming: true };
+  expect(teamConversationEntries([progress, partial], [], undefined, [turn])).toEqual([progress]);
+  expect(teamConversationEntries([partial], [], undefined, [{ ...turn, role: "worker" }])).toEqual([
+    partial,
+  ]);
+});
+it("presents a paged plan without its initial message or runtime context", () => {
+  const plan = message(
+    "final",
+    "assistant",
+    "managed",
+    '```json\n{"tasks":[{"objective":"Fix startup","context":"PRIVATE_CONTEXT"}],"rationale":"I will check startup, then verify the connection.","acceptance":["PRIVATE_CONTRACT"]}\n```',
+  );
+  const result = teamConversationEntries([plan], [], undefined, [
+    { ...protocolTurn, role: "plan" },
+  ]);
+  expect(result).toEqual([
+    {
+      ...plan,
+      message: {
+        ...plan.message,
+        text: "I will check startup, then verify the connection.\n\n- Fix startup",
+      },
+    },
+  ]);
+});
+it("does not leak a malformed completed protocol object", () => {
+  const broken = message("final", "assistant", "managed", '{"action":"correct","checks":');
+  const result = teamConversationEntries([broken], [], undefined, [protocolTurn]);
+  expect(result[0]?.kind === "message" && result[0].message.text).toBe(
+    "The lead’s structured response could not be read. Check the team status in Agents.",
+  );
+});
+
+it("uses the exact initiating request until its receipt arrives, and stops at a manual follow-up", () => {
+  const turn = {
+    ...protocolTurn,
+    providerTurnId: undefined,
+    resultMessageId: undefined,
+    status: "dispatched" as const,
+  };
+  const partial = message("new-final", "assistant", "new", '{"ac');
+  partial.message = { ...partial.message, streaming: true };
+  const user = message("manual", "user", null, "Explain this JSON");
+  expect(
+    teamConversationEntries(
+      [
+        message("team-review", "user", null, "INTERNAL"),
+        partial,
+        user,
+        {
+          ...partial,
+          id: "manual-output",
+          message: { ...partial.message, id: MessageId.make("manual-output") },
+        },
+      ],
+      [],
+      undefined,
+      [turn],
+    ).map((entry) => entry.id),
+  ).toEqual(["manual", "manual-output"]);
+});

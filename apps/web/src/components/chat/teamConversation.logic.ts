@@ -1,16 +1,53 @@
 import { teamAgentDisplayName } from "@t3tools/shared/teamAgentNames";
+import type { TeamThreadView } from "@t3tools/contracts";
+import {
+  isTeamProtocolRole,
+  teamProtocolSummary,
+  looksLikeTeamProtocol,
+} from "@t3tools/shared/teamProtocolPresentation";
 import type { TimelineEntry } from "../../session-logic";
 
 // Managed turns use the ordinary live timeline. Only runtime-authored user
-// instructions are replaced/hidden; assistant and tool events retain their identity.
+// instructions and structured final responses are presented; live work retains its identity.
 export function teamConversationEntries(
   entries: ReadonlyArray<TimelineEntry>,
   coordinationIds: ReadonlyArray<string>,
   initialMessage?: { id: string; objective: string },
+  turns: TeamThreadView["turns"] = [],
 ): TimelineEntry[] {
   const internal = new Set(coordinationIds);
+  const protocolTurns = turns.filter((turn) => isTeamProtocolRole(turn.role));
+  const byTurn = new Map(protocolTurns.map((turn) => [turn.providerTurnId, turn]));
+  const byResult = new Map(protocolTurns.map((turn) => [turn.resultMessageId, turn]));
+  const byRequest = new Map(protocolTurns.map((turn) => [`team-${turn.id}`, turn]));
+  let precedingRequest: (typeof protocolTurns)[number] | undefined;
   return entries.flatMap((entry): TimelineEntry[] => {
-    if (entry.kind !== "message" || entry.message.role !== "user") return [entry];
+    if (entry.kind !== "message") return [entry];
+    if (entry.message.role === "assistant") {
+      const turn =
+        byResult.get(entry.message.id) ??
+        (entry.message.turnId ? byTurn.get(entry.message.turnId) : undefined) ??
+        (precedingRequest?.providerTurnId ? undefined : precedingRequest);
+      if (!turn || !isTeamProtocolRole(turn.role)) return [entry];
+      if (turn.resultMessageId && turn.resultMessageId !== entry.message.id) return [entry];
+      const summary = teamProtocolSummary(turn.role, entry.message.text);
+      if (summary) return [{ ...entry, message: { ...entry.message, text: summary } }];
+      if (looksLikeTeamProtocol(entry.message.text)) {
+        if (entry.message.streaming) return [];
+        return [
+          {
+            ...entry,
+            message: {
+              ...entry.message,
+              text: "The lead’s structured response could not be read. Check the team status in Agents.",
+            },
+          },
+        ];
+      }
+      return [entry];
+    }
+    if (entry.message.role !== "user") return [entry];
+    precedingRequest = byRequest.get(entry.message.id);
     if (entry.message.id === initialMessage?.id) {
       return [{ ...entry, message: { ...entry.message, text: initialMessage.objective } }];
     }

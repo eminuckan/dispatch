@@ -377,6 +377,9 @@ it.effect(
         plan,
         '{"acceptance":["Combined result"],"tasks":[],"rationale":"Lead-only bounded work"}',
       );
+      const historicalView = yield* runtime.forThread(plan.threadId);
+      expect(historicalView?.turns[0]?.providerTurnId).toBe(`turn-${plan.commandId}`);
+      expect(historicalView?.turns[0]?.resultMessageId).toBe(`answer-${plan.commandId}`);
       yield* runtime.tick();
       expect(f.commands).toHaveLength(2);
       const run = yield* store.get(initial.id);

@@ -5,7 +5,7 @@ import { Link } from "@tanstack/react-router";
 import type { TimelineEntry } from "../../session-logic";
 import { teamConversationEntries, teamAgentName, teamTurnLabel } from "./teamConversation.logic";
 import { useEffect, useState, type ReactNode } from "react";
-import { ChevronRightIcon, RefreshCwIcon, UsersIcon } from "lucide-react";
+import { ChevronRightIcon, RefreshCwIcon } from "lucide-react";
 import type { EnvironmentId, TeamThreadView, ThreadId } from "@t3tools/contracts";
 import { teamEnvironment } from "../../state/team";
 import { useEnvironmentQuery } from "../../state/query";
@@ -14,23 +14,15 @@ import { ScrollArea } from "../ui/scroll-area";
 import ChatMarkdown from "../ChatMarkdown";
 import { useThreadShell } from "../../state/entities";
 
-const phaseLabels = {
-  plan: "Planning",
-  workers: "Working with agents",
-  integrate: "Verifying the combined result",
-  done: "Finished",
-};
 /** Exact persisted membership owns presentation; never classify arbitrary assistant JSON. */
 export function TeamConversation({
   environmentId,
   threadId,
   children,
   entries,
-  onOpenAgents,
 }: {
   environmentId: EnvironmentId;
   threadId: ThreadId;
-  onOpenAgents: () => void;
   entries: TimelineEntry[];
   children: (entries: TimelineEntry[]) => ReactNode;
 }) {
@@ -79,26 +71,10 @@ export function TeamConversation({
     entries,
     run.coordinationMessageIds,
     initialTurn ? { id: `team-${initialTurn.id}`, objective } : undefined,
+    run.turns,
   );
-  const latest = run.turns.findLast((turn) => turn.threadId === threadId);
   return (
     <>
-      <div className="flex shrink-0 items-center justify-between gap-3 border-b px-5 py-2 text-xs text-muted-foreground">
-        <span role="status" className="min-w-0 truncate">
-          {teamAgentName(run, threadId)} ·{" "}
-          {threadId === run.leadThreadId && run.phase === "workers" && latest?.status === "settled"
-            ? phaseLabels.workers
-            : latest
-              ? teamTurnLabel(run, latest)
-              : phaseLabels[run.phase]}
-          {run.status === "paused" ? " · paused" : null}
-        </span>
-        <Button size="xs" variant="ghost" onClick={onOpenAgents}>
-          <UsersIcon className="size-3.5" />
-          Agents
-          <ChevronRightIcon className="size-3" />
-        </Button>
-      </div>
       {run.tasks.map((task) =>
         task.threadId && task.threadId !== threadId ? (
           <TeamPendingRequest
@@ -119,14 +95,6 @@ export function TeamConversation({
       {query.error && (
         <p role="status" className="px-5 py-2 text-xs text-destructive">
           Activity refresh failed. Showing the last received state.
-        </p>
-      )}
-      {run.notice && (
-        <p
-          role="status"
-          className="max-h-32 shrink-0 overflow-auto px-5 py-2 text-sm text-muted-foreground"
-        >
-          {run.notice}
         </p>
       )}
       {children(visibleEntries)}
@@ -351,9 +319,14 @@ function TeamActivity({
             </p>
           )}
           {run.notice && run.status !== "completed" && (
-            <p role="status" className="px-1.5 py-2 text-xs text-muted-foreground">
-              {run.notice}
-            </p>
+            <details className="px-1.5 pt-3 text-xs text-muted-foreground">
+              <summary className="cursor-pointer py-1 hover:text-foreground">
+                {run.status === "paused" ? "Why paused" : "Team status details"}
+              </summary>
+              <div className="py-2">
+                <ChatMarkdown text={run.notice} cwd={cwd} environmentId={environmentId} />
+              </div>
+            </details>
           )}
           <details className="px-1.5 pt-3 text-xs text-muted-foreground">
             <summary className="cursor-pointer py-1 hover:text-foreground">

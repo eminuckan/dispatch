@@ -5,7 +5,7 @@ import {
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   ThreadTurnStartCommand,
 } from "./orchestration.ts";
-import { MessageId, ProjectId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { MessageId, ProjectId, ThreadId, TurnId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 
 const Id = TrimmedNonEmptyString.check(Schema.isMaxLength(128));
 const Count = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
@@ -111,6 +111,8 @@ export type TeamTask = typeof TeamTask.Type;
 export const TeamExecutionTurn = Schema.Struct({
   id: Id,
   observedMessageSequence: Schema.optional(Count),
+  resultMessageId: Schema.optional(MessageId),
+  providerTurnId: Schema.optional(TurnId),
   estimatedAttemptUsd: Schema.optional(
     Schema.NullOr(
       Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0), Schema.isLessThanOrEqualTo(1_000_000)),
@@ -271,6 +273,8 @@ export const TeamThreadView = Schema.Struct({
       status: TeamExecutionTurn.fields.status,
       succeeded: Schema.Boolean,
       summary: Schema.NullOr(Schema.String),
+      providerTurnId: Schema.optional(TurnId),
+      resultMessageId: Schema.optional(MessageId),
     }),
   ),
 });

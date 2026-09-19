@@ -77,7 +77,10 @@ const run: TeamRun = {
     phase: "done",
     notice: "Verified the heading.",
     turns: [
-      turn("plan", '{"tasks":[],"context":"INTERNAL_CONTEXT"}'),
+      turn(
+        "plan",
+        '{"tasks":[{"objective":"Rename heading","context":"INTERNAL_CONTEXT"}],"rationale":"Check the heading."}',
+      ),
       turn(
         "review",
         '{"action":"accept","summary":"Heading checked.","checks":[{"command":"INTERNAL_COMMAND"}]}',
@@ -89,7 +92,7 @@ const run: TeamRun = {
 it("projects readable results without coordination prompts, context or executable checks", () => {
   const view = teamThreadView(run)!;
   expect(view.turns.map((t) => t.summary)).toEqual([
-    null,
+    "Check the heading.\n\n- Rename heading",
     "Heading checked.",
     'A normal JSON example: {"action":"accept"}',
   ]);

@@ -9873,7 +9873,6 @@ export default function ChatView(props: ChatViewProps) {
                 environmentId={displayedThreadRef?.environmentId ?? activeThread.environmentId}
                 threadId={displayedThreadRef?.threadId ?? activeThread.id}
                 entries={displayedTimeline.entries}
-                onOpenAgents={addAgentsSurface}
               >
                 {(visibleTeamEntries) => (
                   <MessagesTimeline

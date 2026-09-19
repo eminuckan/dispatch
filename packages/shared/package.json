@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./teamProtocolPresentation": {
+      "types": "./src/teamProtocolPresentation.ts",
+      "import": "./src/teamProtocolPresentation.ts"
+    },
     "./teamAgentNames": {
       "types": "./src/teamAgentNames.ts",
       "import": "./src/teamAgentNames.ts"

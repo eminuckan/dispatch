@@ -1,20 +1,6 @@
 import type { TeamRun, TeamThreadView } from "@t3tools/contracts";
 
-function protocolSummary(value: string | null): string | null {
-  if (!value) return null;
-  try {
-    const parsed: unknown = JSON.parse(value);
-    return typeof parsed === "object" &&
-      parsed !== null &&
-      "summary" in parsed &&
-      typeof parsed.summary === "string"
-      ? parsed.summary
-      : null;
-  } catch {
-    // Invalid protocol is handled by the runtime. Never leak it into the conversation.
-    return null;
-  }
-}
+import { isTeamProtocolRole, teamProtocolSummary } from "@t3tools/shared/teamProtocolPresentation";
 
 export function teamThreadView(run: TeamRun | null): TeamThreadView | null {
   if (!run?.execution) return null;
@@ -45,12 +31,13 @@ export function teamThreadView(run: TeamRun | null): TeamThreadView | null {
         )?.value;
         return typeof value === "string" ? value : null;
       })(),
+      ...(turn.providerTurnId ? { providerTurnId: turn.providerTurnId } : {}),
+      ...(turn.resultMessageId ? { resultMessageId: turn.resultMessageId } : {}),
       status: turn.status,
       succeeded: turn.succeeded,
-      summary:
-        turn.role === "worker" || turn.role === "consult"
-          ? turn.result
-          : protocolSummary(turn.result),
+      summary: isTeamProtocolRole(turn.role)
+        ? teamProtocolSummary(turn.role, turn.result ?? "")
+        : turn.result,
     })),
   };
 }
