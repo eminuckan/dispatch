@@ -1,3 +1,4 @@
+import { teamThreadView } from "./presentation.ts";
 import {
   isOrchestrationCommandRejection,
   OrchestrationCommandPreviouslyRejectedError,
@@ -800,7 +801,15 @@ export const make = Effect.gen(function* () {
           ),
         );
   }, schedulerLock.withPermits(1));
-  return { start, control, tick, list: store.list, get: store.get };
+  return {
+    start,
+    control,
+    tick,
+    list: store.list,
+    get: store.get,
+    forThread: (threadId: ThreadId) =>
+      store.findByThread(threadId).pipe(Effect.map(teamThreadView)),
+  };
 });
 export class TeamRuntime extends Context.Service<TeamRuntime, Effect.Success<typeof make>>()(
   "t3/team/TeamRuntime",

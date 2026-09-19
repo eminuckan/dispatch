@@ -59,6 +59,19 @@ export const make = Effect.gen(function* () {
       return yield* new TeamError({ code: "not-found", message: "Team run not found." });
     return yield* decodeRun(rows[0].payload).pipe(Effect.mapError(persistenceError));
   });
+  const findByThread = Effect.fn("TeamStore.findByThread")(function* (threadId: ThreadId) {
+    const rows = yield* sql<{ payload: string }>`
+      SELECT payload FROM team_runs
+      WHERE json_extract(payload, '$.execution.leadThreadId') = ${threadId}
+        OR EXISTS (SELECT 1 FROM json_each(team_runs.payload, '$.tasks')
+          WHERE json_extract(value, '$.threadId') = ${threadId})
+        OR EXISTS (SELECT 1 FROM json_each(team_runs.payload, '$.execution.turns')
+          WHERE json_extract(value, '$.command.threadId') = ${threadId})
+      ORDER BY rowid DESC LIMIT 1`.pipe(Effect.mapError(persistenceError));
+    return rows[0]
+      ? yield* decodeRun(rows[0].payload).pipe(Effect.mapError(persistenceError))
+      : null;
+  });
   const create = Effect.fn("TeamStore.create")(function* (run: TeamRun) {
     return yield* sql
       .withTransaction(
@@ -334,6 +347,7 @@ export const make = Effect.gen(function* () {
     active,
     reserveTurn,
     recordRoutingUsage,
+    findByThread,
     getPolicy,
     savePolicy,
     list,

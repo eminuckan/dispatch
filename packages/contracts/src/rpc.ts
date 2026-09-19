@@ -1,5 +1,7 @@
 import { ModelSelection } from "./orchestration.ts";
 import {
+  TeamThreadInput,
+  TeamThreadView,
   TeamStart,
   TeamControl,
   TeamRun,
@@ -1401,6 +1403,11 @@ const TeamRpcError = Schema.Union([TeamError, EnvironmentAuthorizationError]);
 export const WsRpcGroup = RpcGroup.make(
   Rpc.make("team.start", { payload: TeamStart, success: TeamRun, error: TeamRpcError }),
   Rpc.make("team.control", { payload: TeamControl, success: TeamRun, error: TeamRpcError }),
+  Rpc.make("team.forThread", {
+    payload: TeamThreadInput,
+    success: Schema.NullOr(TeamThreadView),
+    error: TeamRpcError,
+  }),
   Rpc.make("team.get", { payload: TeamRunId, success: TeamRun, error: TeamRpcError }),
   Rpc.make("team.list", {
     payload: Schema.Struct({}),

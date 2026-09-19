@@ -210,3 +210,38 @@ it.effect("fails closed for unknown estimates and reserves retry-inclusive plann
     });
   }).pipe(Effect.provide(SqlitePersistenceMemory)),
 );
+
+it.effect(
+  "finds exact managed thread membership beyond recent history and after a worker handoff",
+  () =>
+    Effect.gen(function* () {
+      const store = yield* make;
+      const original = executionRun("old-team");
+      const worker = ThreadId.make("old-worker");
+      const old = {
+        ...original,
+        execution: {
+          ...original.execution!,
+          turns: [
+            {
+              ...leadTurn(original, "old-turn"),
+              role: "worker" as const,
+              taskId: "a",
+              command: { ...leadTurn(original, "old-turn").command, threadId: worker },
+            },
+          ],
+        },
+        tasks: original.tasks.map((task) =>
+          task.id === "a" ? { ...task, threadId: ThreadId.make("replacement-worker") } : task,
+        ),
+      };
+      yield* store.create(old);
+      for (let i = 0; i < 101; i++) yield* store.create(executionRun(`new-${i}`));
+      expect((yield* store.list).some((r) => r.id === old.id)).toBe(false);
+      expect((yield* store.findByThread(old.execution.leadThreadId))?.id).toBe(old.id);
+      expect((yield* store.findByThread(worker))?.id).toBe(old.id);
+      expect((yield* store.findByThread(ThreadId.make("replacement-worker")))?.id).toBe(old.id);
+      expect(yield* store.findByThread(ThreadId.make("old-work"))).toBeNull();
+      expect(yield* store.findByThread(ThreadId.make("team-ordinary"))).toBeNull();
+    }).pipe(Effect.provide(SqlitePersistenceMemory)),
+);

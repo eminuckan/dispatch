@@ -1841,6 +1841,7 @@ const makeWsRpcLayer = (
           teamRuntime
             .control(input)
             .pipe(Effect.tap(() => teamRuntime.tick().pipe(Effect.forkDetach))),
+        "team.forThread": ({ threadId }) => teamRuntime.forThread(threadId),
         "team.get": ({ id }) => teamRuntime.get(id),
         "team.list": () => teamRuntime.list,
         "team.recover": (input) => teamRouter.recover(input),

@@ -1,6 +1,6 @@
 import * as Schema from "effect/Schema";
 import { ModelSelection, ThreadTurnStartCommand } from "./orchestration.ts";
-import { ProjectId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { MessageId, ProjectId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 
 const Id = TrimmedNonEmptyString.check(Schema.isMaxLength(128));
 const Count = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
@@ -198,3 +198,45 @@ export const TeamRecoveryAdvice = Schema.Struct({
   source: Schema.Literals(["jev", "policy"]),
 });
 export type TeamRecoveryAdvice = typeof TeamRecoveryAdvice.Type;
+
+// Presentation read model: coordination prompts, review commands and context stay out of chat.
+export const TeamThreadInput = Schema.Struct({ threadId: ThreadId });
+export const TeamThreadView = Schema.Struct({
+  id: Id,
+  coordinationMessageIds: Schema.Array(MessageId),
+  revision: Count,
+  objective: Schema.String,
+  status: TeamRun.fields.status,
+  lead: TeamModelProfile,
+  leadThreadId: ThreadId,
+  phase: TeamExecution.fields.phase,
+  notice: Schema.NullOr(Schema.String),
+  maxTurns: Schema.Int,
+  tasks: Schema.Array(
+    Schema.Struct({
+      id: TeamTask.fields.id,
+      objective: TeamTask.fields.objective,
+      acceptance: TeamTask.fields.acceptance,
+      dependencies: TeamTask.fields.dependencies,
+      profileId: TeamTask.fields.profileId,
+      status: TeamTask.fields.status,
+      generation: TeamTask.fields.generation,
+      attempts: TeamTask.fields.attempts,
+      threadId: TeamTask.fields.threadId,
+    }),
+  ),
+  turns: Schema.Array(
+    Schema.Struct({
+      id: Id,
+      role: TeamExecutionTurn.fields.role,
+      taskId: Schema.NullOr(Id),
+      threadId: ThreadId,
+      model: Schema.String,
+      effort: Schema.NullOr(Schema.String),
+      status: TeamExecutionTurn.fields.status,
+      succeeded: Schema.Boolean,
+      summary: Schema.NullOr(Schema.String),
+    }),
+  ),
+});
+export type TeamThreadView = typeof TeamThreadView.Type;

@@ -90,6 +90,11 @@ plans work, workers receive persistent task contracts, and the lead reviews thei
 results before integrating and verifying the combined change. Native subagent
 tools are disabled for these managed sessions.
 
+Open a lead or worker to see the team hierarchy, assignments, model and effort,
+attempts, and readable results. Active teams refresh automatically. Expand activity
+rows for worker reports and lead review summaries; internal coordination messages
+are kept out of the conversation. Messages you send yourself remain in Conversation.
+
 The active-agent limit includes the lead. The turn limit includes planning,
 worker attempts, review, repairs and integration. Orchestration settings use agent
 and attempt limits, without dollar estimates. They do not measure or enforce your

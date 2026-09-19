@@ -23,6 +23,7 @@ type WsRpcMethod = RpcGroup.Rpcs<typeof WsRpcGroup>["_tag"];
 export const RPC_REQUIRED_SCOPES = {
   "team.start": AuthOrchestrationOperateScope,
   "team.control": AuthOrchestrationOperateScope,
+  "team.forThread": AuthOrchestrationReadScope,
   "team.get": AuthOrchestrationReadScope,
   "team.list": AuthOrchestrationReadScope,
   "team.recover": AuthOrchestrationOperateScope,
