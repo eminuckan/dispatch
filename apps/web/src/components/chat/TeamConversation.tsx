@@ -233,12 +233,29 @@ function TeamActivity({
                   <summary className="cursor-pointer py-1 hover:text-foreground">
                     {teamAgentName(run, turn.threadId)} · {teamTurnLabel(run, turn)}
                   </summary>
-                  <div className="py-2">
+                  <div className="space-y-2 py-2">
+                    <Link
+                      to="/$environmentId/$threadId"
+                      params={{ environmentId, threadId: turn.threadId }}
+                      onClick={() =>
+                        useRightPanelStore
+                          .getState()
+                          .open({ environmentId, threadId: turn.threadId }, "agents")
+                      }
+                      className="inline-flex items-center gap-1 hover:text-foreground hover:underline"
+                    >
+                      Open {teamAgentName(run, turn.threadId)}
+                      <ChevronRightIcon className="size-3" />
+                    </Link>
                     {turn.summary ? (
                       <ChatMarkdown text={turn.summary} cwd={cwd} environmentId={environmentId} />
                     ) : (
                       <p>
-                        {turn.status === "settled" ? "Handoff recorded." : "The agent is working."}
+                        {turn.status === "settled"
+                          ? turn.succeeded
+                            ? "Handoff recorded."
+                            : "This attempt needs attention. Check the team update."
+                          : "The agent is working."}
                       </p>
                     )}
                   </div>
