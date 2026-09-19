@@ -47,7 +47,7 @@ const makeRuntime = Effect.gen(function* () {
         );
         return {
           url: `http://127.0.0.1:${index}`,
-          version: "1.14.19",
+          version: "2.0.7",
           isRunning: Effect.succeed(true),
           exitCode: Effect.never,
         };
@@ -57,8 +57,6 @@ const makeRuntime = Effect.gen(function* () {
     createOpenCodeSdkClient: () => ({}) as never,
     loadOpenCodeInventory: unusedRuntimeMethod,
     loadOpenCodeSkills: unusedRuntimeMethod,
-    loadInventoryFromCli: unusedRuntimeMethod,
-    loadSkillsFromCli: unusedRuntimeMethod,
   };
   return { runtime, starts, closes, failNextStart, started, closed };
 });
@@ -130,7 +128,7 @@ it.effect("invalidates an exited process so the next borrower starts a new one",
           );
           return {
             url: `http://127.0.0.1:${index}`,
-            version: "1.14.19",
+            version: "2.0.7",
             isRunning: Effect.succeed(true),
             exitCode: Deferred.await(exitCode),
           };
@@ -140,8 +138,6 @@ it.effect("invalidates an exited process so the next borrower starts a new one",
       createOpenCodeSdkClient: () => ({}) as never,
       loadOpenCodeInventory: unusedRuntimeMethod,
       loadOpenCodeSkills: unusedRuntimeMethod,
-      loadInventoryFromCli: unusedRuntimeMethod,
-      loadSkillsFromCli: unusedRuntimeMethod,
     };
 
     yield* Effect.scoped(
@@ -178,7 +174,7 @@ it.effect("replaces a dead cached process before its exit watcher runs", () =>
           yield* Effect.addFinalizer(() => Ref.update(closes, (count) => count + 1));
           return {
             url: `http://127.0.0.1:${index}`,
-            version: "1.14.19",
+            version: "2.0.7",
             isRunning: Ref.get(isRunning),
             exitCode: Effect.never,
           };
@@ -188,8 +184,6 @@ it.effect("replaces a dead cached process before its exit watcher runs", () =>
       createOpenCodeSdkClient: () => ({}) as never,
       loadOpenCodeInventory: unusedRuntimeMethod,
       loadOpenCodeSkills: unusedRuntimeMethod,
-      loadInventoryFromCli: unusedRuntimeMethod,
-      loadSkillsFromCli: unusedRuntimeMethod,
     };
 
     yield* Effect.scoped(
@@ -233,7 +227,7 @@ it.effect("cleans up an interrupted startup and allows a retry", () =>
           }
           return {
             url: `http://127.0.0.1:${index}`,
-            version: "1.14.19",
+            version: "2.0.7",
             isRunning: Effect.succeed(true),
             exitCode: Effect.never,
           };
@@ -243,8 +237,6 @@ it.effect("cleans up an interrupted startup and allows a retry", () =>
       createOpenCodeSdkClient: () => ({}) as never,
       loadOpenCodeInventory: unusedRuntimeMethod,
       loadOpenCodeSkills: unusedRuntimeMethod,
-      loadInventoryFromCli: unusedRuntimeMethod,
-      loadSkillsFromCli: unusedRuntimeMethod,
     };
 
     yield* Effect.scoped(

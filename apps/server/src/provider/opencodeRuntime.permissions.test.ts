@@ -13,9 +13,11 @@ function actionFor(
   // OpenCode uses the last matching rule. Its wildcards match directory separators.
   return buildOpenCodePermissionRules(runtimeMode).findLast(
     (rule) =>
-      (rule.permission === "*" || rule.permission === permission) &&
-      new RegExp(`^${RegExpUtils.escape(rule.pattern).replaceAll("\\*", ".*")}$`, "s").test(target),
-  )?.action;
+      (rule.action === "*" || rule.action === permission) &&
+      new RegExp(`^${RegExpUtils.escape(rule.resource).replaceAll("\\*", ".*")}$`, "s").test(
+        target,
+      ),
+  )?.effect;
 }
 
 describe("buildOpenCodePermissionRules", () => {
@@ -59,7 +61,7 @@ describe("buildOpenCodePermissionRules", () => {
 
   it("still asks before commands, network access, external directories and unknown tools", () => {
     for (const runtimeMode of ["approval-required", "auto-accept-edits", "auto"] as const) {
-      NodeAssert.equal(actionFor(runtimeMode, "bash"), "ask");
+      NodeAssert.equal(actionFor(runtimeMode, "shell"), "ask");
       NodeAssert.equal(actionFor(runtimeMode, "webfetch"), "ask");
       NodeAssert.equal(actionFor(runtimeMode, "websearch"), "ask");
       NodeAssert.equal(actionFor(runtimeMode, "external_directory"), "ask");
@@ -70,8 +72,8 @@ describe("buildOpenCodePermissionRules", () => {
 
   it("allows everything only under full access", () => {
     NodeAssert.deepEqual(buildOpenCodePermissionRules("full-access"), [
-      { permission: "*", pattern: "*", action: "allow" },
-      { permission: "external_directory", pattern: "*", action: "allow" },
+      { action: "*", resource: "*", effect: "allow" },
+      { action: "external_directory", resource: "*", effect: "allow" },
     ]);
   });
 });
@@ -90,12 +92,12 @@ describe("toOpenCodePermissionReply", () => {
 
 it("denies native task delegation in managed teams after the full-access wildcard", () => {
   NodeAssert.deepEqual(buildOpenCodePermissionRules("full-access", true).at(-1), {
-    permission: "task",
-    pattern: "*",
-    action: "deny",
+    action: "subagent",
+    resource: "*",
+    effect: "deny",
   });
   NodeAssert.equal(
-    buildOpenCodePermissionRules("full-access").some((rule) => rule.action === "deny"),
+    buildOpenCodePermissionRules("full-access").some((rule) => rule.effect === "deny"),
     false,
   );
 });

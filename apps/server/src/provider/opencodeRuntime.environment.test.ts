@@ -1,4 +1,4 @@
-import type { OpencodeClient } from "@opencode-ai/sdk/v2";
+import type { OpenCodeClient } from "@opencode/client";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it as effectIt } from "@effect/vitest";
 import {
@@ -34,13 +34,13 @@ describe("resolveOpenCodeConfigContent", () => {
     ).toBe('{"source":"caller"}');
   });
 
-  it("falls back to the inherited environment and then an empty config", () => {
+  it("falls back to the inherited environment and otherwise leaves config unset", () => {
     expect(
       resolveOpenCodeConfigContent(undefined, {
         OPENCODE_CONFIG_CONTENT: '{"source":"process"}',
       }),
     ).toBe('{"source":"process"}');
-    expect(resolveOpenCodeConfigContent(undefined, {})).toBe("{}");
+    expect(resolveOpenCodeConfigContent(undefined, {})).toBeUndefined();
   });
 });
 
@@ -83,70 +83,82 @@ describe("resolveOpenCodeServerPassword", () => {
   });
 });
 
-function makeHealthClient(
+function makeInfoClient(
   result: (options?: { readonly signal?: AbortSignal }) => Promise<unknown>,
-): OpencodeClient {
+): OpenCodeClient {
   return {
-    global: {
-      health: result,
+    server: {
+      info: result,
     },
-  } as unknown as OpencodeClient;
+  } as unknown as OpenCodeClient;
 }
 
 describe("verifyOpenCodeServerVersion", () => {
   effectIt.effect("accepts a supported server version", () =>
     Effect.gen(function* () {
       const version = yield* verifyOpenCodeServerVersion(
-        makeHealthClient(() => Promise.resolve({ data: { healthy: true, version: "1.14.19" } })),
+        makeInfoClient(() => Promise.resolve({ version: "2.0.7" })),
       );
-      expect(version).toBe("1.14.19");
+      expect(version).toBe("2.0.7");
     }),
   );
 
   effectIt.effect("rejects a server below the supported version", () =>
     Effect.gen(function* () {
       const error = yield* verifyOpenCodeServerVersion(
-        makeHealthClient(() => Promise.resolve({ data: { healthy: true, version: "1.14.18" } })),
+        makeInfoClient(() => Promise.resolve({ version: "1.99.0" })),
       ).pipe(Effect.flip);
       expect(error).toBeInstanceOf(OpenCodeRuntimeError);
-      expect(error.detail).toContain("v1.14.18 is too old");
+      expect(error.detail).toContain("v1.99.0 is too old");
     }),
   );
 
-  for (const data of [
-    { healthy: true },
-    { healthy: true, version: "not-a-version" },
-    { healthy: false, version: "1.14.19" },
-  ]) {
-    effectIt.effect(`rejects an invalid health response: ${JSON.stringify(data)}`, () =>
+  effectIt.effect("rejects a server above the supported v2 range", () =>
+    Effect.gen(function* () {
+      const error = yield* verifyOpenCodeServerVersion(
+        makeInfoClient(() => Promise.resolve({ version: "3.0.0" })),
+      ).pipe(Effect.flip);
+      expect(error.detail).toContain("newer than the supported v2 API");
+      expect(error.detail).toContain(">=2.0.0 <3.0.0");
+    }),
+  );
+
+  for (const data of [{}, { version: "not-a-version" }]) {
+    effectIt.effect(`rejects an invalid info response: ${JSON.stringify(data)}`, () =>
       Effect.gen(function* () {
         const error = yield* verifyOpenCodeServerVersion(
-          makeHealthClient(() => Promise.resolve({ data })),
+          makeInfoClient(() => Promise.resolve(data)),
         ).pipe(Effect.flip);
         expect(error).toBeInstanceOf(OpenCodeRuntimeError);
-        expect(error.detail).toContain("requires OpenCode v1.14.19 or newer");
+        expect(error.detail).toContain("supports OpenCode >=2.0.0 <3.0.0");
       }),
     );
   }
 
-  effectIt.effect("preserves an unauthorized health error", () =>
+  effectIt.effect("preserves an unauthorized info error without leaking request headers", () =>
     Effect.gen(function* () {
       const error = yield* verifyOpenCodeServerVersion(
-        makeHealthClient(() =>
-          Promise.reject({ response: { status: 401 }, error: { message: "Unauthorized" } }),
+        makeInfoClient(() =>
+          Promise.reject({
+            _tag: "UnauthorizedError",
+            message: "Unauthorized",
+            response: { status: 401 },
+            request: { headers: { authorization: "must-not-appear" } },
+          }),
         ),
       ).pipe(Effect.flip);
       expect(error).toBeInstanceOf(OpenCodeRuntimeError);
       expect(error.detail).toContain("status=401");
       expect(error.detail).toContain("Unauthorized");
+      expect(error.detail).not.toContain("must-not-appear");
     }),
   );
 
-  effectIt.effect("aborts a health request when the version check times out", () =>
+  effectIt.effect("aborts an info request when the version check times out", () =>
     Effect.gen(function* () {
       let requestSignal: AbortSignal | undefined;
       const checkFiber = yield* verifyOpenCodeServerVersion(
-        makeHealthClient((options) => {
+        makeInfoClient((options) => {
           requestSignal = options?.signal;
           return new Promise(() => undefined);
         }),
@@ -184,17 +196,18 @@ describe("OpenCode server output", () => {
 const writeOutput = (stream) => new Promise((resolve, reject) => {
   stream.write("x".repeat(2 * 1024 * 1024), (error) => error ? reject(error) : resolve());
 });
+const port = Number(process.argv.find((arg) => arg.startsWith("--port="))?.slice(7));
 const server = createServer(async (request, response) => {
-  if (request.url.startsWith("/global/health")) {
+  if (request.url.startsWith("/api/info")) {
     response.setHeader("Content-Type", "application/json");
-    response.end(JSON.stringify({ healthy: true, version: "1.14.19" }));
+    response.end(JSON.stringify({ version: "2.0.7", pid: process.pid, urls: [], paths: { tmp: "/tmp" } }));
     return;
   }
   await Promise.all([writeOutput(process.stdout), writeOutput(process.stderr)]);
-  response.end("drained");
+  response.end("drained:" + process.cwd());
 });
-server.listen(0, "127.0.0.1", () => {
-  process.stdout.write("opencode server listening on http://127.0.0.1:" + server.address().port + "\\n");
+server.listen(port, "127.0.0.1", () => {
+  process.stdout.write("server listening on http://127.0.0.1:" + server.address().port + "\\n");
 });
 `,
         );
@@ -216,7 +229,6 @@ server.listen(0, "127.0.0.1", () => {
         const server = yield* runtime.startOpenCodeServerProcess({
           binaryPath,
           directory: tempDir,
-          port: 0,
           environment: {
             ...environment,
             T3_TEST_NODE_BINARY: executablePath,
@@ -224,15 +236,71 @@ server.listen(0, "127.0.0.1", () => {
           },
         });
         const response = yield* HttpClient.get(`${server.url}/output`);
+        const canonicalTempDir = yield* fs.realPath(tempDir);
 
-        expect(yield* response.text).toBe("drained");
+        expect(yield* response.text).toBe(`drained:${canonicalTempDir}`);
         expect(yield* server.isRunning).toBe(true);
+        expect(server.version).toBe("2.0.7");
       }).pipe(
         Effect.scoped,
         Effect.provide([
           OpenCodeRuntimeLive.pipe(Layer.provideMerge(NodeServices.layer)),
           FetchHttpClient.layer,
         ]),
+      ),
+    10_000,
+  );
+
+  effectIt.live(
+    "redacts the managed password when the server exits during startup",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const environment = yield* HostProcessEnvironment;
+        const executablePath = yield* HostProcessExecutablePath;
+        const platform = yield* HostProcessPlatform;
+        const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-opencode-exit-" });
+        const isWindows = platform === "win32";
+        const binaryPath = path.join(tempDir, isWindows ? "opencode.cmd" : "opencode");
+        const scriptPath = path.join(tempDir, "opencode.mjs");
+
+        yield* fs.writeFileString(
+          scriptPath,
+          "process.stdout.write(`failed password=${process.env.OPENCODE_SERVER_PASSWORD}\\n`); process.exit(17);\n",
+        );
+        yield* fs.writeFileString(
+          binaryPath,
+          [
+            ...(isWindows ? ["@echo off"] : ["#!/bin/sh"]),
+            isWindows
+              ? '"%T3_TEST_NODE_BINARY%" "%T3_TEST_OPENCODE_SCRIPT%" %*'
+              : 'exec "$T3_TEST_NODE_BINARY" "$T3_TEST_OPENCODE_SCRIPT" "$@"',
+            "",
+          ].join("\n"),
+        );
+        if (!isWindows) yield* fs.chmod(binaryPath, 0o755);
+
+        const runtime = yield* OpenCodeRuntime;
+        const error = yield* runtime
+          .startOpenCodeServerProcess({
+            binaryPath,
+            directory: tempDir,
+            serverPassword: "managed-test-password",
+            environment: {
+              ...environment,
+              T3_TEST_NODE_BINARY: executablePath,
+              T3_TEST_OPENCODE_SCRIPT: scriptPath,
+            },
+          })
+          .pipe(Effect.flip);
+
+        expect(error.detail).toContain("code: 17");
+        expect(error.detail).toContain("[REDACTED_SECRET]");
+        expect(error.detail).not.toContain("managed-test-password");
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(OpenCodeRuntimeLive.pipe(Layer.provideMerge(NodeServices.layer))),
       ),
     10_000,
   );

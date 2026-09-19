@@ -21,12 +21,13 @@ import {
   type ServerProviderDraft,
 } from "../providerSnapshot.ts";
 import {
+  MAXIMUM_OPENCODE_VERSION_EXCLUSIVE,
   MINIMUM_OPENCODE_VERSION,
   OpenCodeRuntime,
   openCodeRuntimeErrorDetail,
+  SUPPORTED_OPENCODE_VERSION_RANGE,
   type OpenCodeInventory,
 } from "../opencodeRuntime.ts";
-import type { Agent, ProviderListResponse } from "@opencode-ai/sdk/v2";
 import * as OpenCodeServerOwner from "../OpenCodeServerOwner.ts";
 
 const OPENCODE_PRESENTATION = {
@@ -162,14 +163,14 @@ function inferDefaultVariant(
   if (providerID === "anthropic" || providerID.startsWith("google")) {
     return variants.includes("high") ? "high" : undefined;
   }
-  if (providerID === "openai" || providerID === "opencode") {
+  if (providerID === "openai" || providerID === "opencode" || providerID === "opencode-go") {
     return variants.includes("medium") ? "medium" : variants.includes("high") ? "high" : undefined;
   }
   return undefined;
 }
 
-function inferDefaultAgent(agents: ReadonlyArray<Agent>): string | undefined {
-  return agents.find((agent) => agent.name === "build")?.name ?? agents[0]?.name ?? undefined;
+function inferDefaultAgent(agents: OpenCodeInventory["agents"]): string | undefined {
+  return agents.find((agent) => agent.id === "build")?.id ?? agents[0]?.id ?? undefined;
 }
 
 const DEFAULT_OPENCODE_MODEL_CAPABILITIES: ModelCapabilities = createModelCapabilities({
@@ -201,17 +202,10 @@ const DEFAULT_OPENCODE_MODEL_CAPABILITIES: ModelCapabilities = createModelCapabi
 
 function openCodeCapabilitiesForModel(input: {
   readonly providerID: string;
-  readonly model: ProviderListResponse["all"][number]["models"][string];
-  readonly agents: ReadonlyArray<Agent>;
+  readonly model: OpenCodeInventory["models"][number];
+  readonly agents: OpenCodeInventory["agents"];
 }): ModelCapabilities {
-  const rawVariantValues = Object.keys(input.model.variants ?? {});
-  // When a model advertises no variants, synthesize the standard reasoning
-  // levels so the composer still offers a Reasoning selector (mirrors the
-  // Codex/Grok experience where reasoning is always configurable). The set
-  // covers the common OpenCode variant spectrum; `inferDefaultVariant`
-  // picks the provider-appropriate default (e.g. medium for openai/opencode).
-  const variantValues =
-    rawVariantValues.length > 0 ? rawVariantValues : ["low", "medium", "high", "xhigh"];
+  const variantValues = input.model.variants.map((variant) => variant.id);
   const defaultVariant = inferDefaultVariant(input.providerID, variantValues);
   const variantOptions = variantValues.map((value) =>
     defaultVariant === value
@@ -223,9 +217,9 @@ function openCodeCapabilitiesForModel(input: {
   );
   const defaultAgent = inferDefaultAgent(primaryAgents);
   const agentOptions = primaryAgents.map((agent) =>
-    defaultAgent === agent.name
-      ? { id: agent.name, label: titleCaseSlug(agent.name), isDefault: true as const }
-      : { id: agent.name, label: titleCaseSlug(agent.name) },
+    defaultAgent === agent.id
+      ? { id: agent.id, label: agent.name, isDefault: true as const }
+      : { id: agent.id, label: agent.name },
   );
   return createModelCapabilities({
     optionDescriptors: [
@@ -256,33 +250,26 @@ function openCodeCapabilitiesForModel(input: {
 }
 
 function flattenOpenCodeModels(input: OpenCodeInventory): ReadonlyArray<ServerProviderModel> {
-  const connected = new Set(input.providerList.connected);
+  const providers = new Map(input.providers.map((provider) => [provider.id, provider]));
   const models: Array<ServerProviderModel> = [];
 
-  for (const provider of input.providerList.all) {
-    if (!connected.has(provider.id)) {
-      continue;
-    }
+  for (const model of input.models) {
+    if (!model.enabled) continue;
+    const name = nonEmptyTrimmed(model.name);
+    if (!name) continue;
 
-    for (const model of Object.values(provider.models)) {
-      const name = nonEmptyTrimmed(model.name);
-      if (!name) {
-        continue;
-      }
-
-      const subProvider = nonEmptyTrimmed(provider.name);
-      models.push({
-        slug: `${provider.id}/${model.id}`,
-        name,
-        ...(subProvider ? { subProvider } : {}),
-        isCustom: false,
-        capabilities: openCodeCapabilitiesForModel({
-          providerID: provider.id,
-          model,
-          agents: input.agents,
-        }),
-      });
-    }
+    const subProvider = nonEmptyTrimmed(providers.get(model.providerID)?.name);
+    models.push({
+      slug: `${model.providerID}/${model.id}`,
+      name,
+      ...(subProvider ? { subProvider } : {}),
+      isCustom: false,
+      capabilities: openCodeCapabilitiesForModel({
+        providerID: model.providerID,
+        model,
+        agents: input.agents,
+      }),
+    });
   }
 
   return models.toSorted((left, right) => left.name.localeCompare(right.name));
@@ -299,7 +286,7 @@ export function openCodeSkillsToServerProviderSkills(
   const skills: ServerProviderSkill[] = [];
   for (const skill of input ?? []) {
     const name = trimOptional(skill.name);
-    const path = trimOptional(skill.location);
+    const path = trimOptional(skill.path);
     if (!name || !path) {
       continue;
     }
@@ -323,14 +310,12 @@ export function openCodeCommandsToServerProviderSlashCommands(
   const names = new Set([COMPACT_SLASH_COMMAND.name]);
   for (const command of input ?? []) {
     const name = trimOptional(command.name);
-    if (!name || names.has(name) || command.source === "skill") continue;
+    if (!name || names.has(name)) continue;
     names.add(name);
     const description = trimOptional(command.description);
-    const hint = trimOptional(command.hints.join(" "));
     commands.push({
       name,
       ...(description ? { description } : {}),
-      ...(hint ? { input: { hint } } : {}),
     });
   }
   return commands;
@@ -473,7 +458,7 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
     if (!version) {
       return fallback(
         new Error(
-          `Unable to determine OpenCode version from \`opencode --version\` output. Dispatch requires OpenCode v${MINIMUM_OPENCODE_VERSION} or newer.`,
+          `Unable to determine OpenCode version from \`opencode --version\` output. Dispatch supports OpenCode ${SUPPORTED_OPENCODE_VERSION_RANGE}.`,
         ),
         null,
       );
@@ -489,7 +474,22 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
           version,
           status: "error",
           auth: { status: "unknown" },
-          message: `OpenCode v${version} is too old. Upgrade to v${MINIMUM_OPENCODE_VERSION} or newer.`,
+          message: `OpenCode v${version} is too old. Dispatch supports OpenCode ${SUPPORTED_OPENCODE_VERSION_RANGE}.`,
+        },
+      });
+    }
+    if (compareSemverVersions(version, MAXIMUM_OPENCODE_VERSION_EXCLUSIVE) >= 0) {
+      return buildServerProvider({
+        presentation: OPENCODE_PRESENTATION,
+        enabled: openCodeSettings.enabled,
+        checkedAt,
+        models: providerModelsFromSettings([], customModels, DEFAULT_OPENCODE_MODEL_CAPABILITIES),
+        probe: {
+          installed: true,
+          version,
+          status: "error",
+          auth: { status: "unknown" },
+          message: `OpenCode v${version} is newer than the supported v2 API. Dispatch supports OpenCode ${SUPPORTED_OPENCODE_VERSION_RANGE}.`,
         },
       });
     }
@@ -504,9 +504,9 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
       .loadOpenCodeInventory(
         openCodeRuntime.createOpenCodeSdkClient({
           baseUrl: server.url,
-          directory: cwd,
           ...(server.serverPassword !== undefined ? { serverPassword: server.serverPassword } : {}),
         }),
+        cwd,
       )
       .pipe(Effect.map((inventory) => ({ inventory, version: server.version })));
   const inventoryEffect = isExternalServer
@@ -540,7 +540,11 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
     DEFAULT_OPENCODE_MODEL_CAPABILITIES,
   );
   const skills = openCodeSkillsToServerProviderSkills(inventoryExit.value.inventory.skills);
-  const connectedCount = inventoryExit.value.inventory.providerList.connected.length;
+  const connectedCount = new Set(
+    inventoryExit.value.inventory.models
+      .filter((model) => model.enabled)
+      .map((model) => model.providerID),
+  ).size;
   return buildServerProvider({
     presentation: OPENCODE_PRESENTATION,
     enabled: true,

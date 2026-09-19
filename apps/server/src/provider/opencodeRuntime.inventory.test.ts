@@ -1,19 +1,13 @@
 import * as NodeAssert from "node:assert/strict";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { createOpencodeClient, type OpencodeClient } from "@opencode-ai/sdk/v2";
+import { OpenCode, type OpenCodeClient } from "@opencode/client";
 import { it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
-import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
-import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
-import {
-  HostProcessEnvironment,
-  HostProcessExecutablePath,
-  HostProcessPlatform,
-} from "@t3tools/shared/hostProcess";
+import { HostProcessExecutablePath } from "@t3tools/shared/hostProcess";
 
 import { OpenCodeRuntime, OpenCodeRuntimeLive } from "./opencodeRuntime.ts";
 
@@ -25,16 +19,22 @@ it.layer(testLayer)("OpenCodeRuntime inventory", (it) => {
       const runtime = yield* OpenCodeRuntime;
       const started = yield* Queue.make<void>();
       const aborted = yield* Queue.make<string>();
-      const client = createOpencodeClient({
+      const client = OpenCode.make({
         baseUrl: "http://opencode.test",
         fetch: Object.assign(
-          (input: string | Request | URL) => {
-            const request = input instanceof Request ? input : new Request(input.toString());
+          (input: string | Request | URL, init?: RequestInit) => {
+            const request = input instanceof Request ? input : new Request(input.toString(), init);
+            const path = new URL(request.url).pathname;
+            if (path === "/api/integration") {
+              return Promise.resolve(
+                Response.json({ location: { directory: "/workspace/project" }, data: [] }),
+              );
+            }
             return new Promise<Response>((_resolve, reject) => {
               request.signal.addEventListener(
                 "abort",
                 () => {
-                  Queue.offerUnsafe(aborted, new URL(request.url).pathname);
+                  Queue.offerUnsafe(aborted, path);
                   reject(request.signal.reason);
                 },
                 { once: true },
@@ -46,221 +46,146 @@ it.layer(testLayer)("OpenCodeRuntime inventory", (it) => {
         ),
       });
 
-      const inventoryFiber = yield* runtime.loadOpenCodeInventory(client).pipe(Effect.forkChild);
-      yield* Queue.takeN(started, 4);
+      const inventoryFiber = yield* runtime
+        .loadOpenCodeInventory(client, "/workspace/project")
+        .pipe(Effect.forkChild);
+      yield* Queue.takeN(started, 5);
       yield* Fiber.interrupt(inventoryFiber);
 
       NodeAssert.deepEqual((yield* Queue.takeAll(aborted)).toSorted(), [
-        "/agent",
-        "/command",
-        "/provider",
-        "/skill",
+        "/api/agent",
+        "/api/command",
+        "/api/model",
+        "/api/provider",
+        "/api/skill",
       ]);
     }),
   );
 
-  it.effect("discovers directory-scoped commands without retaining prompt templates", () =>
+  it.effect("loads v2 inventory after integration discovery and scopes every request", () =>
     Effect.gen(function* () {
       const runtime = yield* OpenCodeRuntime;
       const requests: Request[] = [];
-      const client = createOpencodeClient({
+      let integrationLoaded = false;
+      const client = OpenCode.make({
         baseUrl: "http://opencode.test",
-        directory: "/workspace/project",
         fetch: Object.assign(
-          async (input: string | Request | URL) => {
-            const request = input instanceof Request ? input : new Request(input.toString());
+          async (input: string | Request | URL, init?: RequestInit) => {
+            const request = input instanceof Request ? input : new Request(input.toString(), init);
             requests.push(request);
             const route = new URL(request.url).pathname;
-            return Response.json(
-              route === "/provider"
-                ? { connected: ["openai"], all: [], default: {} }
-                : route === "/command"
+            const location = { directory: "/workspace/project" };
+            if (route === "/api/integration") {
+              integrationLoaded = true;
+              return Response.json({ location, data: [] });
+            }
+            NodeAssert.equal(integrationLoaded, true);
+            const data =
+              route === "/api/provider"
+                ? [
+                    {
+                      id: "opencode-go",
+                      name: "OpenCode Go",
+                      activation: "enabled",
+                      package: "@ai-sdk/openai-compatible",
+                      headers: { authorization: "must-not-be-retained" },
+                    },
+                  ]
+                : route === "/api/model"
                   ? [
                       {
-                        name: "review",
-                        description: "Review changes",
-                        source: "command",
-                        hints: ["$ARGUMENTS"],
-                        template: "private native template",
+                        id: "gpt-5.6-sol",
+                        modelID: "gpt-5.6-sol",
+                        providerID: "opencode-go",
+                        name: "GPT-5.6 Sol",
+                        capabilities: { tools: true, input: ["text"], output: ["text"] },
+                        variants: [{ id: "low" }, { id: "high" }],
+                        time: { released: 0 },
+                        cost: [],
+                        status: "active",
+                        enabled: true,
+                        limit: { context: 200000, output: 32000 },
+                        headers: { authorization: "must-not-be-retained" },
                       },
                     ]
-                  : [],
-            );
+                  : route === "/api/agent"
+                    ? [
+                        { id: "build", name: "Build", mode: "primary", hidden: false },
+                        { id: "summary", name: "Summary", mode: "primary", hidden: true },
+                      ]
+                    : route === "/api/command"
+                      ? [{ name: "review", description: "Review changes" }]
+                      : route === "/api/skill"
+                        ? [
+                            {
+                              id: "review",
+                              name: "Review",
+                              description: "Review code changes",
+                              path: "/skills/review/SKILL.md",
+                              content: "must not be retained",
+                            },
+                          ]
+                        : [];
+            return Response.json({ location, data });
           },
           { preconnect: () => undefined },
         ),
       });
-      const inventory = yield* runtime.loadOpenCodeInventory(client);
-      NodeAssert.deepEqual(inventory.commands, [
-        {
-          name: "review",
-          description: "Review changes",
-          source: "command",
-          hints: ["$ARGUMENTS"],
-        },
-      ]);
-      const commandRequest = requests.find(
-        (request) => new URL(request.url).pathname === "/command",
-      );
-      NodeAssert.ok(commandRequest);
-      NodeAssert.equal(
-        new URL(commandRequest.url).searchParams.get("directory") ??
-          decodeURIComponent(commandRequest.headers.get("x-opencode-directory") ?? ""),
-        "/workspace/project",
-      );
-    }),
-  );
+      const inventory = yield* runtime.loadOpenCodeInventory(client, "/workspace/project");
 
-  it.effect("keeps provider inventory when agent discovery fails", () =>
-    Effect.gen(function* () {
-      const runtime = yield* OpenCodeRuntime;
-      const client = {
-        provider: {
-          list: () =>
-            Promise.resolve({
-              data: {
-                connected: ["openai"],
-                all: [],
-                default: {},
-              },
-            }),
-        },
-        app: {
-          agents: () => Promise.reject(new Error("agents endpoint unavailable")),
-          skills: () => Promise.resolve({ data: [] }),
-        },
-      } as unknown as OpencodeClient;
-
-      const inventory = yield* runtime.loadOpenCodeInventory(client);
-
-      NodeAssert.deepEqual(inventory.providerList.connected, ["openai"]);
-      NodeAssert.deepEqual(inventory.agents, []);
-      NodeAssert.deepEqual(inventory.skills, []);
-    }),
-  );
-
-  it.effect("keeps provider inventory when skill discovery fails", () =>
-    Effect.gen(function* () {
-      const runtime = yield* OpenCodeRuntime;
-      const client = {
-        provider: {
-          list: () =>
-            Promise.resolve({
-              data: {
-                connected: ["openai"],
-                all: [],
-                default: {},
-              },
-            }),
-        },
-        app: {
-          agents: () => Promise.resolve({ data: [] }),
-          skills: () => Promise.reject(new Error("skills endpoint unavailable")),
-        },
-      } as unknown as OpencodeClient;
-
-      const inventory = yield* runtime.loadOpenCodeInventory(client);
-
-      NodeAssert.deepEqual(inventory.providerList.connected, ["openai"]);
-      NodeAssert.deepEqual(inventory.agents, []);
-      NodeAssert.deepEqual(inventory.skills, []);
-    }),
-  );
-
-  it.effect("keeps only SDK skill metadata in inventory", () =>
-    Effect.gen(function* () {
-      const runtime = yield* OpenCodeRuntime;
-      const client = {
-        provider: {
-          list: () =>
-            Promise.resolve({
-              data: {
-                connected: ["openai"],
-                all: [],
-                default: {},
-              },
-            }),
-        },
-        app: {
-          agents: () => Promise.resolve({ data: [] }),
-          skills: () =>
-            Promise.resolve({
-              data: [
-                {
-                  name: "review",
-                  description: "Review code changes",
-                  location: "/skills/review/SKILL.md",
-                  content: "unused skill content",
-                },
-              ],
-            }),
-        },
-      } as unknown as OpencodeClient;
-
-      const inventory = yield* runtime.loadOpenCodeInventory(client);
-
-      NodeAssert.deepEqual(inventory.skills, [
-        {
-          name: "review",
-          description: "Review code changes",
-          location: "/skills/review/SKILL.md",
-        },
-      ]);
-    }),
-  );
-
-  it.effect("drops oversized CLI skill output without losing the model inventory", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const hostEnvironment = yield* HostProcessEnvironment;
-      const executablePath = yield* HostProcessExecutablePath;
-      const hostPlatform = yield* HostProcessPlatform;
-      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-opencode-inventory-" });
-      const isWindows = hostPlatform === "win32";
-      const binaryPath = path.join(tempDir, isWindows ? "opencode.cmd" : "opencode");
-      const scriptPath = path.join(tempDir, "opencode.mjs");
-      const oversizedContentBytes = 8 * 1024 * 1024 + 1;
-
-      yield* fs.writeFileString(
-        scriptPath,
-        [
-          'if (process.argv[2] === "models") {',
-          '  process.stdout.write(`openai/gpt-test\\n{"id":"gpt-test","providerID":"openai","name":"GPT Test"}\\n`);',
-          '} else if (process.argv[2] === "debug") {',
-          `  const content = "x".repeat(${oversizedContentBytes});`,
-          '  process.stdout.write(`[{"name":"oversized","content":"${content}"}]`);',
-          "}",
-          "",
-        ].join("\n"),
-      );
-      yield* fs.writeFileString(
-        binaryPath,
-        [
-          ...(isWindows ? ["@echo off"] : ["#!/bin/sh"]),
-          isWindows
-            ? '"%T3_TEST_NODE_BINARY%" "%T3_TEST_OPENCODE_SCRIPT%" %*'
-            : 'exec "$T3_TEST_NODE_BINARY" "$T3_TEST_OPENCODE_SCRIPT" "$@"',
-          "",
-        ].join("\n"),
-      );
-      if (!isWindows) {
-        yield* fs.chmod(binaryPath, 0o755);
-      }
-
-      const runtime = yield* OpenCodeRuntime;
-      const inventory = yield* runtime.loadInventoryFromCli({
-        binaryPath,
-        cwd: tempDir,
-        environment: {
-          ...hostEnvironment,
-          T3_TEST_NODE_BINARY: executablePath,
-          T3_TEST_OPENCODE_SCRIPT: scriptPath,
-        },
+      NodeAssert.deepEqual(inventory, {
+        providers: [{ id: "opencode-go", name: "OpenCode Go", activation: "enabled" }],
+        models: [
+          {
+            id: "gpt-5.6-sol",
+            providerID: "opencode-go",
+            name: "GPT-5.6 Sol",
+            enabled: true,
+            variants: [{ id: "low" }, { id: "high" }],
+          },
+        ],
+        agents: [
+          { id: "build", name: "Build", mode: "primary", hidden: false },
+          { id: "summary", name: "Summary", mode: "primary", hidden: true },
+        ],
+        commands: [{ name: "review", description: "Review changes" }],
+        skills: [
+          {
+            id: "review",
+            name: "Review",
+            description: "Review code changes",
+            path: "/skills/review/SKILL.md",
+          },
+        ],
       });
+      NodeAssert.equal(new URL(requests[0]!.url).pathname, "/api/integration");
+      NodeAssert.deepEqual(
+        requests.map((request) => new URL(request.url).searchParams.get("location[directory]")),
+        Array.from({ length: 6 }, () => "/workspace/project"),
+      );
+    }),
+  );
 
-      NodeAssert.deepEqual(inventory.providerList.connected, ["openai"]);
-      NodeAssert.equal(inventory.skills.length, 0);
+  it.effect("does not turn a failed v2 inventory request into empty success", () =>
+    Effect.gen(function* () {
+      const runtime = yield* OpenCodeRuntime;
+      const client = {
+        integration: { list: () => Promise.resolve({ data: [] }) },
+        provider: {
+          list: () => Promise.resolve({ data: [] }),
+        },
+        model: { list: () => Promise.resolve({ data: [] }) },
+        agent: { list: () => Promise.reject(new Error("agents endpoint unavailable")) },
+        command: { list: () => Promise.resolve({ data: [] }) },
+        skill: { list: () => Promise.resolve({ data: [] }) },
+      } as unknown as OpenCodeClient;
+
+      const error = yield* runtime
+        .loadOpenCodeInventory(client, "/workspace/project")
+        .pipe(Effect.flip);
+
+      NodeAssert.equal(error.operation, "agent.list");
+      NodeAssert.match(error.detail, /agents endpoint unavailable/);
     }),
   );
 
