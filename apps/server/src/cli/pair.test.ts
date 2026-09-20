@@ -8,6 +8,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NetService from "@dispatch/shared/Net";
 import { HostProcessEnvironment } from "@dispatch/shared/hostProcess";
 import { assert, describe, expect, it } from "@effect/vitest";
+import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as TestConsole from "effect/testing/TestConsole";
@@ -143,7 +144,7 @@ const withDescriptorServer = <A, E, R>(run: (origin: string) => Effect.Effect<A,
     (server) => Effect.sync(() => server.close()),
   );
 
-describe("t3 pair", () => {
+describe("dispatch pair", () => {
   it.effect("mints a token and prints a QR pairing URL for a live server", () =>
     withDescriptorServer((origin) =>
       Effect.gen(function* () {
@@ -194,6 +195,69 @@ describe("t3 pair", () => {
         off: () => undefined,
       }),
     ),
+  );
+
+  it.effect("prefers canonical DISPATCH_HOME when discovering a running server", () =>
+    withDescriptorServer((origin) =>
+      Effect.gen(function* () {
+        const canonicalHome = NodeFS.mkdtempSync(
+          NodePath.join(NodeOS.tmpdir(), "dispatch-pair-canonical-"),
+        );
+        const legacyHome = NodeFS.mkdtempSync(
+          NodePath.join(NodeOS.tmpdir(), "dispatch-pair-legacy-"),
+        );
+        const statePath = NodePath.join(canonicalHome, "userdata", "server-runtime.json");
+        yield* persistServerRuntimeState({
+          path: statePath,
+          state: yield* makePersistedServerRuntimeState({
+            config: { host: "127.0.0.1", devUrl: undefined },
+            port: Number(new URL(origin).port),
+          }),
+        });
+
+        const output = yield* captureStdout(
+          runCli(["pair"]).pipe(
+            Effect.provide(
+              ConfigProvider.layer(
+                ConfigProvider.fromEnv({
+                  env: { DISPATCH_HOME: canonicalHome, T3CODE_HOME: legacyHome },
+                }),
+              ),
+            ),
+          ),
+        );
+
+        assert.include(output, `Pairing with pair-test (${origin})`);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("keeps T3CODE_HOME as a discovery fallback", () =>
+    withDescriptorServer((origin) =>
+      Effect.gen(function* () {
+        const legacyHome = NodeFS.mkdtempSync(
+          NodePath.join(NodeOS.tmpdir(), "dispatch-pair-legacy-"),
+        );
+        const statePath = NodePath.join(legacyHome, "userdata", "server-runtime.json");
+        yield* persistServerRuntimeState({
+          path: statePath,
+          state: yield* makePersistedServerRuntimeState({
+            config: { host: "127.0.0.1", devUrl: undefined },
+            port: Number(new URL(origin).port),
+          }),
+        });
+
+        const output = yield* captureStdout(
+          runCli(["pair"]).pipe(
+            Effect.provide(
+              ConfigProvider.layer(ConfigProvider.fromEnv({ env: { T3CODE_HOME: legacyHome } })),
+            ),
+          ),
+        );
+
+        assert.include(output, `Pairing with pair-test (${origin})`);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("pairs through the recorded dev web URL for dev servers", () =>

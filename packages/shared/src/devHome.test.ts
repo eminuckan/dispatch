@@ -6,7 +6,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as Effect from "effect/Effect";
 
-import { resolveGitWorktreePath, resolveWorktreeT3Home } from "./devHome.ts";
+import { resolveGitWorktreePath, resolveWorktreeDispatchHome } from "./devHome.ts";
 
 const makeRepo = (
   kind:
@@ -94,13 +94,42 @@ describe("resolveGitWorktreePath", () => {
   );
 });
 
-describe("resolveWorktreeT3Home", () => {
-  it.effect("answers with .t3 before the dev runner creates it", () =>
+describe("resolveWorktreeDispatchHome", () => {
+  it.effect("answers with canonical .dispatch before the dev runner creates it", () =>
     Effect.gen(function* () {
       const { root, nested } = yield* makeRepo("worktree");
-      const home = yield* resolveWorktreeT3Home(nested);
-      assert.equal(home, NodePath.join(NodePath.resolve(root), ".t3"));
+      const home = yield* resolveWorktreeDispatchHome(nested);
+      assert.equal(home, NodePath.join(NodePath.resolve(root), ".dispatch"));
       assert.isFalse(NodeFS.existsSync(home ?? ""));
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("prefers canonical .dispatch when canonical and legacy homes both exist", () =>
+    Effect.gen(function* () {
+      const { root, nested } = yield* makeRepo("worktree");
+      NodeFS.mkdirSync(NodePath.join(root, ".dispatch"));
+      NodeFS.mkdirSync(NodePath.join(root, ".t3"));
+
+      assert.equal(
+        yield* resolveWorktreeDispatchHome(nested),
+        NodePath.join(NodePath.resolve(root), ".dispatch"),
+      );
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("adopts a legacy .t3 home in place without creating .dispatch", () =>
+    Effect.gen(function* () {
+      const { root, nested } = yield* makeRepo("worktree");
+      const legacyHome = NodePath.join(root, ".t3");
+      NodeFS.mkdirSync(legacyHome);
+      NodeFS.writeFileSync(NodePath.join(legacyHome, "marker"), "legacy-state");
+
+      assert.equal(yield* resolveWorktreeDispatchHome(nested), NodePath.resolve(legacyHome));
+      assert.equal(
+        NodeFS.readFileSync(NodePath.join(legacyHome, "marker"), "utf8"),
+        "legacy-state",
+      );
+      assert.isFalse(NodeFS.existsSync(NodePath.join(root, ".dispatch")));
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });

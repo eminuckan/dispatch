@@ -1,11 +1,11 @@
 /**
  * Where development state lives, and how to keep it away from the shared
- * legacy `~/.t3` state that an older installation may still run against.
+ * main-install state that an older installation may still run against.
  *
- * A linked git worktree gets its own (gitignored) `.t3`: feature work in a
- * throwaway branch must not share a database with the real app, and an ambient
- * `T3CODE_HOME` counts as an explicit base dir — flipping the state directory
- * from `<base>/dev` to `<base>/userdata`, the live production database.
+ * A linked git worktree gets its own (gitignored) `.dispatch`: feature work in
+ * a throwaway branch must not share a database with the real app. Existing
+ * worktrees that already have `.t3` keep using it in place so migration never
+ * copies or deletes developer state.
  */
 
 import * as Effect from "effect/Effect";
@@ -86,11 +86,12 @@ export const resolveGitWorktreePath = (
   });
 
 /**
- * The worktree-local data directory for `cwd`, or undefined outside a linked
- * worktree. Deliberately does not require the directory to exist yet: falling
- * back because it is missing would send callers at the shared home.
+ * The worktree-local Dispatch data directory for `cwd`, or undefined outside a
+ * linked worktree. A fresh worktree resolves to `.dispatch`; when only the
+ * legacy `.t3` exists it is adopted in place. If both exist, canonical
+ * `.dispatch` wins.
  */
-export const resolveWorktreeT3Home = (
+export const resolveWorktreeDispatchHome = (
   cwd: string,
 ): Effect.Effect<string | undefined, never, FileSystem.FileSystem | Path.Path> =>
   Effect.gen(function* () {
@@ -98,6 +99,17 @@ export const resolveWorktreeT3Home = (
     if (worktreePath === undefined) {
       return undefined;
     }
+    const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    return path.join(worktreePath, ".t3");
+    const dispatchHome = path.join(worktreePath, ".dispatch");
+    if (yield* fileSystem.exists(dispatchHome).pipe(Effect.orElseSucceed(() => false))) {
+      return dispatchHome;
+    }
+
+    const legacyHome = path.join(worktreePath, ".t3");
+    if (yield* fileSystem.exists(legacyHome).pipe(Effect.orElseSucceed(() => false))) {
+      return legacyHome;
+    }
+
+    return dispatchHome;
   });

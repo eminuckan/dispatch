@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 
 /**
- * Rebuild an isolated dev database from a pruned snapshot of the real
- * ~/.t3 database, then run this checkout's migrations against it.
+ * Rebuild an isolated dev database from a pruned snapshot of the main
+ * Dispatch database, then run this checkout's migrations against it.
  *
  * `vp run migrate-dev-db` from a worktree:
- *   1. Nukes `<worktree>/.t3/userdata/state.sqlite`.
+ *   1. Nukes `<worktree>/.dispatch/userdata/state.sqlite` (or an existing
+ *      legacy `<worktree>/.t3/userdata/state.sqlite`, adopted in place).
  *   2. Snapshots the real db (read-only VACUUM INTO) and prunes it to the
  *      most recently updated projects and, per project, the most recent
  *      threads that have fully stopped. Working, settled, and monitored
@@ -26,8 +27,7 @@
 
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import * as NodeOS from "node:os";
-import { resolveWorktreeT3Home } from "@dispatch/shared/devHome";
+import { resolveWorktreeDispatchHome } from "@dispatch/shared/devHome";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -38,6 +38,7 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { Command, Flag } from "effect/unstable/cli";
 
 import { migrationManifest, runMigrations } from "../src/persistence/Migrations.ts";
+import { resolveBaseDir } from "../src/os-jank.ts";
 import * as NodeSqliteClient from "@dispatch/shared/nodeSqliteClient";
 
 export class MigrateDevDbNotInWorktreeError extends Schema.TaggedError<MigrateDevDbNotInWorktreeError>()(
@@ -45,7 +46,7 @@ export class MigrateDevDbNotInWorktreeError extends Schema.TaggedError<MigrateDe
   {},
 ) {
   override get message(): string {
-    return "Not inside a linked git worktree. Pass --base-dir to target an isolated .t3 directory.";
+    return "Not inside a linked git worktree. Pass --base-dir to target an isolated Dispatch data directory.";
   }
 }
 
@@ -54,7 +55,7 @@ export class MigrateDevDbSharedHomeError extends Schema.TaggedError<MigrateDevDb
   {},
 ) {
   override get message(): string {
-    return "Refusing to rebuild the shared ~/.t3 database. Use an isolated --base-dir.";
+    return "Refusing to rebuild the shared Dispatch database. Use an isolated --base-dir.";
   }
 }
 
@@ -88,7 +89,7 @@ export class MigrateDevDbServerRunningError extends Schema.TaggedError<MigrateDe
   },
 ) {
   override get message(): string {
-    return `Dev database at '${this.databasePath}' is open by a running server (pid ${this.pid} per server-runtime.json). Stop that server first; if that pid is not actually a T3 server (stale descriptor, reused pid), delete the server-runtime.json next to the database and retry.`;
+    return `Dev database at '${this.databasePath}' is open by a running server (pid ${this.pid} per server-runtime.json). Stop that server first; if that pid is not actually a Dispatch server (stale descriptor, reused pid), delete the server-runtime.json next to the database and retry.`;
   }
 }
 
@@ -141,9 +142,9 @@ export class MigrateDevDbPhaseError extends Schema.TaggedError<MigrateDevDbPhase
 }
 
 export interface RunMigrateDevDbInput {
-  /** Isolated .t3 directory. Defaults to `<worktree>/.t3` of the cwd. */
+  /** Isolated Dispatch directory. Defaults to the cwd worktree's canonical/adopted home. */
   readonly baseDir?: string | undefined;
-  /** Source database. Defaults to `~/.t3/userdata/state.sqlite`. */
+  /** Source database. Defaults to the main canonical/adopted Dispatch database. */
   readonly source?: string | undefined;
   readonly projects: number;
   readonly threadsPerProject: number;
@@ -360,7 +361,7 @@ export const runMigrateDevDb = Effect.fn("runMigrateDevDb")(function* (
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
 
-  const sharedHome = path.resolve(options.sharedHome ?? path.join(NodeOS.homedir(), ".t3"));
+  const sharedHome = yield* resolveBaseDir(options.sharedHome);
   const sourcePath = path.resolve(
     input.source ?? path.join(sharedHome, "userdata", "state.sqlite"),
   );
@@ -368,7 +369,7 @@ export const runMigrateDevDb = Effect.fn("runMigrateDevDb")(function* (
   const baseDir =
     input.baseDir !== undefined
       ? path.resolve(input.baseDir)
-      : yield* resolveWorktreeT3Home(process.cwd());
+      : yield* resolveWorktreeDispatchHome(process.cwd());
   if (baseDir === undefined) {
     return yield* new MigrateDevDbNotInWorktreeError();
   }
@@ -516,11 +517,15 @@ export const migrateDevDbCommand = Command.make(
     ),
     baseDir: Flag.String("base-dir").pipe(
       Flag.optional,
-      Flag.withDescription("Isolated .t3 directory. Defaults to the current worktree's .t3."),
+      Flag.withDescription(
+        "Isolated Dispatch data directory. Defaults to the current worktree's .dispatch, adopting an existing legacy .t3 in place.",
+      ),
     ),
     source: Flag.String("source").pipe(
       Flag.optional,
-      Flag.withDescription("Source database. Defaults to ~/.t3/userdata/state.sqlite."),
+      Flag.withDescription(
+        "Source database. Defaults to the main Dispatch state (.dispatch first, legacy .t3 adopted when present).",
+      ),
     ),
   },
   ({ projects, threadsPerProject, baseDir, source }) =>
@@ -547,7 +552,7 @@ export const migrateDevDbCommand = Command.make(
     }),
 ).pipe(
   Command.withDescription(
-    "Rebuild the worktree dev database from a pruned snapshot of the real ~/.t3 data, then run migrations.",
+    "Rebuild the worktree dev database from a pruned snapshot of the main Dispatch data, then run migrations.",
   ),
 );
 

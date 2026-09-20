@@ -5,11 +5,12 @@ import * as NodeOS from "node:os";
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NetService from "@dispatch/shared/Net";
-import { resolveGitWorktreePath, resolveWorktreeT3Home } from "@dispatch/shared/devHome";
+import { resolveGitWorktreePath, resolveWorktreeDispatchHome } from "@dispatch/shared/devHome";
 import { HostProcessEnvironment, HostProcessWorkingDirectory } from "@dispatch/shared/hostProcess";
 import { resolveSpawnCommand } from "@dispatch/shared/shell";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Hash from "effect/Hash";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
@@ -67,9 +68,18 @@ export function isProxiableBindHost(host: string): boolean {
   );
 }
 
-export const DEFAULT_T3_HOME = Effect.map(Effect.service(Path.Path), (path) =>
-  path.join(NodeOS.homedir(), ".t3"),
-);
+export const DEFAULT_DISPATCH_HOME = Effect.gen(function* () {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const dispatchHome = path.join(NodeOS.homedir(), ".dispatch");
+  if (yield* fileSystem.exists(dispatchHome).pipe(Effect.orElseSucceed(() => false))) {
+    return dispatchHome;
+  }
+  const legacyHome = path.join(NodeOS.homedir(), ".t3");
+  return (yield* fileSystem.exists(legacyHome).pipe(Effect.orElseSucceed(() => false)))
+    ? legacyHome
+    : dispatchHome;
+});
 
 const MODE_ARGS = {
   dev: [
@@ -121,7 +131,7 @@ export class DevRunnerConfigurationError extends Schema.TaggedError<DevRunnerCon
 export class DevRunnerInvalidPortOffsetError extends Schema.TaggedError<DevRunnerInvalidPortOffsetError>()(
   "DevRunnerInvalidPortOffsetError",
   {
-    configKey: Schema.Literal("T3CODE_PORT_OFFSET"),
+    configKey: Schema.Literal("DISPATCH_PORT_OFFSET"),
     portOffset: Schema.Number,
     minimum: Schema.Number,
   },
@@ -210,9 +220,21 @@ const optionalIntegerConfig = (name: string): Config.Config<number | undefined> 
     Config.option,
     Config.map((value) => Option.getOrUndefined(value)),
   );
+const optionalAliasedStringConfig = (canonical: string, legacy: string) =>
+  Config.String(canonical).pipe(
+    Config.orElse(() => Config.String(legacy)),
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  );
+const optionalAliasedIntegerConfig = (canonical: string, legacy: string) =>
+  Config.Int(canonical).pipe(
+    Config.orElse(() => Config.Int(legacy)),
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  );
 const OffsetConfig = Config.all({
-  portOffset: optionalIntegerConfig("T3CODE_PORT_OFFSET"),
-  devInstance: optionalStringConfig("T3CODE_DEV_INSTANCE"),
+  portOffset: optionalAliasedIntegerConfig("DISPATCH_PORT_OFFSET", "T3CODE_PORT_OFFSET"),
+  devInstance: optionalAliasedStringConfig("DISPATCH_DEV_INSTANCE", "T3CODE_DEV_INSTANCE"),
 });
 
 export function resolveOffset(config: {
@@ -227,7 +249,7 @@ export function resolveOffset(config: {
     if (config.portOffset < 0) {
       return Effect.fail(
         new DevRunnerInvalidPortOffsetError({
-          configKey: "T3CODE_PORT_OFFSET",
+          configKey: "DISPATCH_PORT_OFFSET",
           portOffset: config.portOffset,
           minimum: 0,
         }),
@@ -235,7 +257,7 @@ export function resolveOffset(config: {
     }
     return Effect.succeed({
       offset: config.portOffset,
-      source: `T3CODE_PORT_OFFSET=${config.portOffset}`,
+      source: `DISPATCH_PORT_OFFSET=${config.portOffset}`,
     });
   }
 
@@ -244,12 +266,12 @@ export function resolveOffset(config: {
     if (/^\d+$/.test(seed)) {
       return Effect.succeed({
         offset: Number(seed),
-        source: `numeric T3CODE_DEV_INSTANCE=${seed}`,
+        source: `numeric DISPATCH_DEV_INSTANCE=${seed}`,
       });
     }
 
     const offset = ((Hash.string(seed) >>> 0) % MAX_HASH_OFFSET) + 1;
-    return Effect.succeed({ offset, source: `hashed T3CODE_DEV_INSTANCE=${seed}` });
+    return Effect.succeed({ offset, source: `hashed DISPATCH_DEV_INSTANCE=${seed}` });
   }
 
   // Worktrees get ports derived from their path so each one is stable across
@@ -264,19 +286,6 @@ export function resolveOffset(config: {
   }
 
   return Effect.succeed({ offset: 0, source: "default ports" });
-}
-
-function resolveBaseDir(baseDir: string | undefined): Effect.Effect<string, never, Path.Path> {
-  return Effect.gen(function* () {
-    const path = yield* Path.Path;
-    const configured = baseDir?.trim();
-
-    if (configured) {
-      return path.resolve(configured);
-    }
-
-    return yield* DEFAULT_T3_HOME;
-  });
 }
 
 interface CreateDevRunnerEnvInput {
@@ -319,10 +328,12 @@ export function createDevRunnerEnv({
   return Effect.gen(function* () {
     const serverPort = port ?? BASE_SERVER_PORT + serverOffset;
     const webPort = BASE_WEB_PORT + webOffset;
-    // Precedence (--home-dir > worktree .t3 > ambient Dispatch/T3 home) is resolved
-    // by the caller; an unset t3Home here genuinely means "use the default".
+    // Precedence is resolved by the caller; an unset t3Home here genuinely
+    // means "let the server use its canonical/adopted main-checkout default".
     const configuredBaseDir = t3Home?.trim() || undefined;
-    const resolvedBaseDir = yield* resolveBaseDir(configuredBaseDir);
+    const path = yield* Path.Path;
+    const resolvedBaseDir =
+      configuredBaseDir === undefined ? undefined : path.resolve(configuredBaseDir);
     const isDesktopMode = mode === "dev:desktop";
 
     const output: NodeJS.ProcessEnv = {
@@ -333,7 +344,7 @@ export function createDevRunnerEnv({
         `http://${isDesktopMode ? DESKTOP_DEV_LOOPBACK_HOST : "localhost"}:${webPort}`,
     };
 
-    if (configuredBaseDir !== undefined) {
+    if (resolvedBaseDir !== undefined) {
       setDispatchEnv(output, "HOME", resolvedBaseDir);
     } else {
       deleteDispatchEnv(output, "HOME");
@@ -640,7 +651,7 @@ export function runDevRunnerWithInput(input: DevRunnerCliInput) {
       Effect.mapError(
         (cause) =>
           new DevRunnerConfigurationError({
-            configKeys: ["T3CODE_PORT_OFFSET", "T3CODE_DEV_INSTANCE"],
+            configKeys: ["DISPATCH_PORT_OFFSET", "DISPATCH_DEV_INSTANCE"],
             cause,
           }),
       ),
@@ -678,24 +689,24 @@ export function runDevRunnerWithInput(input: DevRunnerCliInput) {
     });
 
     const hostEnvironment = yield* HostProcessEnvironment;
-    // A dev server started inside a worktree defaults to that worktree's own
-    // (gitignored) `.t3` — see @dispatch/shared/devHome for why this must
-    // outrank an ambient Dispatch/T3 home. `--home-dir` still wins.
-    const worktreeHome = yield* resolveWorktreeT3Home(yield* HostProcessWorkingDirectory);
+    // Fresh linked worktrees use their gitignored `.dispatch`; a worktree that
+    // only has legacy `.t3` state adopts it in place. An explicit canonical
+    // DISPATCH_HOME wins, while T3CODE_HOME remains a lower-priority fallback.
+    const worktreeHome = yield* resolveWorktreeDispatchHome(yield* HostProcessWorkingDirectory);
     // Trim before choosing: `--home-dir ""` is not a selection, and treating it
     // as one would skip the worktree default and land on the shared home —
     // exactly the outcome this precedence exists to prevent.
-    const resolvedT3Home =
+    const resolvedDevHome =
       (input.t3Home?.trim() || undefined) ??
-      worktreeHome ??
       (hostEnvironment.DISPATCH_HOME?.trim() || undefined) ??
+      worktreeHome ??
       (hostEnvironment.T3CODE_HOME?.trim() || undefined);
     const env = yield* createDevRunnerEnv({
       mode: input.mode,
       baseEnv: hostEnvironment,
       serverOffset,
       webOffset,
-      t3Home: resolvedT3Home,
+      t3Home: resolvedDevHome,
       browser: input.browser,
       autoBootstrapProjectFromCwd: input.autoBootstrapProjectFromCwd,
       logWebSocketEvents: input.logWebSocketEvents,
@@ -708,7 +719,7 @@ export function runDevRunnerWithInput(input: DevRunnerCliInput) {
       serverOffset !== offset || webOffset !== offset
         ? ` selectedOffset(server=${serverOffset},web=${webOffset})`
         : "";
-    const baseDir = env.DISPATCH_HOME ?? env.T3CODE_HOME ?? (yield* DEFAULT_T3_HOME);
+    const baseDir = env.DISPATCH_HOME ?? env.T3CODE_HOME ?? (yield* DEFAULT_DISPATCH_HOME);
 
     yield* Effect.logInfo(
       `[dev-runner] mode=${input.mode} source=${source}${selectionSuffix} serverPort=${String(env.T3CODE_PORT)} webPort=${String(env.PORT)} baseDir=${baseDir}`,
@@ -881,22 +892,22 @@ const devRunnerCli = Command.make("dev-runner", {
   ),
   autoBootstrapProjectFromCwd: Flag.Boolean("auto-bootstrap-project-from-cwd").pipe(
     Flag.withDescription(
-      "Auto-bootstrap toggle (equivalent to T3CODE_AUTO_BOOTSTRAP_PROJECT_FROM_CWD).",
+      "Auto-bootstrap toggle (equivalent to DISPATCH_AUTO_BOOTSTRAP_PROJECT_FROM_CWD).",
     ),
     Flag.withFallbackConfig(optionalBooleanConfig("T3CODE_AUTO_BOOTSTRAP_PROJECT_FROM_CWD")),
   ),
   logWebSocketEvents: Flag.Boolean("log-websocket-events").pipe(
-    Flag.withDescription("WebSocket event logging toggle (equivalent to T3CODE_LOG_WS_EVENTS)."),
+    Flag.withDescription("WebSocket event logging toggle (equivalent to DISPATCH_LOG_WS_EVENTS)."),
     Flag.withAlias("log-ws-events"),
     Flag.withFallbackConfig(optionalBooleanConfig("T3CODE_LOG_WS_EVENTS")),
   ),
   host: Flag.String("host").pipe(
-    Flag.withDescription("Server host/interface override (forwards to T3CODE_HOST)."),
+    Flag.withDescription("Server host/interface override (forwards to DISPATCH_HOST)."),
     Flag.withFallbackConfig(optionalStringConfig("T3CODE_HOST")),
   ),
   port: Flag.Int("port").pipe(
     Flag.withSchema(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 65535 }))),
-    Flag.withDescription("Server port override (forwards to T3CODE_PORT)."),
+    Flag.withDescription("Server port override (forwards to DISPATCH_PORT)."),
     Flag.withFallbackConfig(optionalPortConfig("T3CODE_PORT")),
   ),
   devUrl: Flag.String("dev-url").pipe(

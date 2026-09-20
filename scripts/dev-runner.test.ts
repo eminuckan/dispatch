@@ -115,12 +115,12 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
   });
 
   describe("resolveOffset", () => {
-    it.effect("uses explicit T3CODE_PORT_OFFSET when provided", () =>
+    it.effect("uses explicit DISPATCH_PORT_OFFSET when provided", () =>
       Effect.gen(function* () {
         const result = yield* resolveOffset({ portOffset: 12, devInstance: undefined });
         assert.deepStrictEqual(result, {
           offset: 12,
-          source: "T3CODE_PORT_OFFSET=12",
+          source: "DISPATCH_PORT_OFFSET=12",
         });
       }),
     );
@@ -143,7 +143,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
         );
 
         assert.equal(error._tag, "DevRunnerInvalidPortOffsetError");
-        assert.equal(error.configKey, "T3CODE_PORT_OFFSET");
+        assert.equal(error.configKey, "DISPATCH_PORT_OFFSET");
         assert.equal(error.portOffset, -1);
         assert.equal(error.minimum, 0);
         assert.ok(!("cause" in error));
@@ -906,7 +906,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
         if (error._tag !== "DevRunnerConfigurationError") {
           assert.fail(`Unexpected error: ${error._tag}`);
         }
-        assert.deepStrictEqual(error.configKeys, ["T3CODE_PORT_OFFSET", "T3CODE_DEV_INSTANCE"]);
+        assert.deepStrictEqual(error.configKeys, ["DISPATCH_PORT_OFFSET", "DISPATCH_DEV_INSTANCE"]);
         assert.ok(error.cause !== undefined);
         assert.ok(!error.message.includes(String((error.cause as Error).message)));
       }),
@@ -948,7 +948,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
 
     // `tailscale serve` config outlives the process, so a dry run that shared
     // would replace and then tear down whatever mapping the port already had.
-    // Base-dir precedence (--home-dir > worktree .t3 > ambient T3CODE_HOME)
+    // Base-dir precedence (--home-dir > DISPATCH_HOME > worktree canonical/adopted home > T3CODE_HOME)
     // lives in runDevRunnerWithInput; the env builder must not consult the
     // ambient variable on its own, or it would silently outrank the worktree
     // default and land dev state on the user's real database.
@@ -1318,7 +1318,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
       });
     });
 
-    describe("t3 home precedence", () => {
+    describe("Dispatch home precedence", () => {
       const makeWorktree = Effect.acquireRelease(
         Effect.sync(() => {
           const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-devrunner-"));
@@ -1373,6 +1373,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           const home = yield* spawnedHome({
             t3Home: "/tmp/explicit-home",
             cwd: root,
+            ambientDispatchHome: "/home/user/.dispatch",
             ambientHome: "/home/user/.t3",
           });
           assert.equal(home, path.resolve("/tmp/explicit-home"));
@@ -1388,11 +1389,25 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
             cwd: root,
             ambientHome: "/home/user/.t3",
           });
-          assert.equal(home, path.join(path.resolve(root), ".t3"));
+          assert.equal(home, path.join(path.resolve(root), ".dispatch"));
         }).pipe(Effect.scoped),
       );
 
-      it.effect("prefers the worktree .t3 over an ambient T3CODE_HOME", () =>
+      it.effect("prefers an explicit DISPATCH_HOME over the worktree default", () =>
+        Effect.gen(function* () {
+          const path = yield* Path.Path;
+          const root = yield* makeWorktree;
+          const home = yield* spawnedHome({
+            t3Home: undefined,
+            cwd: root,
+            ambientDispatchHome: "/home/user/.dispatch-explicit",
+            ambientHome: "/home/user/.t3",
+          });
+          assert.equal(home, path.resolve("/home/user/.dispatch-explicit"));
+        }).pipe(Effect.scoped),
+      );
+
+      it.effect("uses fresh worktree .dispatch ahead of an ambient T3CODE_HOME", () =>
         Effect.gen(function* () {
           const path = yield* Path.Path;
           const root = yield* makeWorktree;
@@ -1401,7 +1416,37 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
             cwd: root,
             ambientHome: "/home/user/.t3",
           });
+          assert.equal(home, path.join(path.resolve(root), ".dispatch"));
+        }).pipe(Effect.scoped),
+      );
+
+      it.effect("adopts a legacy worktree .t3 in place", () =>
+        Effect.gen(function* () {
+          const path = yield* Path.Path;
+          const root = yield* makeWorktree;
+          NodeFS.mkdirSync(NodePath.join(root, ".t3"));
+          const home = yield* spawnedHome({
+            t3Home: undefined,
+            cwd: root,
+            ambientHome: "/home/user/.t3",
+          });
           assert.equal(home, path.join(path.resolve(root), ".t3"));
+          assert.isFalse(NodeFS.existsSync(NodePath.join(root, ".dispatch")));
+        }).pipe(Effect.scoped),
+      );
+
+      it.effect("prefers worktree .dispatch when canonical and legacy homes both exist", () =>
+        Effect.gen(function* () {
+          const path = yield* Path.Path;
+          const root = yield* makeWorktree;
+          NodeFS.mkdirSync(NodePath.join(root, ".t3"));
+          NodeFS.mkdirSync(NodePath.join(root, ".dispatch"));
+          const home = yield* spawnedHome({
+            t3Home: undefined,
+            cwd: root,
+            ambientHome: "/home/user/.t3",
+          });
+          assert.equal(home, path.join(path.resolve(root), ".dispatch"));
         }).pipe(Effect.scoped),
       );
 
