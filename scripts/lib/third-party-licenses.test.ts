@@ -222,6 +222,7 @@ describe("third-party license generation", () => {
       configFile: fixture.configFile,
       packageManifests: [{ bundle: "web", path: fixture.appManifest }],
     });
+    expect(plugin.name).toBe("dispatch:third-party-licenses");
     let middleware:
       | ((
           request: { readonly url: string },

@@ -52,11 +52,13 @@ describe("remote helper lifecycle", () => {
     Effect.gen(function* () {
       if ((yield* HostProcessPlatform) === "win32") return;
       yield* Effect.promise(async () => {
-        const home = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-remote-script-"));
+        const home = await NodeFSP.mkdtemp(
+          NodePath.join(NodeOS.tmpdir(), "dispatch-remote-script-"),
+        );
         const bin = NodePath.join(home, "bin");
         await NodeFSP.mkdir(bin);
         await NodeFSP.writeFile(NodePath.join(bin, "adb"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
-        const root = NodePath.join(home, ".t3/device");
+        const root = NodePath.join(home, ".dispatch/device");
         const hubDir = NodePath.join(root, `tools/expo-device-hub@${DEVICE_HUB_VERSION}`);
         const agentDir = NodePath.join(root, `tools/agent-device@${AGENT_DEVICE_VERSION}`);
         const hub = NodePath.join(hubDir, "node_modules/expo-device-hub/dist/server/cli.mjs");
@@ -216,5 +218,46 @@ else { const child=spawn(process.execPath,[process.argv[1],'serve'],{detached:tr
         }
       });
     }),
+  );
+
+  it.effect(
+    "uses Dispatch home for fresh remote state and adopts an existing legacy device home",
+    () =>
+      Effect.gen(function* () {
+        if ((yield* HostProcessPlatform) === "win32") return;
+        yield* Effect.promise(async () => {
+          const runStop = async (home: string, owner: string) => {
+            const file = NodePath.join(home, `${owner}-stop.cjs`);
+            await NodeFSP.writeFile(file, remoteDeviceScript(owner, "stop"));
+            await exec(process.execPath, [file], { env: { ...process.env, HOME: home } });
+          };
+
+          const freshHome = await NodeFSP.mkdtemp(
+            NodePath.join(NodeOS.tmpdir(), "dispatch-remote-fresh-"),
+          );
+          const legacyHome = await NodeFSP.mkdtemp(
+            NodePath.join(NodeOS.tmpdir(), "dispatch-remote-legacy-"),
+          );
+          try {
+            await runStop(freshHome, "fresh");
+            expect(
+              await NodeFSP.stat(NodePath.join(freshHome, ".dispatch/device/hosts/fresh")),
+            ).toBeTruthy();
+            await expect(NodeFSP.stat(NodePath.join(freshHome, ".t3/device"))).rejects.toThrow();
+
+            await NodeFSP.mkdir(NodePath.join(legacyHome, ".t3/device"), { recursive: true });
+            await runStop(legacyHome, "legacy");
+            expect(
+              await NodeFSP.stat(NodePath.join(legacyHome, ".t3/device/hosts/legacy")),
+            ).toBeTruthy();
+            await expect(
+              NodeFSP.stat(NodePath.join(legacyHome, ".dispatch/device")),
+            ).rejects.toThrow();
+          } finally {
+            await NodeFSP.rm(freshHome, { recursive: true, force: true });
+            await NodeFSP.rm(legacyHome, { recursive: true, force: true });
+          }
+        });
+      }),
   );
 });

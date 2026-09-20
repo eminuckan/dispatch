@@ -39,6 +39,16 @@ export class NativeClientError extends Schema.TaggedError<NativeClientError>()(
   { message: Schema.String },
 ) {}
 
+export function nativeClientRecordRelativePaths(
+  platform: NativePlatform,
+  deviceDigest: string,
+): { readonly current: string; readonly legacy: string } {
+  return {
+    current: `.cache/dispatch/native-clients/${platform}/${deviceDigest}.json`,
+    legacy: `.cache/t3code/native-clients/${platform}/${deviceDigest}.json`,
+  };
+}
+
 export function clientStatus(
   fingerprint: string,
   binary: string | null,
@@ -305,23 +315,25 @@ const main = Command.make(
       return yield* new NativeClientError({
         message: "HOME or USERPROFILE must be set to store native client records.",
       });
-    const recordPath = path.join(
-      home,
-      ".cache/t3code/native-clients",
-      platform,
-      `${yield* digest(device)}.json`,
-    );
-    const operations = {
-      fingerprint: fingerprint(platform),
-      installedBinary: installedBinary(platform, device),
-      readRecord: fs.readFileString(recordPath).pipe(
+    const recordPaths = nativeClientRecordRelativePaths(platform, yield* digest(device));
+    const recordPath = path.join(home, recordPaths.current);
+    const legacyRecordPath = path.join(home, recordPaths.legacy);
+    const readRecordAt = (file: string) =>
+      fs.readFileString(file).pipe(
         Effect.flatMap(decodeRecord),
         Effect.catchTag("SchemaError", () => Effect.succeed(null)),
         Effect.catchIf(
           (error) => error.reason._tag === "NotFound",
           () => Effect.succeed(null),
         ),
-      ),
+      );
+    const operations = {
+      fingerprint: fingerprint(platform),
+      installedBinary: installedBinary(platform, device),
+      readRecord: Effect.gen(function* () {
+        const record = yield* readRecordAt(recordPath);
+        return record ?? (yield* readRecordAt(legacyRecordPath));
+      }),
       build: Effect.gen(function* () {
         yield* Console.error(
           "Native client is missing, stale, or unverified. Building and installing a development client...",
