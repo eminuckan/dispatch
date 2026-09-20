@@ -9,6 +9,7 @@ import {
 import * as NodeCrypto from "node:crypto";
 import {
   CommandId,
+  EventId,
   MessageId,
   ThreadId,
   TeamError,
@@ -17,6 +18,7 @@ import {
   type TeamRun,
   type TeamExecutionTurn,
   type TeamModelProfile,
+  type TeamPeerMessage,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -59,6 +61,9 @@ import {
 } from "../assets/AttachmentUpload.ts";
 
 const encode = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
+const TEAM_MESSAGE_RETRY_LIMIT = 3;
+const teammateMessagingGuidance =
+  "Use team_read_messages between meaningful steps and before finishing to pick up durable teammate messages. Use team_send_message for concrete questions, findings, or corrections; set replyRequested only when an answer is needed and use inReplyTo when replying. Team messages coordinate existing work only: they do not answer user permissions and do not start or wake teammate turns. If your final response has a required structured format, keep the final assistant message exactly in that format.";
 const asyncQuestionRequestId = (activity: { readonly kind: string; readonly payload: unknown }) => {
   if (
     activity.kind !== "user-input.requested" ||
@@ -575,7 +580,7 @@ export const make = Effect.gen(function* () {
           run,
           "plan",
           null,
-          `You are the fixed lead of a managed team. Never spawn native subagents. Inspect the repository but do not implement yet. Return ONLY JSON matching {acceptance:string[],tasks:[{id,objective,acceptance:string[],dependencies:string[],profileId,context}],rationale}. Choose the smallest useful team, with independent write scopes. Define 1-20 stable, observable acceptance criteria for the COMPLETE user objective, including constraints and integration behavior. Do not weaken criteria to fit results. Every task needs concrete verification and a bounded write scope. If required information is missing, report the blocker rather than inventing requirements. Zero tasks means the lead will implement alone. Available worker profiles: ${encode(run.policy.profiles.filter((p) => p.worker))}. Objective: ${run.objective}`,
+          `You are the fixed lead of a managed team. Never spawn native subagents. Inspect the repository but do not implement yet. ${teammateMessagingGuidance} Return ONLY JSON matching {acceptance:string[],tasks:[{id,objective,acceptance:string[],dependencies:string[],profileId,context}],rationale}. Choose the smallest useful team, with independent write scopes. Define 1-20 stable, observable acceptance criteria for the COMPLETE user objective, including constraints and integration behavior. Do not weaken criteria to fit results. Every task needs concrete verification and a bounded write scope. If required information is missing, report the blocker rather than inventing requirements. Zero tasks means the lead will implement alone. Available worker profiles: ${encode(run.policy.profiles.filter((p) => p.worker))}. Objective: ${run.objective}`,
         );
       if (plan.status !== "settled") return run;
       if (!plan.succeeded)
@@ -662,7 +667,7 @@ export const make = Effect.gen(function* () {
             run,
             "review",
             workerTurn.id,
-            `Review worker output against every acceptance criterion. Do not spawn subagents or modify the worker worktree. Inspect files at ${worker.value.worktreePath}. Return ONLY JSON {action:"accept"|"correct",summary:string,checks:[{criterionIndex:number,criterion:string,command:string,args:string[]}]}. For accept, provide a reproducible non-destructive check for EVERY criterion. criterionIndex MUST be its zero-based index in the acceptance array; do not infer new criteria. Checks execute in the worker worktree without a shell. For correct, identify the unmet criterion, observed failure, and a materially different next action in summary. Never resend a previous correction unchanged. Worker contract and output: ${encode(review)}`,
+            `Review worker output against every acceptance criterion. Do not spawn subagents or modify the worker worktree. Inspect files at ${worker.value.worktreePath}. ${teammateMessagingGuidance} Return ONLY JSON {action:"accept"|"correct",summary:string,checks:[{criterionIndex:number,criterion:string,command:string,args:string[]}]}. For accept, provide a reproducible non-destructive check for EVERY criterion. criterionIndex MUST be its zero-based index in the acceptance array; do not infer new criteria. Checks execute in the worker worktree without a shell. For correct, identify the unmet criterion, observed failure, and a materially different next action in summary. Never resend a previous correction unchanged. Worker contract and output: ${encode(review)}`,
           );
         }
         if (reviewTurn.status !== "settled") return run;
@@ -686,7 +691,7 @@ export const make = Effect.gen(function* () {
             run,
             "review",
             workerTurn.id,
-            `Your review could not be matched to the acceptance contract. This is a review protocol repair, NOT a worker failure. Return ONLY JSON {action:"accept"|"correct",summary:string,checks:[{criterionIndex:number,criterion:string,command:string,args:string[]}]}. Include checks covering EACH zero-based criterionIndex in ${encode(review.acceptance)}. Reuse your valid prior checks where appropriate. Prior review: ${reviewTurn.result}`,
+            `Your review could not be matched to the acceptance contract. This is a review protocol repair, NOT a worker failure. ${teammateMessagingGuidance} Return ONLY JSON {action:"accept"|"correct",summary:string,checks:[{criterionIndex:number,criterion:string,command:string,args:string[]}]}. Include checks covering EACH zero-based criterionIndex in ${encode(review.acceptance)}. Reuse your valid prior checks where appropriate. Prior review: ${reviewTurn.result}`,
           );
         }
         const evidence =
@@ -793,7 +798,7 @@ export const make = Effect.gen(function* () {
           run,
           "worker",
           task.id,
-          `You are a managed worker. Never spawn native subagents. Follow the persisted contract below, which remains authoritative after compaction. Work only in your assigned isolated worktree. Inspect accepted dependency results and integrate their commits if needed. Run relevant checks and report their results and changed files. Commit your own changes with an English message; do not push. Report the commit ID, evidence for each criterion, what changed since the previous attempt, and any unresolved limitations. If blocked, explain the missing input or dependency; do not repeat an unsuccessful action. Contract:\n${contextPack(run, task)}`,
+          `You are a managed worker. Never spawn native subagents. Follow the persisted contract below, which remains authoritative after compaction. Work only in your assigned isolated worktree. Inspect accepted dependency results and integrate their commits if needed. Run relevant checks and report their results and changed files. Commit your own changes with an English message; do not push. ${teammateMessagingGuidance} Report the commit ID, evidence for each criterion, what changed since the previous attempt, and any unresolved limitations. If blocked, explain the missing input or dependency; do not repeat an unsuccessful action. Contract:\n${contextPack(run, task)}`,
         );
       }
     }
@@ -815,7 +820,7 @@ export const make = Effect.gen(function* () {
         run,
         "integrate",
         null,
-        `Finish and verify the combined objective in your isolated lead worktree. Never spawn native subagents. Integrate accepted worker commits, resolve conflicts, and run relevant combined checks. If no workers were needed, implement directly. Preserve the original checkout; do not push. Return ONLY JSON {action:"accept"|"correct",summary:string,checks:[{criterionIndex:number,criterion:string,command:string,args:string[]}]}. Verify EVERY persisted run acceptance criterion using its zero-based criterionIndex, without changing or dropping criteria. Provide meaningful non-destructive combined verification commands; commands run without a shell in your worktree. Objective: ${run.objective}. Run acceptance: ${encode(run.execution!.acceptance ?? [])}. Accepted worker artifacts: ${encode(artifacts)}`,
+        `Finish and verify the combined objective in your isolated lead worktree. Never spawn native subagents. Integrate accepted worker commits, resolve conflicts, and run relevant combined checks. If no workers were needed, implement directly. Preserve the original checkout; do not push. ${teammateMessagingGuidance} Return ONLY JSON {action:"accept"|"correct",summary:string,checks:[{criterionIndex:number,criterion:string,command:string,args:string[]}]}. Verify EVERY persisted run acceptance criterion using its zero-based criterionIndex, without changing or dropping criteria. Provide meaningful non-destructive combined verification commands; commands run without a shell in your worktree. Objective: ${run.objective}. Run acceptance: ${encode(run.execution!.acceptance ?? [])}. Accepted worker artifacts: ${encode(artifacts)}`,
       );
     }
     const final = run.execution!.turns.findLast((t) => t.role === "integrate");
@@ -871,7 +876,7 @@ export const make = Effect.gen(function* () {
           run,
           "integrate",
           null,
-          `Correct the combined result in your existing lead worktree. Do not delegate or change acceptance criteria. Do not repeat a failed action unchanged. Return ONLY JSON {action:"accept"|"correct",summary:string,checks:[{criterionIndex:number,criterion:string,command:string,args:string[]}]}. Verify EVERY criterion with a meaningful non-destructive check. If blocked, return correct and explain the missing input. Objective: ${run.objective}. Persisted acceptance: ${encode(criteria)}. Previous result and independently executed evidence: ${correction}`,
+          `Correct the combined result in your existing lead worktree. Do not delegate or change acceptance criteria. Do not repeat a failed action unchanged. ${teammateMessagingGuidance} Return ONLY JSON {action:"accept"|"correct",summary:string,checks:[{criterionIndex:number,criterion:string,command:string,args:string[]}]}. Verify EVERY criterion with a meaningful non-destructive check. If blocked, return correct and explain the missing input. Objective: ${run.objective}. Persisted acceptance: ${encode(criteria)}. Previous result and independently executed evidence: ${correction}`,
         );
       }
       return yield* store.update(
@@ -1002,6 +1007,260 @@ export const make = Effect.gen(function* () {
       "Managed team attachments are no longer available. Start a new team with fresh uploads.",
     );
   });
+  const currentMemberThreadIds = (run: TeamRun): ReadonlyArray<ThreadId> => {
+    if (!run.execution) return [];
+    return [
+      run.execution.leadThreadId,
+      ...run.tasks.flatMap((task) => (task.threadId ? [task.threadId] : [])),
+    ].filter((threadId, index, entries) => entries.indexOf(threadId) === index);
+  };
+  const peerRun = Effect.fnUntraced(function* (threadId: ThreadId) {
+    const run = yield* store.findByThread(threadId);
+    if (!run?.execution || !currentMemberThreadIds(run).includes(threadId))
+      return yield* new TeamError({
+        code: "not-found",
+        message: "This provider thread is not a current team member.",
+      });
+    return run;
+  });
+  const sameMessage = (
+    message: TeamPeerMessage,
+    fromThreadId: ThreadId,
+    input: {
+      readonly id: string;
+      readonly toThreadId: ThreadId;
+      readonly text: string;
+      readonly replyRequested: boolean;
+      readonly inReplyTo?: string | undefined;
+    },
+  ) =>
+    message.fromThreadId === fromThreadId &&
+    message.toThreadId === input.toThreadId &&
+    message.text === input.text &&
+    message.replyRequested === input.replyRequested &&
+    message.inReplyTo === input.inReplyTo &&
+    message.origin === undefined &&
+    message.sourceSequence === undefined;
+  const appendPeerMessageActivity = Effect.fnUntraced(function* (
+    run: TeamRun,
+    message: TeamPeerMessage,
+  ) {
+    for (const threadId of [message.fromThreadId, message.toThreadId]) {
+      const digest = NodeCrypto.createHash("sha256")
+        .update(`${run.id}\0${message.id}\0${threadId}`)
+        .digest("hex")
+        .slice(0, 24);
+      const id = `team-message-${digest}`;
+      yield* engine
+        .dispatch({
+          type: "thread.activity.append",
+          commandId: CommandId.make(id),
+          threadId,
+          activity: {
+            id: EventId.make(id),
+            kind: "team.message",
+            tone: "info",
+            summary:
+              threadId === message.fromThreadId
+                ? "Sent message to teammate"
+                : "Message from teammate",
+            payload: {
+              messageId: message.id,
+              threadId:
+                threadId === message.fromThreadId ? message.toThreadId : message.fromThreadId,
+              detail: message.text,
+              replyRequested: message.replyRequested,
+              ...(message.inReplyTo === undefined ? {} : { inReplyTo: message.inReplyTo }),
+            },
+            turnId: null,
+            createdAt: message.createdAt,
+          },
+          createdAt: message.createdAt,
+        })
+        .pipe(Effect.ignoreCause({ log: true }));
+    }
+  });
+  const sendMessage = Effect.fnUntraced(function* (
+    fromThreadId: ThreadId,
+    input: {
+      readonly id: string;
+      readonly toThreadId: ThreadId;
+      readonly text: string;
+      readonly replyRequested: boolean;
+      readonly inReplyTo?: string | undefined;
+    },
+  ) {
+    const createdAt = yield* now;
+    for (let attempt = 0; attempt < TEAM_MESSAGE_RETRY_LIMIT; attempt++) {
+      const run = yield* peerRun(fromThreadId);
+      if (["completed", "cancelled", "failed", "paused"].includes(run.status))
+        return yield* new TeamError({
+          code: "conflict",
+          message: "Resume an active team before sending agent messages.",
+        });
+      if (
+        input.toThreadId === fromThreadId ||
+        !currentMemberThreadIds(run).includes(input.toThreadId)
+      )
+        return yield* new TeamError({
+          code: "invalid",
+          message: "Recipient must be another current member of the same team.",
+        });
+      if (
+        input.inReplyTo !== undefined &&
+        !run.messages?.some(
+          (message) =>
+            message.id === input.inReplyTo &&
+            message.fromThreadId === input.toThreadId &&
+            message.toThreadId === fromThreadId,
+        )
+      )
+        return yield* new TeamError({
+          code: "invalid",
+          message: "Reply must refer to a message received from this teammate.",
+        });
+      const existing = run.messages?.find((message) => message.id === input.id);
+      if (existing) {
+        if (!sameMessage(existing, fromThreadId, input))
+          return yield* new TeamError({
+            code: "conflict",
+            message: "Message ID already belongs to different content.",
+          });
+        yield* appendPeerMessageActivity(run, existing);
+        return existing;
+      }
+      const message: TeamPeerMessage = {
+        ...input,
+        fromThreadId,
+        createdAt,
+        readAt: null,
+      };
+      const persisted = yield* store
+        .update(
+          run.id,
+          run.revision,
+          (current) => ({
+            ...current,
+            messages: [...(current.messages ?? []), message],
+          }),
+          "peer-message",
+        )
+        .pipe(
+          Effect.map((updated) => ({ _tag: "updated" as const, updated })),
+          Effect.catch((error) =>
+            error.code === "conflict"
+              ? Effect.succeed({ _tag: "retry" as const })
+              : Effect.fail(error),
+          ),
+        );
+      if (persisted._tag === "retry") continue;
+      const stored =
+        persisted.updated.messages?.find((entry) => entry.id === message.id) ?? message;
+      yield* appendPeerMessageActivity(persisted.updated, stored);
+      return stored;
+    }
+    const current = yield* peerRun(fromThreadId);
+    const existing = current.messages?.find((message) => message.id === input.id);
+    if (existing) {
+      if (!sameMessage(existing, fromThreadId, input))
+        return yield* new TeamError({
+          code: "conflict",
+          message: "Message ID already belongs to different content.",
+        });
+      yield* appendPeerMessageActivity(current, existing);
+      return existing;
+    }
+    return yield* new TeamError({
+      code: "conflict",
+      message: "Team changed while sending the message. Retry with the same message ID.",
+    });
+  }, lock.withPermits(1));
+  const readMessages = Effect.fnUntraced(function* (threadId: ThreadId, includeRead = false) {
+    const initialRun = yield* peerRun(threadId);
+    const inbox = (initialRun.messages ?? []).filter((message) => message.toThreadId === threadId);
+    const messages = includeRead
+      ? inbox.slice(-40)
+      : inbox.filter((message) => message.readAt === null).slice(0, 40);
+    const unreadIds = new Set(
+      messages.filter((message) => message.readAt === null).map((message) => message.id),
+    );
+    if (unreadIds.size > 0) {
+      const readAt = yield* now;
+      let acknowledged = false;
+      for (let attempt = 0; attempt < TEAM_MESSAGE_RETRY_LIMIT; attempt++) {
+        const current = yield* peerRun(threadId);
+        const stillUnread = (current.messages ?? []).some(
+          (message) =>
+            message.toThreadId === threadId && unreadIds.has(message.id) && message.readAt === null,
+        );
+        if (!stillUnread) {
+          acknowledged = true;
+          break;
+        }
+        const persisted = yield* store
+          .update(
+            current.id,
+            current.revision,
+            (run) => ({
+              ...run,
+              messages: run.messages?.map((message) =>
+                message.toThreadId === threadId &&
+                unreadIds.has(message.id) &&
+                message.readAt === null
+                  ? { ...message, readAt }
+                  : message,
+              ),
+            }),
+            "peer-messages-read",
+          )
+          .pipe(
+            Effect.as("updated" as const),
+            Effect.catch((error) =>
+              error.code === "conflict" ? Effect.succeed("retry" as const) : Effect.fail(error),
+            ),
+          );
+        if (persisted === "updated") {
+          acknowledged = true;
+          break;
+        }
+      }
+      if (!acknowledged)
+        return yield* new TeamError({
+          code: "conflict",
+          message: "Team changed while acknowledging messages. Read them again.",
+        });
+    }
+    const run = yield* peerRun(threadId);
+    const members = yield* Effect.forEach(currentMemberThreadIds(run), (memberThreadId) =>
+      projection.getThreadDetailById(memberThreadId).pipe(
+        Effect.map((detail) => ({
+          threadId: memberThreadId,
+          role:
+            memberThreadId === run.execution!.leadThreadId
+              ? ("lead" as const)
+              : ("worker" as const),
+          state: Option.isSome(detail) ? (detail.value.latestTurn?.state ?? "idle") : "idle",
+          activity: Option.isSome(detail)
+            ? (detail.value.activities.at(-1)?.summary.slice(0, 1000) ?? "")
+            : "",
+          needsUserInput: Option.isSome(detail) && openRequests(detail.value).size > 0,
+          summary: Option.isSome(detail)
+            ? (detail.value.messages
+                .findLast((message) => message.role === "assistant")
+                ?.text.slice(-1500) ?? "")
+            : "",
+        })),
+        Effect.mapError(mapError),
+      ),
+    );
+    return {
+      runId: run.id,
+      status: run.status,
+      leadThreadId: run.execution!.leadThreadId,
+      members,
+      messages,
+    };
+  }, lock.withPermits(1));
   const start = Effect.fn("TeamRuntime.start")(function* (input: TeamStart) {
     const settings = yield* router.settings;
     const attachments = input.attachments ?? [];
@@ -1160,6 +1419,8 @@ export const make = Effect.gen(function* () {
         );
   }, schedulerLock.withPermits(1));
   return {
+    sendMessage,
+    readMessages,
     start,
     control,
     tick,

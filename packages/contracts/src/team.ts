@@ -139,6 +139,19 @@ export const TeamExecution = Schema.Struct({
   phase: Schema.Literals(["plan", "workers", "integrate", "done"]),
   notice: Schema.NullOr(Schema.String),
 });
+export const TeamPeerMessage = Schema.Struct({
+  id: Id,
+  fromThreadId: ThreadId,
+  toThreadId: ThreadId,
+  text: TrimmedNonEmptyString.check(Schema.isMaxLength(8000)),
+  replyRequested: Schema.Boolean,
+  inReplyTo: Schema.optional(Id),
+  origin: Schema.optional(Schema.Literal("progress")),
+  sourceSequence: Schema.optional(Count),
+  createdAt: Schema.String,
+  readAt: Schema.NullOr(Schema.String),
+});
+export type TeamPeerMessage = typeof TeamPeerMessage.Type;
 export const TeamRun = Schema.Struct({
   id: Id,
   commandId: Id,
@@ -158,6 +171,7 @@ export const TeamRun = Schema.Struct({
   ]),
   tasks: Schema.Array(TeamTask),
   decisions: Schema.Array(Schema.String),
+  messages: Schema.optional(Schema.Array(TeamPeerMessage)),
   createdAt: Schema.String,
   updatedAt: Schema.String,
   attachments: Schema.optional(

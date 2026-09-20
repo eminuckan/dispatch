@@ -40,6 +40,8 @@ import {
   DeviceScreenshotToolkit,
   DeviceStandardToolkit,
 } from "./toolkits/device/tools.ts";
+import { TeamToolkitHandlersLive } from "./toolkits/team/handlers.ts";
+import { TeamToolkit } from "./toolkits/team/tools.ts";
 
 const unauthorized = HttpServerResponse.jsonUnsafe(
   {
@@ -621,6 +623,10 @@ export const DeviceToolkitRegistrationLive = Layer.mergeAll(
   DeviceScreenshotRegistrationLive,
 );
 
+export const TeamToolkitRegistrationLive = McpServer.toolkit(TeamToolkit).pipe(
+  Layer.provide(TeamToolkitHandlersLive),
+);
+
 const McpTransportLive = McpServer.layerHttp({
   name: "Dispatch",
   version: packageJson.version,
@@ -629,6 +635,7 @@ const McpTransportLive = McpServer.layerHttp({
 }).pipe(Layer.provide(McpAuthMiddlewareLive));
 
 export const layer = Layer.mergeAll(
+  TeamToolkitRegistrationLive,
   PreviewToolkitRegistrationLive,
   PullRequestsToolkitRegistrationLive,
   DeviceToolkitRegistrationLive,

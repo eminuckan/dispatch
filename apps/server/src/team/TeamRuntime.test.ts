@@ -94,6 +94,45 @@ const initial: TeamRun = {
     notice: null,
   },
 };
+function mailboxRun(
+  id: string,
+  messages: NonNullable<TeamRun["messages"]> = [],
+): { run: TeamRun; leadThreadId: ThreadId; workerThreadId: ThreadId } {
+  const leadThreadId = ThreadId.make(`team-${id}-lead`);
+  const workerThreadId = ThreadId.make(`team-${id}-worker`);
+  return {
+    leadThreadId,
+    workerThreadId,
+    run: {
+      ...initial,
+      id,
+      commandId: `start-${id}`,
+      status: "running",
+      tasks: [
+        {
+          id: "edit",
+          objective: "Edit the runtime boundary",
+          acceptance: ["Boundary is verified"],
+          dependencies: [],
+          profileId: "p",
+          status: "running",
+          generation: 0,
+          attempts: 1,
+          threadId: workerThreadId,
+          context: "contract",
+          result: null,
+        },
+      ],
+      messages,
+      execution: {
+        ...initial.execution!,
+        leadThreadId,
+        turns: [],
+        phase: "workers",
+      },
+    },
+  };
+}
 function fixture(
   failAcknowledgement = false,
   driver = "codex",
@@ -453,6 +492,317 @@ function fixture(
     assessedDrafts,
   };
 }
+
+it.effect("persists validated peer messages without creating teammate execution turns", () => {
+  const f = fixture();
+  return Effect.gen(function* () {
+    const store = yield* Store.make;
+    yield* store.create(initial);
+    const runtime = yield* make.pipe(
+      Effect.provideService(Store.TeamStore, store),
+      Effect.provide(f.layers),
+    );
+    yield* runtime.tick();
+    const plan = f.commands.find((command) => command.type === "thread.turn.start");
+    if (plan?.type !== "thread.turn.start") throw new Error("Expected plan");
+    expect(plan.message.text).toContain("team_read_messages");
+    expect(plan.message.text).toContain("team_send_message");
+    expect(plan.message.text).toContain("do not start or wake teammate turns");
+    f.complete(
+      plan,
+      '{"acceptance":["Combined result"],"tasks":[{"id":"edit","objective":"Edit label","acceptance":["Exact label check"],"dependencies":[],"profileId":"p","context":"contract"}],"rationale":"worker"}',
+    );
+    yield* runtime.tick();
+    const starts = f.commands.filter(
+      (command): command is Extract<OrchestrationCommand, { type: "thread.turn.start" }> =>
+        command.type === "thread.turn.start",
+    );
+    const worker = starts[1];
+    if (!worker) throw new Error("Expected worker");
+    expect(worker.message.text).toContain("team_read_messages");
+    expect(worker.message.text).toContain("team_send_message");
+
+    const question = {
+      id: "boundary-question",
+      toThreadId: plan.threadId,
+      text: "Does cancellation need to terminate the owned child process?",
+      replyRequested: true,
+    };
+    const sent = yield* runtime.sendMessage(worker.threadId, question);
+    expect(sent.fromThreadId).toBe(worker.threadId);
+    expect(sent.toThreadId).toBe(plan.threadId);
+    expect((yield* runtime.sendMessage(worker.threadId, question)).id).toBe(question.id);
+    expect((yield* store.get(initial.id)).messages).toHaveLength(1);
+
+    const changed = yield* runtime
+      .sendMessage(worker.threadId, { ...question, text: "Changed content" })
+      .pipe(Effect.flip);
+    expect(changed.code).toBe("conflict");
+    const wrongReplyDirection = yield* runtime
+      .sendMessage(worker.threadId, {
+        id: "wrong-reply",
+        toThreadId: plan.threadId,
+        text: "This was my own message.",
+        replyRequested: false,
+        inReplyTo: question.id,
+      })
+      .pipe(Effect.flip);
+    expect(wrongReplyDirection.code).toBe("invalid");
+    const selfSend = yield* runtime
+      .sendMessage(worker.threadId, {
+        id: "self",
+        toThreadId: worker.threadId,
+        text: "Self message",
+        replyRequested: false,
+      })
+      .pipe(Effect.flip);
+    expect(selfSend.code).toBe("invalid");
+    const outside = yield* runtime
+      .sendMessage(worker.threadId, {
+        id: "outside",
+        toThreadId: ThreadId.make("other-team"),
+        text: "Outside recipient",
+        replyRequested: false,
+      })
+      .pipe(Effect.flip);
+    expect(outside.code).toBe("invalid");
+    const foreign = yield* runtime
+      .sendMessage(ThreadId.make("foreign-thread"), question)
+      .pipe(Effect.flip);
+    expect(foreign.code).toBe("not-found");
+
+    const leadInbox = yield* runtime.readMessages(plan.threadId);
+    expect(leadInbox.messages.map((message) => message.id)).toEqual([question.id]);
+    expect(leadInbox.members.map((member) => member.threadId)).toEqual([
+      plan.threadId,
+      worker.threadId,
+    ]);
+    expect(leadInbox.members.every((member) => member.needsUserInput === false)).toBe(true);
+    const persistedQuestion = (yield* store.get(initial.id)).messages?.find(
+      (message) => message.id === question.id,
+    );
+    expect(persistedQuestion?.readAt).not.toBeNull();
+
+    const reply = yield* runtime.sendMessage(plan.threadId, {
+      id: "boundary-reply",
+      toThreadId: worker.threadId,
+      text: "Yes. Exercise the real owned-process boundary.",
+      replyRequested: false,
+      inReplyTo: question.id,
+    });
+    expect(reply.inReplyTo).toBe(question.id);
+    expect(f.commands.filter((command) => command.type === "thread.turn.start")).toHaveLength(2);
+
+    const restarted = yield* make.pipe(
+      Effect.provideService(Store.TeamStore, store),
+      Effect.provide(f.layers),
+    );
+    expect(
+      (yield* restarted.readMessages(worker.threadId)).messages.map((message) => message.id),
+    ).toEqual([reply.id]);
+    expect((yield* restarted.readMessages(worker.threadId)).messages).toEqual([]);
+    expect(
+      (yield* restarted.readMessages(worker.threadId, true)).messages.map((message) => message.id),
+    ).toContain(reply.id);
+
+    let current = yield* store.get(initial.id);
+    const replacement = ThreadId.make("team-abc-replacement");
+    current = yield* store.update(
+      current.id,
+      current.revision,
+      (run) => ({
+        ...run,
+        tasks: run.tasks.map((task) =>
+          task.id === "edit" ? { ...task, threadId: replacement } : task,
+        ),
+      }),
+      "test-worker-handoff",
+    );
+    const staleSender = yield* restarted
+      .sendMessage(worker.threadId, {
+        id: "stale-worker",
+        toThreadId: plan.threadId,
+        text: "Old worker should no longer be a member.",
+        replyRequested: false,
+      })
+      .pipe(Effect.flip);
+    expect(staleSender.code).toBe("not-found");
+
+    const paused = yield* restarted.control({
+      id: current.id,
+      revision: current.revision,
+      action: "pause",
+    });
+    const pausedSend = yield* restarted
+      .sendMessage(replacement, {
+        id: "paused-send",
+        toThreadId: plan.threadId,
+        text: "Paused",
+        replyRequested: false,
+      })
+      .pipe(Effect.flip);
+    expect(pausedSend.code).toBe("conflict");
+    const resumed = yield* restarted.control({
+      id: paused.id,
+      revision: paused.revision,
+      action: "resume",
+    });
+    const cancelled = yield* restarted.control({
+      id: resumed.id,
+      revision: resumed.revision,
+      action: "cancel",
+    });
+    expect(cancelled.status).toBe("cancelled");
+    const terminalSend = yield* restarted
+      .sendMessage(plan.threadId, {
+        id: "terminal-send",
+        toThreadId: replacement,
+        text: "Terminal",
+        replyRequested: false,
+      })
+      .pipe(Effect.flip);
+    expect(terminalSend.code).toBe("conflict");
+    expect(f.commands.filter((command) => command.type === "thread.turn.start")).toHaveLength(2);
+  }).pipe(Effect.provide(runtimeInfrastructure));
+});
+
+it.effect("keeps message ID idempotency across a large durable mailbox", () => {
+  const messages: Array<NonNullable<TeamRun["messages"]>[number]> = [];
+  const { run, leadThreadId, workerThreadId } = mailboxRun("large-mailbox");
+  for (let index = 0; index < 205; index++)
+    messages.push({
+      id: `retained-${index}`,
+      fromThreadId: leadThreadId,
+      toThreadId: workerThreadId,
+      text: `message ${index}`,
+      replyRequested: false,
+      createdAt: date,
+      readAt: date,
+    });
+  const retainedRun = { ...run, messages };
+  const f = fixture();
+  return Effect.gen(function* () {
+    const store = yield* Store.make;
+    yield* store.create(retainedRun);
+    const runtime = yield* make.pipe(
+      Effect.provideService(Store.TeamStore, store),
+      Effect.provide(f.layers),
+    );
+    const replayed = yield* runtime.sendMessage(leadThreadId, {
+      id: "retained-0",
+      toThreadId: workerThreadId,
+      text: "message 0",
+      replyRequested: false,
+    });
+    expect(replayed.text).toBe("message 0");
+    expect((yield* store.get(run.id)).messages).toHaveLength(205);
+    const changed = yield* runtime
+      .sendMessage(leadThreadId, {
+        id: "retained-0",
+        toThreadId: workerThreadId,
+        text: "changed after many later messages",
+        replyRequested: false,
+      })
+      .pipe(Effect.flip);
+    expect(changed.code).toBe("conflict");
+    expect((yield* store.get(run.id)).messages).toHaveLength(205);
+  }).pipe(Effect.provide(runtimeInfrastructure));
+});
+
+it.effect("reads and durably acknowledges only the selected 40-message inbox window", () => {
+  const { run, leadThreadId, workerThreadId } = mailboxRun("read-window");
+  const messages: NonNullable<TeamRun["messages"]> = Array.from({ length: 45 }, (_, index) => ({
+    id: `unread-${index}`,
+    fromThreadId: leadThreadId,
+    toThreadId: workerThreadId,
+    text: `message ${index}`,
+    replyRequested: false,
+    createdAt: date,
+    readAt: null,
+  }));
+  const f = fixture();
+  return Effect.gen(function* () {
+    const store = yield* Store.make;
+    yield* store.create({ ...run, messages });
+    const runtime = yield* make.pipe(
+      Effect.provideService(Store.TeamStore, store),
+      Effect.provide(f.layers),
+    );
+    const first = yield* runtime.readMessages(workerThreadId);
+    expect(first.messages).toHaveLength(40);
+    expect(first.messages[0]?.id).toBe("unread-0");
+    expect(first.messages.at(-1)?.id).toBe("unread-39");
+    let persisted = yield* store.get(run.id);
+    expect(
+      persisted.messages?.filter((message) => message.readAt === null).map((message) => message.id),
+    ).toEqual(["unread-40", "unread-41", "unread-42", "unread-43", "unread-44"]);
+
+    const restarted = yield* make.pipe(
+      Effect.provideService(Store.TeamStore, store),
+      Effect.provide(f.layers),
+    );
+    expect(
+      (yield* restarted.readMessages(workerThreadId)).messages.map((message) => message.id),
+    ).toEqual(["unread-40", "unread-41", "unread-42", "unread-43", "unread-44"]);
+    expect((yield* restarted.readMessages(workerThreadId)).messages).toEqual([]);
+    const latest = yield* restarted.readMessages(workerThreadId, true);
+    expect(latest.messages).toHaveLength(40);
+    expect(latest.messages[0]?.id).toBe("unread-5");
+    expect(latest.messages.at(-1)?.id).toBe("unread-44");
+    persisted = yield* store.get(run.id);
+    expect(persisted.messages?.every((message) => message.readAt !== null)).toBe(true);
+  }).pipe(Effect.provide(runtimeInfrastructure));
+});
+
+it.effect("retries message send and exact read acknowledgement across revision conflicts", () => {
+  const { run, leadThreadId, workerThreadId } = mailboxRun("revision-race");
+  const f = fixture();
+  return Effect.gen(function* () {
+    const store = yield* Store.make;
+    yield* store.create(run);
+    let racePeerMessage = true;
+    let raceRead = true;
+    const racingUpdate: typeof store.update = (id, revision, change, event) =>
+      Effect.gen(function* () {
+        const race =
+          (event === "peer-message" && racePeerMessage) ||
+          (event === "peer-messages-read" && raceRead);
+        if (race) {
+          if (event === "peer-message") racePeerMessage = false;
+          else raceRead = false;
+          const current = yield* store.get(id);
+          yield* store.update(
+            id,
+            current.revision,
+            (value) => ({ ...value, decisions: [...value.decisions, `race:${event}`] }),
+            `test-${event}-race`,
+          );
+        }
+        return yield* store.update(id, revision, change, event);
+      });
+    const runtime = yield* make.pipe(
+      Effect.provideService(Store.TeamStore, { ...store, update: racingUpdate }),
+      Effect.provide(f.layers),
+    );
+
+    const sent = yield* runtime.sendMessage(leadThreadId, {
+      id: "race-message",
+      toThreadId: workerThreadId,
+      text: "survive a revision race",
+      replyRequested: false,
+    });
+    expect(sent.id).toBe("race-message");
+    expect((yield* store.get(run.id)).messages).toHaveLength(1);
+
+    const read = yield* runtime.readMessages(workerThreadId);
+    expect(read.messages.map((message) => message.id)).toEqual(["race-message"]);
+    const persisted = yield* store.get(run.id);
+    expect(persisted.messages?.[0]?.readAt).not.toBeNull();
+    expect(persisted.decisions).toContain("race:peer-message");
+    expect(persisted.decisions).toContain("race:peer-messages-read");
+  }).pipe(Effect.provide(runtimeInfrastructure));
+});
+
 it.effect(
   "dispatches a durable plan once and matches completion through the canonical request receipt",
   () => {
@@ -1218,6 +1568,11 @@ it.effect(
       yield* runtime.tick();
       finish(1, "Worker complete; commit abc.");
       yield* runtime.tick();
+      const reviewPrompt = f.commands[2];
+      if (reviewPrompt?.type !== "thread.turn.start") throw new Error("Expected review");
+      expect(reviewPrompt.message.text).toContain("team_read_messages");
+      expect(reviewPrompt.message.text).toContain("team_send_message");
+      expect(reviewPrompt.message.text).toContain("Return ONLY JSON");
       finish(
         2,
         '{"action":"accept","summary":"Looks correct","checks":[{"criterion":"Reworded label check","command":"python3","args":[]}]}',
@@ -1241,6 +1596,11 @@ it.effect(
       expect(run.tasks[0]?.status).toBe("accepted");
       expect(run.status).not.toBe("completed");
       expect(f.checks).toEqual(["python3"]);
+      const integratePrompt = f.commands[4];
+      if (integratePrompt?.type !== "thread.turn.start") throw new Error("Expected integration");
+      expect(integratePrompt.message.text).toContain("team_read_messages");
+      expect(integratePrompt.message.text).toContain("team_send_message");
+      expect(integratePrompt.message.text).toContain("Return ONLY JSON");
       finish(
         4,
         '{"action":"accept","summary":"Integrated and verified","checks":[{"criterion":"Combined result","command":"python3","args":[]}]}',
