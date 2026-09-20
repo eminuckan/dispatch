@@ -13,7 +13,7 @@ import {
 const FALLBACK_COOLDOWN = Duration.seconds(30);
 const MAX_FALLBACK_COOLDOWN = Duration.minutes(15);
 
-export const CredentialScope = Context.Reference<string>("t3/sourceControl/CredentialScope", {
+export const CredentialScope = Context.Reference<string>("dispatch/sourceControl/CredentialScope", {
   defaultValue: () => "",
 });
 
@@ -61,7 +61,7 @@ export class SourceControlRateLimit extends Context.Service<
     ) => Effect.Effect<void>;
     readonly recordSuccess: (input: RateLimitLease) => Effect.Effect<void>;
   }
->()("t3/sourceControl/SourceControlRateLimit") {}
+>()("dispatch/sourceControl/SourceControlRateLimit") {}
 
 function normalizedKey(key: RateLimitKey, scope: string): string {
   return `${key.provider}\0${key.host.trim().toLowerCase()}\0${scope}`;

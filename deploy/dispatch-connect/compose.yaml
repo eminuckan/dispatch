@@ -1,0 +1,55 @@
+services:
+  connect:
+    build:
+      context: ../..
+      dockerfile: deploy/dispatch-connect/Dockerfile
+    restart: unless-stopped
+    environment:
+      HOST: 0.0.0.0
+      PORT: 8787
+      DATABASE_URL: postgresql://dispatch:${POSTGRES_PASSWORD}@postgres:5432/dispatch_connect
+      BETTER_AUTH_URL: ${DISPATCH_CONNECT_PUBLIC_URL}
+      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET}
+      CONNECT_CREDENTIAL_SECRET: ${CONNECT_CREDENTIAL_SECRET}
+      CONNECT_ALLOWED_ORIGINS: ${CONNECT_ALLOWED_ORIGINS:-}
+      CONNECT_PAIRING_TTL_SECONDS: ${CONNECT_PAIRING_TTL_SECONDS:-600}
+      CONNECT_DEVICE_VERIFICATION_URL: ${CONNECT_DEVICE_VERIFICATION_URL:-}
+      CLOUDFLARE_ACCOUNT_ID: ${CLOUDFLARE_ACCOUNT_ID:-}
+      CLOUDFLARE_API_TOKEN: ${CLOUDFLARE_API_TOKEN:-}
+      CLOUDFLARE_ZONE_ID: ${CLOUDFLARE_ZONE_ID:-}
+      CONNECT_TUNNEL_DOMAIN: ${CONNECT_TUNNEL_DOMAIN:-}
+    expose:
+      - "8787"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:8787/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: dispatch_connect
+      POSTGRES_USER: dispatch
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - dispatch_connect_postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dispatch -d dispatch_connect"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  dispatch_connect_postgres:

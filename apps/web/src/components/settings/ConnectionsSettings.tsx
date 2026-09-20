@@ -77,6 +77,7 @@ import {
 import { FoldedSettingsSection } from "./FoldedSettingsSection";
 import { LoadBalancingSettings } from "./LoadBalancingSettings";
 import { GitHubRoutingSettings } from "./GitHubRoutingSettings";
+import { DispatchConnectAccountSettings } from "./DispatchConnectAccountSettings";
 import { Input } from "../ui/input";
 import { CommandShortcut } from "../ui/command";
 import {
@@ -124,6 +125,13 @@ import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { Textarea } from "../ui/textarea";
 import { getPairingTokenFromUrl, setPairingTokenOnUrl } from "../../pairingUrl";
 import { readHostedPairingRequest } from "../../hostedPairing";
+import {
+  formatDispatchConnectCode,
+  parseDispatchConnectCode,
+  redeemDispatchConnectPairing,
+  resolveDispatchConnectUrl,
+} from "../../connect/dispatchConnect";
+import { ensureDispatchConnectDevice } from "../../connect/device";
 import {
   createServerPairingCredential,
   revokeOtherServerClientSessions,
@@ -1667,6 +1675,7 @@ function EmptyRemoteEnvironments() {
 
 export function ConnectionsSettings() {
   const desktopBridge = window.desktopBridge;
+  const dispatchConnectUrl = resolveDispatchConnectUrl();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const { environments } = useEnvironments();
   const primaryEnvironment = usePrimaryEnvironment();
@@ -1800,9 +1809,10 @@ export function ConnectionsSettings() {
   >(null);
   const [isRevokingOtherDesktopClients, setIsRevokingOtherDesktopClients] = useState(false);
   const [addBackendDialogOpen, setAddBackendDialogOpen] = useState(false);
-  const [savedBackendMode, setSavedBackendMode] = useState<"remote" | "ssh">("remote");
+  const [savedBackendMode, setSavedBackendMode] = useState<"remote" | "connect" | "ssh">("remote");
   const [savedBackendHost, setSavedBackendHost] = useState("");
   const [savedBackendPairingCode, setSavedBackendPairingCode] = useState("");
+  const [dispatchConnectPairingCode, setDispatchConnectPairingCode] = useState("");
   const [savedBackendSshHost, setSavedBackendSshHost] = useState("");
   const [savedBackendSshUsername, setSavedBackendSshUsername] = useState("");
   const [savedBackendSshPort, setSavedBackendSshPort] = useState("");
@@ -1916,6 +1926,18 @@ export function ConnectionsSettings() {
   const desktopServerExposureState = desktopNetworkAccess.data?.serverExposureState ?? null;
   const desktopAdvertisedEndpoints =
     desktopNetworkAccess.data?.advertisedEndpoints ?? EMPTY_ADVERTISED_ENDPOINTS;
+  const dispatchConnectTailscaleEndpoint = useMemo(() => {
+    const endpoint = desktopAdvertisedEndpoints.find(
+      (candidate) => isTailscaleHttpsEndpoint(candidate) && candidate.status !== "unavailable",
+    );
+    return endpoint
+      ? {
+          kind: "tailscale" as const,
+          httpBaseUrl: endpoint.httpBaseUrl,
+          wsBaseUrl: endpoint.wsBaseUrl,
+        }
+      : null;
+  }, [desktopAdvertisedEndpoints]);
   const desktopServerExposureError =
     desktopServerExposureMutationError ?? desktopNetworkAccess.error;
   const desktopAccessManagementError =
@@ -2184,6 +2206,62 @@ export function ConnectionsSettings() {
       return;
     }
 
+    if (savedBackendMode === "connect") {
+      setIsAddingSavedBackend(true);
+      setSavedBackendError(null);
+      try {
+        if (!dispatchConnectUrl) {
+          throw new Error("Dispatch Connect is not configured for this build.");
+        }
+        const code = parseDispatchConnectCode(dispatchConnectPairingCode);
+        const deviceId = await ensureDispatchConnectDevice(dispatchConnectUrl);
+        const environment = await redeemDispatchConnectPairing({
+          baseUrl: dispatchConnectUrl,
+          deviceId,
+          code,
+        });
+
+        let lastError: unknown = null;
+        for (const endpoint of environment.endpoints) {
+          const result = await connectPairing({ host: endpoint.httpBaseUrl, pairingCode: code });
+          if (result._tag === "Success") {
+            setDispatchConnectPairingCode("");
+            setAddBackendDialogOpen(false);
+            toastManager.add({
+              type: "success",
+              title: "Environment connected",
+              description: `${environment.label} is ready through Dispatch Connect.`,
+            });
+            setIsAddingSavedBackend(false);
+            return;
+          }
+          if (isAtomCommandInterrupted(result)) {
+            setIsAddingSavedBackend(false);
+            return;
+          }
+          lastError = squashAtomCommandFailure(result);
+        }
+        throw lastError instanceof Error
+          ? lastError
+          : new Error("Could not reach the environment through Dispatch Connect.");
+      } catch (error) {
+        const message =
+          error instanceof Error
+            ? error.message
+            : "Could not add the Dispatch Connect environment.";
+        setSavedBackendError(message);
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Could not add environment",
+            description: message,
+          }),
+        );
+        setIsAddingSavedBackend(false);
+        return;
+      }
+    }
+
     setIsAddingSavedBackend(true);
     setSavedBackendError(null);
     let remotePairingInput: ReturnType<typeof parseRemotePairingFields>;
@@ -2239,6 +2317,8 @@ export function ConnectionsSettings() {
   }, [
     connectPairing,
     connectSavedBackendSshTarget,
+    dispatchConnectPairingCode,
+    dispatchConnectUrl,
     savedBackendHost,
     savedBackendMode,
     savedBackendPairingCode,
@@ -2444,7 +2524,7 @@ export function ConnectionsSettings() {
   }, []);
 
   const renderConnectionModeCard = (input: {
-    readonly mode: "remote" | "ssh";
+    readonly mode: "remote" | "connect" | "ssh";
     readonly title: string;
     readonly description: string;
     readonly icon?: ReactNode;
@@ -2528,6 +2608,40 @@ export function ConnectionsSettings() {
       >
         <PlusIcon className="size-3.5" />
         {isAddingSavedBackend ? "Adding…" : "Add environment"}
+      </Button>
+    </div>
+  );
+  const renderDispatchConnectModeBody = () => (
+    <div className="space-y-4">
+      <label className="block">
+        <span className="mb-1.5 block text-xs font-medium text-foreground">Environment code</span>
+        <Input
+          value={dispatchConnectPairingCode}
+          onChange={(event) =>
+            setDispatchConnectPairingCode(formatDispatchConnectCode(event.target.value))
+          }
+          placeholder="ABCD-EFGH-JKLM"
+          disabled={isAddingSavedBackend}
+          spellCheck={false}
+          autoCapitalize="characters"
+          autoComplete="off"
+        />
+        <span className="mt-1.5 block text-[11px] leading-relaxed text-muted-foreground">
+          Sign in to Dispatch Connect above, then enter the code shown by the environment. Tailscale
+          is tried first when available.
+        </span>
+      </label>
+      {savedBackendError ? <p className="text-xs text-destructive">{savedBackendError}</p> : null}
+      <Button
+        variant="outline"
+        className="w-full"
+        disabled={
+          isAddingSavedBackend || dispatchConnectPairingCode.replace(/-/gu, "").length !== 12
+        }
+        onClick={() => void handleAddSavedBackend()}
+      >
+        <PlusIcon className="size-3.5" />
+        {isAddingSavedBackend ? "Connecting…" : "Add environment"}
       </Button>
     </div>
   );
@@ -3526,6 +3640,7 @@ export function ConnectionsSettings() {
   return (
     <SettingsPageContainer width="wide">
       {primarySettings}
+      <DispatchConnectAccountSettings tailscaleEndpoint={dispatchConnectTailscaleEndpoint} />
       <SettingsSection
         {...searchableSetting("remote-environments")}
         title="Environments"
@@ -3581,6 +3696,14 @@ export function ConnectionsSettings() {
                         description: "Enter a backend host and pairing code.",
                         icon: <ChevronsLeftRightEllipsisIcon aria-hidden className="size-4" />,
                       })}
+                      {dispatchConnectUrl
+                        ? renderConnectionModeCard({
+                            mode: "connect",
+                            title: "Dispatch Connect",
+                            description: "Discover an environment with its 12-character code.",
+                            icon: <QrCodeIcon aria-hidden className="size-4" />,
+                          })
+                        : null}
                       {desktopBridge
                         ? renderConnectionModeCard({
                             mode: "ssh",
@@ -3592,7 +3715,11 @@ export function ConnectionsSettings() {
                         : null}
                     </div>
                     <AnimatedHeight>
-                      {savedBackendMode === "ssh" ? renderSshFields() : renderRemoteModeBody()}
+                      {savedBackendMode === "ssh"
+                        ? renderSshFields()
+                        : savedBackendMode === "connect"
+                          ? renderDispatchConnectModeBody()
+                          : renderRemoteModeBody()}
                     </AnimatedHeight>
                   </div>
                 </DialogPanel>

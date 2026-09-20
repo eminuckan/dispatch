@@ -1,9 +1,7 @@
-name: Deploy T3 Connect relay
+name: Legacy T3 Connect relay
 
 on:
-  push:
-    branches:
-      - main
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -17,6 +15,7 @@ concurrency:
 jobs:
   deploy_relay:
     name: Deploy production relay
+    if: ${{ vars.DISPATCH_RELEASE_ENABLE_T3_CONNECT == 'true' }}
     runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 15
     environment:

@@ -401,6 +401,6 @@ export const make = Effect.gen(function* () {
   return { settings, saveSettings, setSecret, assess, resolve, recover, suggestPool };
 });
 export class TeamRouter extends Context.Service<TeamRouter, Effect.Success<typeof make>>()(
-  "t3/team/TeamRouter",
+  "dispatch/team/TeamRouter",
 ) {}
 export const layer = Layer.effect(TeamRouter, make);

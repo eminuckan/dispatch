@@ -72,5 +72,5 @@ export class ProjectionThreadProposedPlanRepository extends Context.Service<
   ProjectionThreadProposedPlanRepository,
   ProjectionThreadProposedPlanRepositoryShape
 >()(
-  "t3/persistence/Services/ProjectionThreadProposedPlans/ProjectionThreadProposedPlanRepository",
+  "dispatch/persistence/Services/ProjectionThreadProposedPlans/ProjectionThreadProposedPlanRepository",
 ) {}

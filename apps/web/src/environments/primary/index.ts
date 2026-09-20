@@ -7,6 +7,11 @@ export {
 
 export {
   createServerPairingCredential,
+  configureDispatchConnectEnvironment,
+  createDispatchConnectPairingChallenge,
+  ensureDispatchConnectManagedEndpoint,
+  fetchDispatchConnectEnvironmentIdentity,
+  fetchDispatchConnectEnvironmentStatus,
   isPrimaryEnvironmentPairingCredentialRejectedError,
   peekPairingTokenFromUrl,
   PrimaryEnvironmentPairingCredentialRejectedError,

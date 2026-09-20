@@ -7,6 +7,7 @@ import {
   type StaticScreenProps,
 } from "@react-navigation/native";
 import { AsyncResult } from "effect/unstable/reactivity";
+import * as Cause from "effect/Cause";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Alert, Linking, Platform, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -18,6 +19,15 @@ import { ConnectionFormField } from "./ConnectionFormField";
 import { ConnectionSheetButton } from "./ConnectionSheetButton";
 import { buildPairingUrl, extractPairingUrlFromQrPayload, parsePairingUrl } from "./pairing";
 import { useRemoteConnections } from "../../state/use-remote-environment-registry";
+import { getDispatchConnectAuthClient } from "../connect/authClient";
+import { ensureDispatchConnectDevice } from "../connect/device";
+import {
+  formatDispatchConnectCode,
+  parseDispatchConnectCode,
+  readDispatchConnectCodeFromQrPayload,
+  redeemDispatchConnectPairing,
+  resolveDispatchConnectUrl,
+} from "../connect/dispatchConnect";
 
 type ConnectionsNewRouteParams = {
   readonly mode?: string;
@@ -45,8 +55,13 @@ export function ConnectionsNewRouteScreen({
     routePairingUrl.length > 0 &&
     (params.autoConnect === "1" || params.autoConnect === "true");
   const insets = useSafeAreaInsets();
+  const dispatchConnectUrl = resolveDispatchConnectUrl();
+  const dispatchConnectAuthClient = getDispatchConnectAuthClient();
   const [hostInput, setHostInput] = useState("");
   const [codeInput, setCodeInput] = useState("");
+  const [connectCodeInput, setConnectCodeInput] = useState("");
+  const [entryMode, setEntryMode] = useState<"direct" | "connect">("direct");
+  const [connectError, setConnectError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showScanner, setShowScanner] = useState(params.mode === "scan_qr");
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
@@ -55,7 +70,11 @@ export function ConnectionsNewRouteScreen({
 
   const headerIconColor = useUniwindTheme()["--color-icon"];
 
-  const connectDisabled = isSubmitting || hostInput.trim().length === 0;
+  const connectDisabled =
+    isSubmitting ||
+    (entryMode === "connect"
+      ? connectCodeInput.replace(/-/gu, "").length !== 12
+      : hostInput.trim().length === 0);
 
   useEffect(() => {
     const { host, code } = parsePairingUrl(connectionPairingUrl);
@@ -80,11 +99,18 @@ export function ConnectionsNewRouteScreen({
   }, [pairingConnectionError]);
 
   const handleHostChange = useCallback((value: string) => {
+    setConnectError(null);
     setHostInput(value);
   }, []);
 
   const handleCodeChange = useCallback((value: string) => {
+    setConnectError(null);
     setCodeInput(value);
+  }, []);
+
+  const handleConnectCodeChange = useCallback((value: string) => {
+    setConnectError(null);
+    setConnectCodeInput(formatDispatchConnectCode(value));
   }, []);
 
   const openScanner = useCallback(async () => {
@@ -133,8 +159,22 @@ export function ConnectionsNewRouteScreen({
       setScannerLocked(true);
 
       try {
+        const dispatchConnectCode = readDispatchConnectCodeFromQrPayload(data);
+        if (dispatchConnectCode) {
+          if (!dispatchConnectUrl) {
+            throw new Error("Dispatch Connect is not configured for this build.");
+          }
+          setEntryMode("connect");
+          setConnectError(null);
+          setConnectCodeInput(dispatchConnectCode);
+          setShowScanner(false);
+          return;
+        }
+
         const pairingUrl = extractPairingUrlFromQrPayload(data);
         const { host, code } = parsePairingUrl(pairingUrl);
+        setEntryMode("direct");
+        setConnectError(null);
         setHostInput(host);
         setCodeInput(code);
         onChangeConnectionPairingUrl(pairingUrl);
@@ -150,7 +190,7 @@ export function ConnectionsNewRouteScreen({
         }, 600);
       }
     },
-    [onChangeConnectionPairingUrl, scannerLocked],
+    [dispatchConnectUrl, onChangeConnectionPairingUrl, scannerLocked],
   );
 
   const connectAndClose = useCallback(
@@ -174,8 +214,70 @@ export function ConnectionsNewRouteScreen({
   );
 
   const handleSubmit = useCallback(async () => {
+    setConnectError(null);
     await connectAndClose(buildPairingUrl(hostInput, codeInput), false);
   }, [codeInput, connectAndClose, hostInput]);
+
+  const handleDispatchConnectSubmit = useCallback(async () => {
+    setConnectError(null);
+    setIsSubmitting(true);
+    try {
+      if (!dispatchConnectUrl || !dispatchConnectAuthClient) {
+        throw new Error("Dispatch Connect is not configured for this build.");
+      }
+      const session = await dispatchConnectAuthClient.getSession();
+      if (!session.data) {
+        throw new Error("Sign in to Dispatch Connect from Environments first.");
+      }
+      const cookie = await dispatchConnectAuthClient.getCookie();
+      if (!cookie) {
+        throw new Error("Dispatch Connect session is unavailable. Sign in again and retry.");
+      }
+      const code = parseDispatchConnectCode(connectCodeInput);
+      const deviceId = await ensureDispatchConnectDevice({ baseUrl: dispatchConnectUrl, cookie });
+      const environment = await redeemDispatchConnectPairing({
+        baseUrl: dispatchConnectUrl,
+        deviceId,
+        code,
+        cookie,
+      });
+
+      let lastFailure: unknown = null;
+      for (const endpoint of environment.endpoints) {
+        const pairingUrl = buildPairingUrl(endpoint.httpBaseUrl, code);
+        onChangeConnectionPairingUrl(pairingUrl);
+        const result = await onConnectPress(pairingUrl);
+        if (AsyncResult.isSuccess(result)) {
+          setConnectCodeInput("");
+          if (!navigation.canGoBack()) {
+            navigation.dispatch(StackActions.replace("Home"));
+          } else {
+            navigation.goBack();
+          }
+          return;
+        }
+        if (AsyncResult.isFailure(result)) {
+          lastFailure = Cause.squash(result.cause);
+        }
+      }
+      throw lastFailure instanceof Error
+        ? lastFailure
+        : new Error("Could not reach the environment through Dispatch Connect.");
+    } catch (cause) {
+      setConnectError(
+        cause instanceof Error ? cause.message : "Could not pair through Dispatch Connect.",
+      );
+    } finally {
+      setIsSubmitting(false);
+    }
+  }, [
+    connectCodeInput,
+    dispatchConnectAuthClient,
+    dispatchConnectUrl,
+    navigation,
+    onChangeConnectionPairingUrl,
+    onConnectPress,
+  ]);
 
   useEffect(() => {
     if (!shouldAutoConnect || attemptedAutoConnectRef.current === routePairingUrl) {
@@ -243,26 +345,61 @@ export function ConnectionsNewRouteScreen({
             )
           ) : (
             <View collapsable={false} className="gap-4 rounded-[24px] bg-card p-4">
-              <ConnectionFormField
-                label="Host"
-                autoCapitalize="none"
-                autoCorrect={false}
-                keyboardType="url"
-                placeholder="192.168.1.100:8080"
-                value={hostInput}
-                onChangeText={handleHostChange}
-              />
+              {dispatchConnectUrl ? (
+                <ConnectionSheetButton
+                  compact
+                  fullWidth
+                  icon="link"
+                  label={entryMode === "connect" ? "Use direct host" : "Use Dispatch Connect code"}
+                  disabled={isSubmitting}
+                  onPress={() => {
+                    setConnectError(null);
+                    setEntryMode((current) => (current === "connect" ? "direct" : "connect"));
+                  }}
+                />
+              ) : null}
 
-              <ConnectionFormField
-                label="Pairing code"
-                autoCapitalize="none"
-                autoCorrect={false}
-                placeholder="abc-123-xyz"
-                value={codeInput}
-                onChangeText={handleCodeChange}
-              />
+              {entryMode === "connect" && dispatchConnectUrl ? (
+                <>
+                  <ConnectionFormField
+                    label="Dispatch Connect code"
+                    autoCapitalize="characters"
+                    autoCorrect={false}
+                    placeholder="ABCD-EFGH-JKLM"
+                    value={connectCodeInput}
+                    onChangeText={handleConnectCodeChange}
+                  />
+                  <Text className="text-xs leading-normal text-foreground-muted">
+                    Sign in from Environments, then enter the code shown by the environment.
+                    Tailscale is tried first when available.
+                  </Text>
+                </>
+              ) : (
+                <>
+                  <ConnectionFormField
+                    label="Host"
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    keyboardType="url"
+                    placeholder="192.168.1.100:8080"
+                    value={hostInput}
+                    onChangeText={handleHostChange}
+                  />
 
-              {pairingConnectionError ? <ErrorBanner message={pairingConnectionError} /> : null}
+                  <ConnectionFormField
+                    label="Pairing code"
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    placeholder="abc-123-xyz"
+                    value={codeInput}
+                    onChangeText={handleCodeChange}
+                  />
+                </>
+              )}
+
+              {(connectError ?? pairingConnectionError) ? (
+                <ErrorBanner message={connectError ?? pairingConnectionError ?? ""} />
+              ) : null}
 
               <View className={Platform.OS === "android" ? "flex-row justify-end" : undefined}>
                 <ConnectionSheetButton
@@ -271,7 +408,7 @@ export function ConnectionsNewRouteScreen({
                   disabled={connectDisabled}
                   tone="primary"
                   onPress={() => {
-                    void handleSubmit();
+                    void (entryMode === "connect" ? handleDispatchConnectSubmit() : handleSubmit());
                   }}
                 />
               </View>

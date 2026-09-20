@@ -61,7 +61,7 @@ export class CloudManagedEndpointRuntime extends Context.Service<
       config: RelayManagedEndpointRuntimeConfig | null,
     ) => Effect.Effect<CloudManagedEndpointRuntimeStatus>;
   }
->()("t3/cloud/ManagedEndpointRuntime/CloudManagedEndpointRuntime") {}
+>()("dispatch/cloud/ManagedEndpointRuntime/CloudManagedEndpointRuntime") {}
 
 interface ActiveConnector {
   readonly child: ChildProcessSpawner.ChildProcessHandle;
@@ -293,9 +293,8 @@ export const make = Effect.gen(function* () {
             tunnelName: config.tunnelName,
           }),
         ),
-        Effect.catch((cause) =>
+        Effect.catch(() =>
           Effect.logWarning("Failed to start relay client", {
-            cause,
             tunnelId: config.tunnelId,
             tunnelName: config.tunnelName,
           }).pipe(
@@ -303,7 +302,7 @@ export const make = Effect.gen(function* () {
             Effect.as({
               status: "failed",
               providerKind: "cloudflare_tunnel",
-              reason: String(cause),
+              reason: "The relay client could not start.",
               ...(config.tunnelId ? { tunnelId: config.tunnelId } : {}),
               ...(config.tunnelName ? { tunnelName: config.tunnelName } : {}),
             } satisfies CloudManagedEndpointRuntimeStatus),

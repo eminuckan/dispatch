@@ -18,6 +18,9 @@ describe("loadRepoEnv", () => {
   it("does not project cloud configuration for an unconfigured clone", () => {
     const env = loadRepoEnv({ baseEnv: {}, repoRoot: makeTemporaryDirectory() });
 
+    expect(env.DISPATCH_CONNECT_URL).toBeUndefined();
+    expect(env.VITE_DISPATCH_CONNECT_URL).toBeUndefined();
+    expect(env.EXPO_PUBLIC_DISPATCH_CONNECT_URL).toBeUndefined();
     expect(env.DISPATCH_CLERK_PUBLISHABLE_KEY).toBeUndefined();
     expect(env.T3CODE_CLERK_PUBLISHABLE_KEY).toBeUndefined();
     expect(env.DISPATCH_CLERK_CLI_OAUTH_CLIENT_ID).toBeUndefined();
@@ -110,6 +113,7 @@ describe("loadRepoEnv", () => {
   it("prefers canonical Dispatch names over legacy aliases within one source", () => {
     expect(
       resolvePublicConfig({
+        DISPATCH_CONNECT_URL: "https://connect.dispatch.example.test",
         DISPATCH_CLERK_PUBLISHABLE_KEY: "pk_dispatch",
         T3CODE_CLERK_PUBLISHABLE_KEY: "pk_legacy",
         DISPATCH_CLERK_JWT_TEMPLATE: "template_dispatch",
@@ -134,6 +138,7 @@ describe("loadRepoEnv", () => {
         T3CODE_RELAY_CLIENT_OTLP_TRACES_TOKEN: "legacy-relay-token",
       }),
     ).toEqual({
+      connectUrl: "https://connect.dispatch.example.test",
       clerkPublishableKey: "pk_dispatch",
       clerkJwtTemplate: "template_dispatch",
       clerkCliOAuthClientId: "oauth_dispatch",
@@ -161,6 +166,7 @@ describe("loadRepoEnv", () => {
         EXPO_PUBLIC_OTLP_TRACES_TOKEN: "mobile-token",
       }),
     ).toEqual({
+      connectUrl: undefined,
       clerkPublishableKey: "pk_legacy",
       clerkJwtTemplate: "template_legacy",
       clerkCliOAuthClientId: "oauth_canonical",
@@ -172,6 +178,20 @@ describe("loadRepoEnv", () => {
       relayClientOtlpTracesUrl: undefined,
       relayClientOtlpTracesDataset: undefined,
       relayClientOtlpTracesToken: undefined,
+    });
+  });
+
+  it("projects the canonical Dispatch Connect origin to web and mobile clients", () => {
+    expect(
+      loadRepoEnv({
+        baseEnv: { DISPATCH_CONNECT_URL: "https://connect.example.test" },
+        repoRoot: makeTemporaryDirectory(),
+      }),
+    ).toEqual({
+      DISPATCH_CONNECT_URL: "https://connect.example.test",
+      T3CODE_CONNECT_URL: "https://connect.example.test",
+      VITE_DISPATCH_CONNECT_URL: "https://connect.example.test",
+      EXPO_PUBLIC_DISPATCH_CONNECT_URL: "https://connect.example.test",
     });
   });
 

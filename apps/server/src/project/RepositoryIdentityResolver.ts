@@ -33,7 +33,7 @@ export class RepositoryIdentityResolver extends Context.Service<
       options?: { readonly refresh?: boolean },
     ) => Effect.Effect<RepositoryIdentity | null>;
   }
->()("t3/project/RepositoryIdentityResolver") {}
+>()("dispatch/project/RepositoryIdentityResolver") {}
 
 function parseRemoteFetchUrls(stdout: string): Map<string, string> {
   const remotes = new Map<string, string>();

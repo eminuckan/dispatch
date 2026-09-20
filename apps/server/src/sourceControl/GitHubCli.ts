@@ -33,10 +33,10 @@ export const PinnedGitHubCredential = Context.Reference<{
   readonly host: string;
   readonly token: Redacted.Redacted<string>;
   readonly credentialFingerprint: string;
-} | null>("t3/sourceControl/PinnedGitHubCredential", { defaultValue: () => null });
+} | null>("dispatch/sourceControl/PinnedGitHubCredential", { defaultValue: () => null });
 
 export const AllowGitHubReserve = Context.Reference<boolean>(
-  "t3/sourceControl/AllowGitHubReserve",
+  "dispatch/sourceControl/AllowGitHubReserve",
   { defaultValue: () => false },
 );
 
@@ -336,7 +336,7 @@ export class GitHubCli extends Context.Service<
       readonly force?: boolean;
     }) => Effect.Effect<void, GitHubCliError>;
   }
->()("t3/sourceControl/GitHubCli") {}
+>()("dispatch/sourceControl/GitHubCli") {}
 
 const RawGitHubRepositoryCloneUrlsSchema = Schema.Struct({
   nameWithOwner: TrimmedNonEmptyString,

@@ -1458,7 +1458,7 @@ export const make = Effect.gen(function* () {
   };
 });
 export class TeamRuntime extends Context.Service<TeamRuntime, Effect.Success<typeof make>>()(
-  "t3/team/TeamRuntime",
+  "dispatch/team/TeamRuntime",
 ) {}
 export const layer = Layer.effect(TeamRuntime, make).pipe(
   Layer.provide(ProjectionTurnRepositoryLive),

@@ -62,7 +62,7 @@ export class SourceControlDiscovery extends Context.Service<
   {
     readonly discover: Effect.Effect<SourceControlDiscoveryResult>;
   }
->()("t3/sourceControl/SourceControlDiscovery") {}
+>()("dispatch/sourceControl/SourceControlDiscovery") {}
 
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {

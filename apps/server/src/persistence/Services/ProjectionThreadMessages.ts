@@ -126,4 +126,4 @@ export interface ProjectionThreadMessageRepositoryShape {
 export class ProjectionThreadMessageRepository extends Context.Service<
   ProjectionThreadMessageRepository,
   ProjectionThreadMessageRepositoryShape
->()("t3/persistence/Services/ProjectionThreadMessages/ProjectionThreadMessageRepository") {}
+>()("dispatch/persistence/Services/ProjectionThreadMessages/ProjectionThreadMessageRepository") {}

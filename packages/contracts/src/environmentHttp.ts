@@ -32,6 +32,14 @@ import {
 } from "./baseSchemas.ts";
 import { ExecutionEnvironmentDescriptor } from "./environment.ts";
 import {
+  DispatchConnectEnvironmentConfigureInput,
+  DispatchConnectEnvironmentIdentity,
+  DispatchConnectEnvironmentStatus,
+  DispatchConnectManagedEndpointStatus,
+  DispatchConnectPairingChallenge,
+  DispatchConnectPairingCreateInput,
+} from "./dispatchConnect.ts";
+import {
   ClientOrchestrationCommand,
   DispatchResult,
   OrchestrationReadModel,
@@ -88,6 +96,12 @@ export const EnvironmentInternalErrorReason = Schema.Literals([
   "access_token_issuance_failed",
   "websocket_ticket_issuance_failed",
   "pairing_credential_issuance_failed",
+  "dispatch_connect_identity_failed",
+  "dispatch_connect_status_failed",
+  "dispatch_connect_configure_failed",
+  "dispatch_connect_disable_failed",
+  "dispatch_connect_pairing_registration_failed",
+  "dispatch_connect_managed_endpoint_failed",
   "pairing_links_load_failed",
   "pairing_link_revoke_failed",
   "client_sessions_load_failed",
@@ -451,6 +465,76 @@ class EnvironmentAuthHttpApi extends HttpApiGroup.make("auth")
       success: AuthPairingCredentialResult,
       error: EnvironmentPairingCredentialErrors,
     }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("dispatchConnectPairing", "/api/auth/dispatch-connect/pairing", {
+      headers: OptionalBearerHeaders,
+      payload: DispatchConnectPairingCreateInput,
+      success: DispatchConnectPairingChallenge,
+      error: EnvironmentPairingCredentialErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.get("dispatchConnectIdentity", "/api/auth/dispatch-connect/identity", {
+      headers: OptionalBearerHeaders,
+      success: DispatchConnectEnvironmentIdentity,
+      error: EnvironmentScopedOperationErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.get("dispatchConnectStatus", "/api/auth/dispatch-connect/status", {
+      headers: OptionalBearerHeaders,
+      success: DispatchConnectEnvironmentStatus,
+      error: EnvironmentScopedOperationErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("dispatchConnectConfigure", "/api/auth/dispatch-connect/configure", {
+      headers: OptionalBearerHeaders,
+      payload: DispatchConnectEnvironmentConfigureInput,
+      success: DispatchConnectEnvironmentStatus,
+      error: EnvironmentScopedOperationErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("dispatchConnectDisable", "/api/auth/dispatch-connect/disable", {
+      headers: OptionalBearerHeaders,
+      success: DispatchConnectEnvironmentStatus,
+      error: EnvironmentScopedOperationErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.get(
+      "dispatchConnectManagedEndpointStatus",
+      "/api/auth/dispatch-connect/managed-endpoint",
+      {
+        headers: OptionalBearerHeaders,
+        success: DispatchConnectManagedEndpointStatus,
+        error: EnvironmentScopedOperationErrors,
+      },
+    ).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post(
+      "dispatchConnectManagedEndpointEnsure",
+      "/api/auth/dispatch-connect/managed-endpoint/ensure",
+      {
+        headers: OptionalBearerHeaders,
+        success: DispatchConnectManagedEndpointStatus,
+        error: EnvironmentScopedOperationErrors,
+      },
+    ).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post(
+      "dispatchConnectManagedEndpointDisable",
+      "/api/auth/dispatch-connect/managed-endpoint/disable",
+      {
+        headers: OptionalBearerHeaders,
+        success: DispatchConnectManagedEndpointStatus,
+        error: EnvironmentScopedOperationErrors,
+      },
+    ).middleware(EnvironmentAuthenticatedAuth),
   )
   .add(
     HttpApiEndpoint.get("pairingLinks", "/api/auth/pairing-links", {

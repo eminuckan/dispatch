@@ -479,7 +479,9 @@ describe("CloudManagedEndpointRuntime", () => {
         status: "failed",
         providerKind: "cloudflare_tunnel",
         tunnelId: "tunnel-1",
+        reason: "The relay client could not start.",
       });
+      expect(status).not.toHaveProperty("reason", expect.stringContaining("token"));
     }),
   );
 

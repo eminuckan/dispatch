@@ -61,4 +61,4 @@ export interface ProjectionStateRepositoryShape {
 export class ProjectionStateRepository extends Context.Service<
   ProjectionStateRepository,
   ProjectionStateRepositoryShape
->()("t3/persistence/Services/ProjectionState/ProjectionStateRepository") {}
+>()("dispatch/persistence/Services/ProjectionState/ProjectionStateRepository") {}

@@ -80,7 +80,7 @@ export class NoRunningServerError extends Schema.TaggedError<NoRunningServerErro
     return [
       "No running Dispatch server found.",
       ...this.checkedStatePaths.map((statePath) => `  checked ${statePath}`),
-      "Start one with `dispatch serve`, or connect this machine with T3 Connect: `dispatch connect`.",
+      "Start one with `dispatch serve`, or connect this machine with Dispatch Connect: `dispatch connect`.",
     ].join("\n");
   }
 }

@@ -424,7 +424,7 @@ jobs:
       - name: Install bundle dependencies
         env:
           pnpm_config_cache_dir: ${{ runner.temp }}/pnpm-metadata
-        run: vp install --filter=t3... --filter=@dispatch/web... --filter=@dispatch/desktop... --filter=@dispatch/scripts...
+        run: vp install --filter=dispatch... --filter=@dispatch/web... --filter=@dispatch/desktop... --filter=@dispatch/scripts...
 
       - name: Download relay client tracing config
         if: needs.relay_public_config.result == 'success'
@@ -684,7 +684,7 @@ jobs:
           cache: true
           run-install: |
             args:
-              - --filter=t3...
+              - --filter=dispatch...
               - --filter=@dispatch/scripts...
 
       - name: Download all CLI archives

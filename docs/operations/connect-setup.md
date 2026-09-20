@@ -1,6 +1,7 @@
-# T3 Connect setup
+# Legacy T3 Connect setup
 
-Deployment and client configuration for T3 Connect. The [architecture note](../internals/t3-connect.md)
+Deployment and client configuration for the upstream-compatible T3 Connect path. New Dispatch Connect
+deployments use the [Dispatch Connect runbook](./dispatch-connect.md) instead. The [legacy architecture note](../internals/t3-connect.md)
 explains the trust boundaries; the [relay README](../../infra/relay/README.md#deployment) owns relay
 provisioning instructions.
 

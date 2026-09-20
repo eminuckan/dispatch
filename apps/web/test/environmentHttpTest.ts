@@ -111,6 +111,28 @@ export async function installEnvironmentHttpTest(scenario: EnvironmentHttpTestSc
                 );
               }),
             )
+            .handle("dispatchConnectPairing", () =>
+              unexpectedEndpoint("auth.dispatchConnectPairing"),
+            )
+            .handle("dispatchConnectIdentity", () =>
+              unexpectedEndpoint("auth.dispatchConnectIdentity"),
+            )
+            .handle("dispatchConnectStatus", () => unexpectedEndpoint("auth.dispatchConnectStatus"))
+            .handle("dispatchConnectConfigure", () =>
+              unexpectedEndpoint("auth.dispatchConnectConfigure"),
+            )
+            .handle("dispatchConnectDisable", () =>
+              unexpectedEndpoint("auth.dispatchConnectDisable"),
+            )
+            .handle("dispatchConnectManagedEndpointStatus", () =>
+              unexpectedEndpoint("auth.dispatchConnectManagedEndpointStatus"),
+            )
+            .handle("dispatchConnectManagedEndpointEnsure", () =>
+              unexpectedEndpoint("auth.dispatchConnectManagedEndpointEnsure"),
+            )
+            .handle("dispatchConnectManagedEndpointDisable", () =>
+              unexpectedEndpoint("auth.dispatchConnectManagedEndpointDisable"),
+            )
             .handle("pairingLinks", () => unexpectedEndpoint("auth.pairingLinks"))
             .handle("revokePairingLink", () => unexpectedEndpoint("auth.revokePairingLink"))
             .handle("clients", () => unexpectedEndpoint("auth.clients"))

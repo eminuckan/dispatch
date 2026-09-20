@@ -78,6 +78,14 @@ import { shouldResumeSnapShotSetupOnStartup } from "../lib/snapShotSetupResume";
 
 export const Route = createRootRoute({
   beforeLoad: async ({ location }) => {
+    if (location.pathname === "/device") {
+      return {
+        authGateState: {
+          status: "hosted-static",
+        } as const,
+      };
+    }
+
     if (location.pathname === "/pair" && hasHostedPairingRequest(new URL(window.location.href))) {
       return {
         authGateState: {
@@ -152,7 +160,7 @@ function RootRouteView() {
     };
   }, [pathname]);
 
-  if (pathname === "/pair" || pathname === "/connect") {
+  if (pathname === "/pair" || pathname === "/connect" || pathname === "/device") {
     return (
       <>
         <DocumentTitleSync />

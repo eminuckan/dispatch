@@ -21,6 +21,7 @@ import {
   EnvironmentScopeRequiredError,
   EnvironmentAuthenticatedAuth,
   EnvironmentAuthenticatedPrincipal,
+  normalizeDispatchConnectPairingCredential,
 } from "@dispatch/contracts";
 import type { AuthEnvironmentScope, DpopFailureReason } from "@dispatch/contracts";
 import { parseAllowedOAuthScope } from "@dispatch/shared/oauthScope";
@@ -37,6 +38,8 @@ import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 import * as EnvironmentAuth from "./EnvironmentAuth.ts";
 import * as SessionStore from "./SessionStore.ts";
 import { traceAuthenticatedRelayRequest, traceRelayRequest } from "../cloud/traceRelayRequest.ts";
+import * as DispatchConnectEnvironment from "./DispatchConnectEnvironment.ts";
+import { issueDispatchConnectPairingChallenge } from "./DispatchConnectPairing.ts";
 import { deriveAuthClientMetadata } from "./utils.ts";
 import { verifyRequestDpopProof } from "./dpop.ts";
 
@@ -233,6 +236,7 @@ export const authHttpApiLayer = HttpApiBuilder.group(
   Effect.fnUntraced(function* (handlers) {
     const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
     const sessions = yield* SessionStore.SessionStore;
+    const dispatchConnect = yield* DispatchConnectEnvironment.DispatchConnectEnvironment;
 
     return handlers
       .handle(
@@ -270,7 +274,7 @@ export const authHttpApiLayer = HttpApiBuilder.group(
             yield* annotateEnvironmentRequest(args.endpoint.name);
             const request = yield* HttpServerRequest.HttpServerRequest;
             const result = yield* serverAuth.createBrowserSession(
-              args.payload.credential,
+              normalizeDispatchConnectPairingCredential(args.payload.credential),
               deriveAuthClientMetadata({ request }),
             );
             const cookieName = result.cookieName ?? sessions.cookieName;
@@ -353,7 +357,7 @@ export const authHttpApiLayer = HttpApiBuilder.group(
               : undefined;
             yield* appendCredentialResponseHeaders;
             return yield* serverAuth.exchangeBootstrapCredentialForAccessToken(
-              args.payload.subject_token,
+              normalizeDispatchConnectPairingCredential(args.payload.subject_token),
               requestedScopes,
               deriveAuthClientMetadata({
                 request,
@@ -419,6 +423,136 @@ export const authHttpApiLayer = HttpApiBuilder.group(
           },
           Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
             failEnvironmentInternal("pairing_credential_issuance_failed", error),
+          ),
+        ),
+      )
+      .handle(
+        "dispatchConnectPairing",
+        Effect.fn("environment.auth.dispatchConnectPairing")(
+          function* (args) {
+            yield* annotateEnvironmentRequest(args.endpoint.name);
+            const session = yield* requireEnvironmentScope(AuthAccessWriteScope);
+            const delegatedScopes = args.payload.scopes ?? AuthStandardClientScopes;
+            if (
+              delegatedScopes.length === 0 ||
+              new Set<AuthEnvironmentScope>(delegatedScopes).size !== delegatedScopes.length
+            ) {
+              return yield* failEnvironmentInvalidRequest("invalid_scope");
+            }
+            for (const delegatedScope of delegatedScopes) {
+              if (!session.scopes.has(delegatedScope)) {
+                return yield* failEnvironmentScopeRequired(delegatedScope);
+              }
+            }
+            const request = yield* HttpServerRequest.HttpServerRequest;
+            const requestUrl = HttpServerRequest.toURL(request);
+            if (requestUrl._tag === "None") {
+              return yield* failEnvironmentInternal("pairing_credential_issuance_failed");
+            }
+            yield* appendCredentialResponseHeaders;
+            return yield* issueDispatchConnectPairingChallenge({
+              environmentAuth: serverAuth,
+              dispatchConnect,
+              baseUrl: requestUrl.value.origin,
+              pairing: args.payload,
+            });
+          },
+          Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
+            failEnvironmentInternal("pairing_credential_issuance_failed", error),
+          ),
+          Effect.catchIf(DispatchConnectEnvironment.isDispatchConnectEnvironmentError, (error) =>
+            failEnvironmentInternal("dispatch_connect_pairing_registration_failed", error),
+          ),
+        ),
+      )
+      .handle(
+        "dispatchConnectIdentity",
+        Effect.fn("environment.auth.dispatchConnectIdentity")(
+          function* (args) {
+            yield* annotateEnvironmentRequest(args.endpoint.name);
+            yield* requireEnvironmentScope(AuthAccessReadScope);
+            return yield* dispatchConnect.getIdentity();
+          },
+          Effect.catchIf(DispatchConnectEnvironment.isDispatchConnectEnvironmentError, (error) =>
+            failEnvironmentInternal("dispatch_connect_identity_failed", error),
+          ),
+        ),
+      )
+      .handle(
+        "dispatchConnectStatus",
+        Effect.fn("environment.auth.dispatchConnectStatus")(
+          function* (args) {
+            yield* annotateEnvironmentRequest(args.endpoint.name);
+            yield* requireEnvironmentScope(AuthAccessReadScope);
+            return yield* dispatchConnect.getStatus();
+          },
+          Effect.catchIf(DispatchConnectEnvironment.isDispatchConnectEnvironmentError, (error) =>
+            failEnvironmentInternal("dispatch_connect_status_failed", error),
+          ),
+        ),
+      )
+      .handle(
+        "dispatchConnectConfigure",
+        Effect.fn("environment.auth.dispatchConnectConfigure")(
+          function* (args) {
+            yield* annotateEnvironmentRequest(args.endpoint.name);
+            yield* requireEnvironmentScope(AuthAccessWriteScope);
+            return yield* dispatchConnect.configure(args.payload);
+          },
+          Effect.catchIf(DispatchConnectEnvironment.isDispatchConnectEnvironmentError, (error) =>
+            failEnvironmentInternal("dispatch_connect_configure_failed", error),
+          ),
+        ),
+      )
+      .handle(
+        "dispatchConnectDisable",
+        Effect.fn("environment.auth.dispatchConnectDisable")(
+          function* (args) {
+            yield* annotateEnvironmentRequest(args.endpoint.name);
+            yield* requireEnvironmentScope(AuthAccessWriteScope);
+            return yield* dispatchConnect.disable();
+          },
+          Effect.catchIf(DispatchConnectEnvironment.isDispatchConnectEnvironmentError, (error) =>
+            failEnvironmentInternal("dispatch_connect_disable_failed", error),
+          ),
+        ),
+      )
+      .handle(
+        "dispatchConnectManagedEndpointStatus",
+        Effect.fn("environment.auth.dispatchConnectManagedEndpointStatus")(
+          function* (args) {
+            yield* annotateEnvironmentRequest(args.endpoint.name);
+            yield* requireEnvironmentScope(AuthAccessReadScope);
+            return yield* dispatchConnect.getManagedEndpointStatus();
+          },
+          Effect.catchIf(DispatchConnectEnvironment.isDispatchConnectEnvironmentError, (error) =>
+            failEnvironmentInternal("dispatch_connect_managed_endpoint_failed", error),
+          ),
+        ),
+      )
+      .handle(
+        "dispatchConnectManagedEndpointEnsure",
+        Effect.fn("environment.auth.dispatchConnectManagedEndpointEnsure")(
+          function* (args) {
+            yield* annotateEnvironmentRequest(args.endpoint.name);
+            yield* requireEnvironmentScope(AuthAccessWriteScope);
+            return yield* dispatchConnect.ensureManagedEndpoint();
+          },
+          Effect.catchIf(DispatchConnectEnvironment.isDispatchConnectEnvironmentError, (error) =>
+            failEnvironmentInternal("dispatch_connect_managed_endpoint_failed", error),
+          ),
+        ),
+      )
+      .handle(
+        "dispatchConnectManagedEndpointDisable",
+        Effect.fn("environment.auth.dispatchConnectManagedEndpointDisable")(
+          function* (args) {
+            yield* annotateEnvironmentRequest(args.endpoint.name);
+            yield* requireEnvironmentScope(AuthAccessWriteScope);
+            return yield* dispatchConnect.disableManagedEndpoint();
+          },
+          Effect.catchIf(DispatchConnectEnvironment.isDispatchConnectEnvironmentError, (error) =>
+            failEnvironmentInternal("dispatch_connect_managed_endpoint_failed", error),
           ),
         ),
       )

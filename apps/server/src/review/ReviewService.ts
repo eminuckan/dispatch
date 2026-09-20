@@ -29,7 +29,7 @@ export class ReviewService extends Context.Service<
       input: ReviewDiffFileContentsInput,
     ) => Effect.Effect<ReviewDiffFileContentsResult, ReviewDiffPreviewError>;
   }
->()("t3/review/ReviewService") {}
+>()("dispatch/review/ReviewService") {}
 
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {

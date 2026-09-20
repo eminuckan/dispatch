@@ -1,0 +1,21 @@
+{
+  "name": "@dispatch/connect",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node --watch src/server.ts",
+    "start": "node src/server.ts",
+    "test": "node --test src/**/*.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@better-auth/expo": "1.7.5",
+    "better-auth": "1.7.5",
+    "pg": "8.23.0"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "@types/pg": "8.23.1",
+    "typescript": "catalog:"
+  }
+}

@@ -155,7 +155,7 @@ jobs:
       - name: Install desktop dependencies
         env:
           pnpm_config_cache_dir: ${{ runner.temp }}/pnpm-metadata
-        run: vp install --filter=@dispatch/desktop... --filter=t3... --filter=@dispatch/scripts...
+        run: vp install --filter=@dispatch/desktop... --filter=dispatch... --filter=@dispatch/scripts...
 
       - name: Cache resource monitor
         id: resource_monitor_cache

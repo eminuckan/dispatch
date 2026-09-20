@@ -46,6 +46,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@better-auth/expo": "1.7.5",
     "@clerk/expo": "catalog:",
     "@dispatch/client-runtime": "workspace:*",
     "@dispatch/contracts": "workspace:*",
@@ -71,6 +72,7 @@
     "@shikijs/langs": "4.2.0",
     "@shikijs/themes": "4.2.0",
     "@tabler/icons-react-native": "^3.44.0",
+    "better-auth": "1.7.5",
     "clsx": "^2.1.1",
     "diff": "8.0.3",
     "effect": "catalog:",

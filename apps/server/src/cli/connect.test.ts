@@ -15,6 +15,7 @@ import {
   acquireRelayClientForLink,
   headlessSessionConfig,
   reportCloudDisconnectResults,
+  resolveDispatchConnectCliUrl,
 } from "./connect.ts";
 import { recoverServiceOnboardingOffer } from "./service.ts";
 
@@ -27,6 +28,45 @@ const managedExecutable = {
   source: "managed",
   version: RelayClient.CLOUDFLARED_VERSION,
 } as const;
+
+it("resolves the canonical Dispatch Connect origin with legacy fallback", () => {
+  assert.equal(
+    resolveDispatchConnectCliUrl({
+      DISPATCH_CONNECT_URL: "https://connect.dispatch.example/",
+      T3CODE_CONNECT_URL: "https://legacy.example/",
+    }),
+    "https://connect.dispatch.example",
+  );
+  assert.equal(
+    resolveDispatchConnectCliUrl({ T3CODE_CONNECT_URL: "https://legacy.example/" }),
+    "https://legacy.example",
+  );
+});
+
+it("accepts loopback HTTP for development and rejects unsafe Connect origins", () => {
+  assert.equal(
+    resolveDispatchConnectCliUrl({ DISPATCH_CONNECT_URL: "http://127.0.0.1:8787" }),
+    "http://127.0.0.1:8787",
+  );
+  assert.equal(
+    resolveDispatchConnectCliUrl({ DISPATCH_CONNECT_URL: "http://localhost:8787" }),
+    "http://localhost:8787",
+  );
+  assert.equal(
+    resolveDispatchConnectCliUrl({ DISPATCH_CONNECT_URL: "http://connect.example.test" }),
+    null,
+  );
+  assert.equal(
+    resolveDispatchConnectCliUrl({ DISPATCH_CONNECT_URL: "https://connect.example.test/path" }),
+    null,
+  );
+  assert.equal(
+    resolveDispatchConnectCliUrl({
+      DISPATCH_CONNECT_URL: "https://user:pass@connect.example.test",
+    }),
+    null,
+  );
+});
 
 it.effect("detects headless operation from individual SSH config values", () =>
   Effect.gen(function* () {

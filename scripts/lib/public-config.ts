@@ -6,6 +6,7 @@ import * as NodeUtil from "node:util";
 import { withDispatchEnvironmentAliases } from "@dispatch/shared/dispatchEnv";
 
 export interface DispatchPublicConfig {
+  readonly connectUrl: string | undefined;
   readonly clerkPublishableKey: string | undefined;
   readonly clerkJwtTemplate: string | undefined;
   readonly clerkCliOAuthClientId: string | undefined;
@@ -43,6 +44,13 @@ export function loadRepoEnv({
     ...normalizedRootEnv,
     ...normalizedLocalEnv,
     ...normalizedBaseEnv,
+    ...(config.connectUrl
+      ? {
+          DISPATCH_CONNECT_URL: config.connectUrl,
+          VITE_DISPATCH_CONNECT_URL: config.connectUrl,
+          EXPO_PUBLIC_DISPATCH_CONNECT_URL: config.connectUrl,
+        }
+      : {}),
     ...(config.clerkPublishableKey
       ? {
           DISPATCH_CLERK_PUBLISHABLE_KEY: config.clerkPublishableKey,
@@ -128,6 +136,12 @@ export function loadRepoEnv({
 
 export function resolvePublicConfig(...sources: readonly Environment[]): DispatchPublicConfig {
   return {
+    connectUrl: firstNonEmpty(
+      sources,
+      "DISPATCH_CONNECT_URL",
+      "VITE_DISPATCH_CONNECT_URL",
+      "EXPO_PUBLIC_DISPATCH_CONNECT_URL",
+    ),
     clerkPublishableKey: firstNonEmpty(
       sources,
       "DISPATCH_CLERK_PUBLISHABLE_KEY",

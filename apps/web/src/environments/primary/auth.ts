@@ -3,6 +3,11 @@ import type {
   AuthClientMetadata,
   AuthEnvironmentScope,
   AuthPairingCredentialResult,
+  DispatchConnectEnvironmentConfigureInput,
+  DispatchConnectEnvironmentIdentity,
+  DispatchConnectEnvironmentStatus,
+  DispatchConnectManagedEndpointStatus,
+  DispatchConnectPairingChallenge,
   ServerAuthSessionMethod,
   AuthSessionId,
   AuthSessionState,
@@ -31,6 +36,11 @@ const PrimaryEnvironmentRequestOperation = Schema.Literals([
   "list-client-sessions",
   "revoke-client-session",
   "revoke-other-client-sessions",
+  "dispatch-connect-identity",
+  "dispatch-connect-status",
+  "dispatch-connect-configure",
+  "dispatch-connect-managed-endpoint",
+  "dispatch-connect-pairing",
 ]);
 type PrimaryEnvironmentRequestOperation = typeof PrimaryEnvironmentRequestOperation.Type;
 
@@ -422,6 +432,94 @@ export async function revokeOtherServerClientSessions(): Promise<number> {
   } catch (error) {
     throw PrimaryEnvironmentRequestError.fromCause({
       operation: "revoke-other-client-sessions",
+      cause: error,
+    });
+  }
+}
+
+export async function fetchDispatchConnectEnvironmentIdentity(): Promise<DispatchConnectEnvironmentIdentity> {
+  try {
+    return await runPrimaryHttp(
+      PrimaryEnvironmentHttpClient.pipe(
+        Effect.flatMap((client) => client.auth.dispatchConnectIdentity({ headers: {} })),
+      ),
+    );
+  } catch (error) {
+    throw PrimaryEnvironmentRequestError.fromCause({
+      operation: "dispatch-connect-identity",
+      cause: error,
+    });
+  }
+}
+
+export async function fetchDispatchConnectEnvironmentStatus(): Promise<DispatchConnectEnvironmentStatus> {
+  try {
+    return await runPrimaryHttp(
+      PrimaryEnvironmentHttpClient.pipe(
+        Effect.flatMap((client) => client.auth.dispatchConnectStatus({ headers: {} })),
+      ),
+    );
+  } catch (error) {
+    throw PrimaryEnvironmentRequestError.fromCause({
+      operation: "dispatch-connect-status",
+      cause: error,
+    });
+  }
+}
+
+export async function configureDispatchConnectEnvironment(
+  input: DispatchConnectEnvironmentConfigureInput,
+): Promise<DispatchConnectEnvironmentStatus> {
+  try {
+    return await runPrimaryHttp(
+      PrimaryEnvironmentHttpClient.pipe(
+        Effect.flatMap((client) =>
+          client.auth.dispatchConnectConfigure({ headers: {}, payload: input }),
+        ),
+      ),
+    );
+  } catch (error) {
+    throw PrimaryEnvironmentRequestError.fromCause({
+      operation: "dispatch-connect-configure",
+      cause: error,
+    });
+  }
+}
+
+export async function ensureDispatchConnectManagedEndpoint(): Promise<DispatchConnectManagedEndpointStatus> {
+  try {
+    return await runPrimaryHttp(
+      PrimaryEnvironmentHttpClient.pipe(
+        Effect.flatMap((client) =>
+          client.auth.dispatchConnectManagedEndpointEnsure({ headers: {} }),
+        ),
+      ),
+    );
+  } catch (error) {
+    throw PrimaryEnvironmentRequestError.fromCause({
+      operation: "dispatch-connect-managed-endpoint",
+      cause: error,
+    });
+  }
+}
+
+export async function createDispatchConnectPairingChallenge(input?: {
+  readonly label?: string;
+}): Promise<DispatchConnectPairingChallenge> {
+  try {
+    return await runPrimaryHttp(
+      PrimaryEnvironmentHttpClient.pipe(
+        Effect.flatMap((client) =>
+          client.auth.dispatchConnectPairing({
+            headers: {},
+            payload: input?.label ? { label: input.label } : {},
+          }),
+        ),
+      ),
+    );
+  } catch (error) {
+    throw PrimaryEnvironmentRequestError.fromCause({
+      operation: "dispatch-connect-pairing",
       cause: error,
     });
   }

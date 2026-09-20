@@ -147,7 +147,7 @@ jobs:
         env:
           DISPATCH_TRANSFER_BUDGET_REPORT_PATH: ${{ runner.temp }}/dispatch-transfer-budget.md
           DISPATCH_TRANSFER_BUDGET_RESULT_PATH: ${{ runner.temp }}/thread-transfer-result.json
-        run: vp run --filter t3 test --shard ${{ matrix.shard }}/${{ strategy.job-total }}
+        run: vp run --filter dispatch test --shard ${{ matrix.shard }}/${{ strategy.job-total }}
 
       # src/server.test.ts writes the budget report, so exactly one shard
       # produces these files. Gating the upload on their presence keeps a

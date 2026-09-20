@@ -45,7 +45,7 @@ function recoveryHint(error: RelayProtectedError): string {
     case "RelayEnvironmentLinkLimitExceededError":
       return "Unlink an unused environment in T3 Connect, then restart Dispatch on this machine.";
     case "RelayAuthInvalidError":
-      return "Run `dispatch connect login` to check this machine's authorization. If the stored credential was revoked, sign out with `dispatch connect logout`, then run `dispatch connect` again. Restart Dispatch after signing in.";
+      return "Run `dispatch connect legacy-t3 login` to check this machine's legacy T3 Connect authorization. If the stored credential was revoked, sign out with `dispatch connect legacy-t3 logout`, then run `dispatch connect legacy-t3` again. Restart Dispatch after signing in.";
     case "RelayEnvironmentLinkProofExpiredError":
     case "RelayEnvironmentLinkProofInvalidError":
       return "Check this machine's date and time, update Dispatch, then restart it.";

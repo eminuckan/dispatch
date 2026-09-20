@@ -129,7 +129,7 @@ export class GitManager extends Context.Service<
       options?: GitRunStackedActionOptions,
     ) => Effect.Effect<GitRunStackedActionResult, GitManagerServiceError>;
   }
->()("t3/git/GitManager") {}
+>()("dispatch/git/GitManager") {}
 
 const COMMIT_TIMEOUT_MS = 10 * 60_000;
 const MAX_PROGRESS_TEXT_LENGTH = 500;

@@ -71,8 +71,7 @@ const DisconnectedLauncherChildLayer = Layer.mergeAll(
 );
 class ProjectCliHttpApi extends HttpApi.make("environment").add(EnvironmentOrchestrationHttpApi) {}
 
-const connectCli = makeCli({ cloudEnabled: true });
-const noConnectCli = makeCli({ cloudEnabled: false });
+const connectCli = makeCli();
 const runCli = (args: ReadonlyArray<string>, command = cli) =>
   Command.runWith(command, { version: "0.0.0" })(args);
 const runConnectCli = (args: ReadonlyArray<string>) => runCli(args, connectCli);
@@ -450,28 +449,19 @@ it.layer(NodeServices.layer)("bin cli parsing", (it) => {
     }),
   );
 
-  it.effect("rejects connect commands when public configuration is missing", () =>
+  it.effect("exposes canonical Dispatch Connect without legacy T3 public configuration", () =>
     Effect.gen(function* () {
-      const error = yield* runCli(["connect", "status"], noConnectCli).pipe(Effect.flip);
+      const { output } = yield* captureStdout(runCli(["connect", "--help"]));
 
-      if (!CliError.isCliError(error)) {
-        assert.fail(`Expected CliError, got ${String(error)}`);
-      }
-      if (error._tag !== "ShowHelp") {
-        assert.fail(`Expected ShowHelp, got ${error._tag}`);
-      }
-      assert.deepEqual(error.commandPath, ["dispatch", "connect"]);
-      assert.include(error.errors[0]?.message ?? "", "missing T3 Connect public configuration");
-
-      const output = (yield* TestConsole.errorLines).join("\n");
-      assert.include(output, "ERROR");
-      assert.include(output, "missing T3 Connect public configuration");
+      assert.include(output, "Set up Dispatch Connect for this machine.");
+      assert.include(output, "legacy-t3");
+      assert.notInclude(output, "T3 Connect is unavailable");
     }).pipe(Effect.provide(Layer.mergeAll(CliRuntimeLayer, TestConsole.layer))),
   );
 
-  it.effect("exposes service lifecycle commands without T3 Connect configuration", () =>
+  it.effect("exposes service lifecycle commands without legacy T3 Connect configuration", () =>
     Effect.gen(function* () {
-      const { output } = yield* captureStdout(runCli(["service", "--help"], noConnectCli));
+      const { output } = yield* captureStdout(runCli(["service", "--help"]));
 
       assert.include(output, "Manage the Dispatch background service.");
       assert.include(output, "install");
@@ -481,38 +471,38 @@ it.layer(NodeServices.layer)("bin cli parsing", (it) => {
     }),
   );
 
-  it.effect("reports fresh headless connect state without requiring local configuration", () =>
+  it.effect("reports fresh Dispatch Connect state without requiring local configuration", () =>
     Effect.gen(function* () {
       const baseDir = NodeFS.mkdtempSync(
-        NodePath.join(NodeOS.tmpdir(), "t3-cli-cloud-status-test-"),
+        NodePath.join(NodeOS.tmpdir(), "dispatch-cli-connect-status-test-"),
       );
       const { output } = yield* captureStdout(
         runConnectCli(["connect", "status", "--base-dir", baseDir, "--json"]),
       );
       // @effect-diagnostics-next-line preferSchemaOverJson:off - CLI JSON output is decoded as a presentation DTO.
       const status = JSON.parse(output) as {
-        readonly desired: boolean;
         readonly authenticated: boolean;
-        readonly linked: boolean;
-        readonly cloudUserId: string | null;
-        readonly relayUrl: string | null;
+        readonly connectUrl: string | null;
+        readonly environmentConfigured: boolean;
+        readonly environmentId: string | null;
+        readonly serverRunning: boolean;
       };
 
-      assert.equal(status.desired, false);
       assert.equal(status.authenticated, false);
-      assert.equal(status.linked, false);
-      assert.equal(status.cloudUserId, null);
-      assert.equal(status.relayUrl, null);
+      assert.equal(status.connectUrl, null);
+      assert.equal(status.environmentConfigured, false);
+      assert.equal(status.environmentId, null);
+      assert.equal(status.serverRunning, false);
     }).pipe(Effect.provide(DisconnectedLauncherChildLayer)),
   );
 
-  it.effect("reports actionable human-readable headless connect state", () =>
+  it.effect("keeps legacy T3 status under the explicit legacy-t3 command", () =>
     Effect.gen(function* () {
       const baseDir = NodeFS.mkdtempSync(
-        NodePath.join(NodeOS.tmpdir(), "t3-cli-cloud-status-human-test-"),
+        NodePath.join(NodeOS.tmpdir(), "dispatch-cli-legacy-t3-status-test-"),
       );
       const { output } = yield* captureStdout(
-        runConnectCli(["connect", "status", "--base-dir", baseDir]),
+        runConnectCli(["connect", "legacy-t3", "status", "--base-dir", baseDir]),
       );
 
       assert.include(output, "T3 Connect\n  Exposure: disabled");
@@ -520,12 +510,12 @@ it.layer(NodeServices.layer)("bin cli parsing", (it) => {
       assert.include(output, "  Environment link: not provisioned");
       assert.include(
         output,
-        "Next: Run `dispatch connect link` to authorize and enable T3 Connect.",
+        "Next: Run `dispatch connect legacy-t3 link` to authorize and enable T3 Connect.",
       );
     }),
   );
 
-  it.effect("accepts the --headless login override without enabling access", () =>
+  it.effect("keeps the legacy T3 headless login override nested under legacy-t3", () =>
     Effect.gen(function* () {
       const baseDir = NodeFS.mkdtempSync(
         NodePath.join(NodeOS.tmpdir(), "t3-cli-cloud-login-test-"),
@@ -543,10 +533,10 @@ it.layer(NodeServices.layer)("bin cli parsing", (it) => {
       );
 
       const login = yield* captureStdout(
-        runConnectCli(["connect", "login", "--base-dir", baseDir, "--headless"]),
+        runConnectCli(["connect", "legacy-t3", "login", "--base-dir", baseDir, "--headless"]),
       );
       const status = yield* captureStdout(
-        runConnectCli(["connect", "status", "--base-dir", baseDir, "--json"]),
+        runConnectCli(["connect", "legacy-t3", "status", "--base-dir", baseDir, "--json"]),
       );
       // @effect-diagnostics-next-line preferSchemaOverJson:off - CLI JSON output is decoded as a presentation DTO.
       const decoded = JSON.parse(status.output) as {
@@ -560,20 +550,20 @@ it.layer(NodeServices.layer)("bin cli parsing", (it) => {
     }),
   );
 
-  it.effect("disables headless connect without a running server", () =>
+  it.effect("disables legacy T3 Connect without a running server", () =>
     Effect.gen(function* () {
       const baseDir = NodeFS.mkdtempSync(
         NodePath.join(NodeOS.tmpdir(), "t3-cli-cloud-unlink-test-"),
       );
       const { output } = yield* captureStdout(
-        runConnectCli(["connect", "unlink", "--base-dir", baseDir]),
+        runConnectCli(["connect", "legacy-t3", "unlink", "--base-dir", baseDir]),
       );
 
       assert.equal(output, "T3 Connect is disabled locally.");
     }),
   );
 
-  it.effect("logs out of headless connect and removes the stored CLI authorization", () =>
+  it.effect("logs out of legacy T3 Connect and removes the stored CLI authorization", () =>
     Effect.gen(function* () {
       const baseDir = NodeFS.mkdtempSync(
         NodePath.join(NodeOS.tmpdir(), "t3-cli-cloud-logout-test-"),
@@ -584,7 +574,7 @@ it.layer(NodeServices.layer)("bin cli parsing", (it) => {
       NodeFS.writeFileSync(tokenPath, "invalid persisted token");
 
       const { output } = yield* captureStdout(
-        runConnectCli(["connect", "logout", "--base-dir", baseDir]),
+        runConnectCli(["connect", "legacy-t3", "logout", "--base-dir", baseDir]),
       );
 
       assert.equal(

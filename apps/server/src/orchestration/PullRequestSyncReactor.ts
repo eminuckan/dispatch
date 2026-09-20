@@ -122,7 +122,7 @@ export class PullRequestSyncReactor extends Context.Service<
     /** Force the next sweep to re-read this pull request, even when its snapshot is terminal. */
     readonly requestSync: (key: ThreadPullRequestKey) => Effect.Effect<void>;
   }
->()("t3/orchestration/PullRequestSyncReactor") {}
+>()("dispatch/orchestration/PullRequestSyncReactor") {}
 
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {

@@ -191,7 +191,8 @@ describe("reconcileDesiredCloudLink", () => {
 
       expect(error).toMatchObject({
         _tag: "EnvironmentHttpUnauthorizedError",
-        message: "Run `dispatch connect link` to authorize this environment.",
+        message:
+          "Run `dispatch connect legacy-t3 link` to authorize this legacy T3 Connect environment.",
       });
     }).pipe(
       Effect.provideService(

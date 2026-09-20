@@ -13,6 +13,7 @@ import { AndroidHeaderIconButton } from "../../components/AndroidScreenHeader";
 import { CloudEnvironmentRows } from "../connection/CloudEnvironmentRows";
 import { LocalEnvironmentList } from "../connection/LocalEnvironmentList";
 import { GitHubRoutingSettings } from "../connection/GitHubRoutingSettings";
+import { DispatchConnectAccountSection } from "../connect/DispatchConnectAccountSection";
 import { splitEnvironmentSections } from "../connection/environmentSections";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { useRemoteConnections } from "../../state/use-remote-environment-registry";
@@ -157,6 +158,7 @@ export function SettingsEnvironmentsRouteScreen() {
           ) : undefined
         }
       >
+        <DispatchConnectAccountSection />
         <LocalEnvironmentList
           environments={localEnvironments}
           expandedId={expandedId}

@@ -152,7 +152,7 @@ export class DeviceService extends Context.Service<
     readonly currentReadiness: (hostId?: DeviceHostId) => Effect.Effect<DeviceReadiness | null>;
     readonly sessionsForThread: (threadId: ThreadId) => Effect.Effect<ReadonlyArray<DeviceSession>>;
   }
->()("t3/device/DeviceService") {}
+>()("dispatch/device/DeviceService") {}
 
 interface ServiceState {
   readonly state: DeviceServiceState;

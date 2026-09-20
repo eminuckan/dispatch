@@ -2,7 +2,7 @@
 
 Dispatch is an open-source GUI for coding agents. A Node WebSocket server wraps provider CLIs and agents (Codex, Claude Code, Cursor, Grok, OpenCode, Antigravity) and serves web, desktop, and mobile clients.
 
-Dispatch is an independent fork of T3 Code. Preserve upstream attribution and compatibility where it is technically required, but new product identity, user-facing copy, release ownership, and newly written state belong to Dispatch.
+Dispatch is an independent open-source project derived from T3 Code. Preserve upstream attribution and compatibility where it is technically required, but new product identity, user-facing copy, release ownership, and newly written state belong to Dispatch.
 
 ## Product principles
 
@@ -18,7 +18,7 @@ Performance is a product constraint. Watch for regressions caused by sending too
 
 ### 3. Remote ready
 
-Dispatch's websocket layer and canonical `dispatch` CLI support remote workflows. Users may connect directly over their local network, through Tailscale, or through the optional upstream T3 Connect service when it is configured. New features should account for remote clients where reasonable.
+Dispatch's websocket layer and canonical `dispatch` CLI support remote workflows. Users may connect directly over their local network, through Tailscale, SSH, or optional Dispatch Connect. Dispatch Connect accounts are convenience/discovery identity, not environment authority: a device still needs an explicit environment pairing grant. The upstream T3 Connect service is legacy compatibility only. New features should account for remote clients where reasonable.
 
 ### 4. Multi-surface
 

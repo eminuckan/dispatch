@@ -3,8 +3,10 @@
 Connect a phone, browser, or another desktop app to Dispatch running on a different machine. The host
 must stay running and reachable while you work.
 
-Dispatch has no product account, login, logout, or profile flow. The normal remote paths are direct
-pairing over a LAN or private network, Tailscale, and desktop-managed SSH.
+Dispatch remains usable without an account. Direct pairing over a LAN or private network, Tailscale, and
+desktop-managed SSH do not require Dispatch Connect. An optional Dispatch account adds cross-device
+environment discovery and managed remote-access convenience; account sign-in never replaces explicit
+environment pairing.
 
 The command examples below use the canonical Dispatch launcher name `dispatch`. A packaged Dispatch
 build may also provide `t3` as a legacy compatibility alias. A source checkout does not install either
@@ -85,6 +87,35 @@ tailscale serve --https=443 off
 If that port is already in use, choose another with `--tailscale-serve-port`. See
 `dispatch pair --help` for other pairing options.
 
+## Dispatch Connect
+
+Dispatch Connect is the optional hosted/self-hosted control plane for discovering your Dispatch machines
+and pairing another device with less network setup. A signed-in phone or desktop can discover environments
+owned by the same account, but each device still needs an explicit environment grant before it can operate
+that machine.
+
+When pairing manually, enter the `XXXX-XXXX-XXXX` code shown by the host or scan its QR code. The code is
+short-lived and single-use. Once pairing completes, the receiving device keeps its normal scoped Dispatch
+session and does not need the original code again.
+
+Connect prefers a usable Tailscale endpoint when one is available. A deployment may also offer a managed
+Cloudflare Tunnel as the internet fallback. These are reachability paths only; Dispatch's environment
+authorization still applies on either route.
+
+For a command-line host, `DISPATCH_CONNECT_URL` points at the Dispatch Connect service. Running
+`dispatch connect` signs the CLI in with a browser approval code, registers the environment, and prepares
+managed remote access when that deployment provides it. Useful follow-ups are:
+
+```bash
+dispatch connect status
+dispatch connect unlink
+dispatch connect logout
+```
+
+`unlink` removes this environment's Connect configuration while retaining the account authorization;
+`logout` removes both. A Connect account still does not authorize a new device to operate the environment:
+that device must complete the QR or one-time-code pairing flow above.
+
 ## Desktop-managed SSH
 
 In the desktop app, open **Settings → Connections → Add environment**, choose **SSH**, and enter a host
@@ -135,7 +166,7 @@ bug reports.
 T3 Connect and Clerk remain optional compatibility for deployments that still use the upstream
 authenticated relay. They are cloud-disabled by default in Dispatch and are not the normal setup path.
 Dispatch does not expose a product account, login, logout, or profile UI for this compatibility mode.
-Keep this path only for existing deployments until Dispatch has an accountless relay-auth mechanism.
+Keep this path only for existing upstream-compatible deployments that still depend on it.
 
 An existing legacy deployment may still have a previously established authenticated relay session.
 When that session is available, Dispatch can keep using it for managed relay discovery, environment
@@ -145,19 +176,18 @@ instead of establishing a T3 Connect account.
 The legacy CLI surface remains available where the build includes the required cloud configuration:
 
 ```bash
-dispatch connect
-dispatch connect status
-dispatch connect unlink
-dispatch connect logout
+dispatch connect legacy-t3
+dispatch connect legacy-t3 status
+dispatch connect legacy-t3 unlink
+dispatch connect legacy-t3 logout
 ```
 
-These commands exist for compatibility with the upstream relay workflow. `dispatch connect` and
-Clerk-backed authorization are not part of Dispatch's ordinary accountless user flow. Do not configure
-upstream T3 Connect values in a normal cloud-disabled build just to enable these commands.
+These commands exist only for compatibility with the upstream relay workflow. Do not configure upstream
+T3 Connect values in a normal Dispatch Connect deployment just to enable them.
 
 ### Legacy relay troubleshooting
 
-`dispatch connect status` reports saved legacy authorization and link configuration; it is not a live
+`dispatch connect legacy-t3 status` reports saved legacy authorization and link configuration; it is not a live
 reachability check. If a previously linked environment appears offline, run `dispatch service status`
 and read the displayed log. If the service disappears when SSH closes, see
 [background-service troubleshooting](./background-service.md#troubleshooting).

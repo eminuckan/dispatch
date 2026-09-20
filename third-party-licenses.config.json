@@ -153,6 +153,12 @@
   ],
   "packageOverrides": [
     {
+      "name": "@better-auth/utils",
+      "generatedNotice": {
+        "licenseId": "MIT"
+      }
+    },
+    {
       "license": "MIT",
       "name": "@react-grab/cli",
       "sourceUrl": "https://github.com/aidenybai/react-grab/tree/main/packages/cli",

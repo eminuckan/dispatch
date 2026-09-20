@@ -1,22 +1,21 @@
-# T3 Connect
+# Legacy T3 Connect
 
-T3 Connect is a legacy/upstream-compatible cloud path, not Dispatch's product
-account model. Current compatibility code uses Clerk for cloud identity. Dispatch
-builds are cloud-disabled by default and the core environment auth layer does not
-depend on Clerk.
+T3 Connect is the legacy/upstream-compatible cloud path, not Dispatch Connect.
+Current compatibility code uses Clerk for cloud identity. Dispatch builds are
+cloud-disabled by default for this legacy path, and the core environment auth
+layer does not depend on Clerk.
 
 The relay manages environment links,
 credentials for reaching environments, and managed tunnel allocations. After
 bootstrap, clients send application traffic through the environment's tunnel
 hostname; the relay Worker does not proxy their HTTP or WebSocket sessions.
 
-Dispatch's target remote model has no user login/logout. Before Clerk can be
-removed from this compatibility path, the relay needs an accountless principal
-(for example, a key-backed Dispatch trust group or environment-centric capability
-model) to replace the current `userId` boundary for environment discovery, tunnel
-allocation, device registration, and push delivery. Do not delete Clerk verification
-from the relay without replacing those authorization and revocation semantics.
-The planned replacement is described in [Accountless relay identity](./dispatch-relay-identity.md).
+Do not remove Clerk verification from this compatibility relay by making it
+anonymous. Existing T3 Connect rows still depend on its `userId` boundary for
+environment discovery, tunnel allocation, device registration, and push delivery.
+New Dispatch-owned account/device identity, pairing, and endpoint discovery belong
+to [Dispatch Connect](./dispatch-connect.md) instead; the legacy relay should be
+retired only after any deployments that still depend on it have migrated.
 
 Clerk, deployment, and native authentication setup live in the
 [Connect setup runbook](../operations/connect-setup.md).

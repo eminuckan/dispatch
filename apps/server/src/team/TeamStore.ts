@@ -386,6 +386,6 @@ export const make = Effect.gen(function* () {
   };
 });
 export class TeamStore extends Context.Service<TeamStore, Effect.Success<typeof make>>()(
-  "t3/team/TeamStore",
+  "dispatch/team/TeamStore",
 ) {}
 export const layer = Layer.effect(TeamStore, make);

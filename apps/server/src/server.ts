@@ -124,6 +124,7 @@ import * as RemoteOpenTargets from "./environment/RemoteOpenTargets.ts";
 import { authHttpApiLayer, environmentAuthenticatedAuthLayer } from "./auth/http.ts";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
+import * as DispatchConnectEnvironment from "./auth/DispatchConnectEnvironment.ts";
 import {
   connectHttpApiLayer,
   pendingServiceUpdateExists,
@@ -599,6 +600,7 @@ export const makeRoutesLayer = Layer.mergeAll(
   ),
   McpHttpServer.layer.pipe(Layer.provide(McpSessionRegistry.layer)),
 ).pipe(
+  Layer.provide(DispatchConnectEnvironment.layer),
   // Both transports consume the same service instance, so caches single-flight across clients
   // and mutations observed on WebSocket invalidate patches subsequently read over HTTP.
   Layer.provide(PullRequestServiceLive),
@@ -616,6 +618,7 @@ const makeServerLayer = Layer.unwrap(
     const awaitActivation = Deferred.await(activation);
     const activationLayer = Layer.succeed(ServerActivation, awaitActivation);
     const runtimeStateParked = yield* Deferred.make<void>();
+    const runtimeStateReady = yield* Deferred.make<void>();
     const tailscaleParked = yield* Deferred.make<void>();
     const cloudLinkParked = yield* Deferred.make<void>();
     const routesReady = yield* Deferred.make<void>();
@@ -638,6 +641,7 @@ const makeServerLayer = Layer.unwrap(
           const server = yield* HttpServer.HttpServer;
           const address = server.address;
           if (typeof address === "string" || !("port" in address)) {
+            yield* Deferred.succeed(runtimeStateReady, undefined).pipe(Effect.orDie);
             return;
           }
 
@@ -655,6 +659,7 @@ const makeServerLayer = Layer.unwrap(
               Effect.logWarning("Failed to persist server runtime state", { cause }),
             ),
           );
+          yield* Deferred.succeed(runtimeStateReady, undefined).pipe(Effect.orDie);
         }),
         () =>
           clearPersistedServerRuntimeState(config.serverRuntimeStatePath).pipe(
@@ -783,6 +788,47 @@ const makeServerLayer = Layer.unwrap(
         yield* Deferred.succeed(cloudLinkParked, undefined).pipe(Effect.orDie);
       }),
     );
+    const dispatchConnectReconcileLayer = Layer.effectDiscard(
+      forkParked(
+        Deferred.await(runtimeStateReady).pipe(
+          Effect.andThen(
+            Effect.gen(function* () {
+              const dispatchConnect = yield* DispatchConnectEnvironment.DispatchConnectEnvironment;
+              const status = yield* dispatchConnect.getStatus().pipe(
+                Effect.catch((cause) =>
+                  Effect.logWarning("Failed to read Dispatch Connect startup state", {
+                    cause,
+                  }).pipe(Effect.as({ configured: false } as const)),
+                ),
+              );
+              if (!status.configured) return;
+              const managed = yield* dispatchConnect.ensureManagedEndpoint().pipe(
+                Effect.catch((cause) =>
+                  Effect.logWarning("Failed to reconcile Dispatch Connect managed endpoint", {
+                    cause,
+                  }).pipe(Effect.as(null)),
+                ),
+              );
+              if (!managed) return;
+              if (managed.status === "running") {
+                yield* Effect.logInfo("Dispatch Connect managed endpoint reconciled on startup", {
+                  tunnelId: managed.tunnelId,
+                  tunnelName: managed.tunnelName,
+                });
+              } else if (managed.status === "unsupported") {
+                yield* Effect.logInfo(
+                  "Dispatch Connect managed endpoint is not enabled by this Connect deployment",
+                );
+              } else if (managed.status === "failed") {
+                yield* Effect.logWarning("Dispatch Connect managed endpoint is unavailable", {
+                  reason: managed.reason,
+                });
+              }
+            }),
+          ),
+        ),
+      ),
+    ).pipe(Layer.provide(DispatchConnectEnvironment.layer));
 
     const runtimeServicesLive = ServerRuntimeStartup.layerWithOptions({
       activate: Deferred.succeed(activation, undefined).pipe(Effect.asVoid),
@@ -808,6 +854,7 @@ const makeServerLayer = Layer.unwrap(
       runtimeStateLayer.pipe(Layer.provide(launcherLayer)),
       tailscaleServeLayer,
       cloudDesiredLinkReconcileLayer,
+      dispatchConnectReconcileLayer,
     );
 
     const applicationLayer = serverApplicationLayer.pipe(
