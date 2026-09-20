@@ -564,9 +564,23 @@ export const make = Effect.gen(function* () {
                   })
                   .pipe(Effect.orElseSucceed(() => null))
               : null;
-          if (advice && !["correct", "increase_effort", "new_worker"].includes(advice.action))
+          // Routing recovery is advisory here: the lead already inspected the
+          // worker result against the acceptance contract. An uncertain
+          // diagnosis should not veto that concrete correction when it keeps
+          // the same worker profile.
+          const continueLeadCorrection =
+            proposal.action === "correct" &&
+            advice?.action === "lead_review" &&
+            advice.profileId === review.profileId;
+          if (
+            advice &&
+            !continueLeadCorrection &&
+            !["correct", "increase_effort", "new_worker"].includes(advice.action)
+          )
             return yield* pause(run, `${advice.reason} Lead correction: ${proposal.summary}`);
-          const profileId = advice?.profileId ?? review.profileId;
+          const profileId = continueLeadCorrection
+            ? review.profileId
+            : (advice?.profileId ?? review.profileId);
           run = yield* store.update(
             run.id,
             run.revision,
