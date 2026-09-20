@@ -222,7 +222,11 @@ describe("WSL runtime cache", () => {
     );
 
     expect(script).toContain('runtime_parent="$HOME/.dispatch/wsl-runtime"');
-    expect(script).toContain('  [ -f "$ready_marker" ] &&');
+    expect(script).toContain('  active_ready_marker="$ready_marker"');
+    expect(script).toContain(
+      '  if [ ! -f "$active_ready_marker" ] && [ -f "$legacy_ready_marker" ]; then active_ready_marker="$legacy_ready_marker"; fi',
+    );
+    expect(script).toContain('  [ -f "$active_ready_marker" ] &&');
     expect(script).toContain('    runtime_entry_runs "$runtime_root" &&');
     expect(script).toContain("if runtime_is_ready; then");
     expect(script).not.toContain("bin.mjs");
@@ -348,7 +352,7 @@ describe("WSL runtime cache", () => {
     // which has to be a miss rather than a pass.
     expect(script).toContain('    [ -n "$recorded_entry_digest" ] &&');
     expect(script).toContain(
-      `printf '%s\\n' "$installed_entry_digest" > "$runtime_tmp/.t3code-wsl-runtime-ready"`,
+      `printf '%s\\n' "$installed_entry_digest" > "$runtime_tmp/.dispatch-wsl-runtime-ready"`,
     );
 
     // The digest is recorded after extraction and before promotion.
@@ -356,7 +360,7 @@ describe("WSL runtime cache", () => {
     const digestRecorded = script.indexOf(
       'installed_entry_digest=$(runtime_server_entry_digest "$runtime_tmp")',
     );
-    const markerWritten = script.indexOf('> "$runtime_tmp/.t3code-wsl-runtime-ready"');
+    const markerWritten = script.indexOf('> "$runtime_tmp/.dispatch-wsl-runtime-ready"');
     const promoted = script.indexOf('mv -T "$runtime_tmp" "$runtime_root"');
     expect(digestRecorded).toBeGreaterThan(extracted);
     expect(markerWritten).toBeGreaterThan(digestRecorded);
@@ -375,7 +379,7 @@ describe("WSL runtime cache", () => {
     // The extracted tree is rejected before the ready marker is written, so a
     // defective archive falls back to the mounted tree instead of caching.
     const payloadValidated = script.indexOf('runtime_entry_runs "$runtime_tmp"');
-    const markerWritten = script.indexOf('> "$runtime_tmp/.t3code-wsl-runtime-ready"');
+    const markerWritten = script.indexOf('> "$runtime_tmp/.dispatch-wsl-runtime-ready"');
     const promoted = script.indexOf('mv -T "$runtime_tmp" "$runtime_root"');
     expect(payloadValidated).toBeGreaterThan(-1);
     expect(markerWritten).toBeGreaterThan(payloadValidated);
@@ -397,7 +401,9 @@ describe("WSL runtime cache", () => {
     expect(script).toContain('[ "$candidate" -nt "$previous_runtime" ]');
     expect(script).toContain('[ "$candidate" != "$current_runtime" ] || continue');
     expect(script).toContain('[ "$candidate" != "$previous_runtime" ] || continue');
-    expect(script).toContain('[ -f "$candidate/.t3code-wsl-runtime-ready" ] || continue');
+    expect(script).toContain(
+      '[ -f "$candidate/.dispatch-wsl-runtime-ready" ] || [ -f "$candidate/.t3code-wsl-runtime-ready" ] || continue',
+    );
     expect(script).toContain('rm -rf -- "$candidate"');
   });
 
@@ -439,7 +445,9 @@ describe("WSL runtime cache", () => {
 
     // Readiness is a presence check, so a tree whose pty.node is present but
     // unloadable stays ready forever unless the probe can revoke the marker.
-    expect(script).toContain('rm -f "$runtime_parent/1.2.3_x64/.t3code-wsl-runtime-ready"');
+    expect(script).toContain(
+      'rm -f "$runtime_parent/1.2.3_x64/.dispatch-wsl-runtime-ready" "$runtime_parent/1.2.3_x64/.t3code-wsl-runtime-ready"',
+    );
     // Deleting the tree here would pull it out from under any backend still
     // running from it; the next install moves an unready root aside instead.
     expect(script).not.toContain("rm -rf");
@@ -510,8 +518,37 @@ describe.skipIf(posixShellRunner === null)("WSL runtime install script (executed
 
     expect(installed.status, installed.stderr).toBe(0);
     expect(parseWslRuntimeRoot(installed.stdout)).toBe(fixture.runtimeRoot);
-    const legacy = runShell(`set -eu\ntest ! -e ${sh(`${fixture.work}/home/.t3/wsl-runtime`)}`);
+    const legacy = runShell(
+      [
+        "set -eu",
+        `test -f ${sh(`${fixture.runtimeRoot}/.dispatch-wsl-runtime-ready`)}`,
+        `test ! -e ${sh(`${fixture.runtimeRoot}/.t3code-wsl-runtime-ready`)}`,
+        `test ! -e ${sh(`${fixture.work}/home/.t3/wsl-runtime`)}`,
+      ].join("\n"),
+    );
     expect(legacy.status, legacy.stderr).toBe(0);
+  });
+
+  it("adopts a legacy ready marker in place and promotes the Dispatch marker", () => {
+    const fixture = createFixture();
+    expect(fixture.install().status).toBe(0);
+    const legacyReady = runShell(
+      [
+        "set -eu",
+        `mv ${sh(`${fixture.runtimeRoot}/.dispatch-wsl-runtime-ready`)} ${sh(`${fixture.runtimeRoot}/.t3code-wsl-runtime-ready`)}`,
+        `rm ${sh(fixture.archivePath)}`,
+      ].join("\n"),
+    );
+    expect(legacyReady.status, legacyReady.stderr).toBe(0);
+
+    const warm = fixture.install();
+
+    expect(warm.status, warm.stderr).toBe(0);
+    expect(parseWslRuntimeRoot(warm.stdout)).toBe(fixture.runtimeRoot);
+    const promoted = runShell(
+      `set -eu\ntest -f ${sh(`${fixture.runtimeRoot}/.dispatch-wsl-runtime-ready`)}`,
+    );
+    expect(promoted.status, promoted.stderr).toBe(0);
   });
 
   it("adopts an existing legacy runtime cache root in place", () => {
@@ -829,7 +866,7 @@ describe.skipIf(posixShellRunner === null)("WSL runtime install script (executed
         "set -eu",
         `runtime_root=${sh(fixture.runtimeRoot)}`,
         `runtime_parent=${sh(fixture.runtimeParent)}`,
-        'rm "$runtime_root/.t3code-wsl-runtime-ready"',
+        'rm "$runtime_root/.dispatch-wsl-runtime-ready"',
         'sh -c "sleep 30" "$runtime_root/t3" >/dev/null 2>&1 &',
         "active_pid=$!",
         "sleep 0.1",

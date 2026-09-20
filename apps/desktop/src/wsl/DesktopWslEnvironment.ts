@@ -280,8 +280,10 @@ const shellQuote = (value: string): string => `'${value.replaceAll("'", "'\\''")
 // promotes a verified tree. Presence alone only says an install once finished
 // here; the digest is what lets a later launch prove the entry still is what
 // that install wrote.
-const WSL_RUNTIME_READY_MARKER = ".t3code-wsl-runtime-ready";
-const WSL_RUNTIME_SELECTED_MARKER = ".t3code-wsl-runtime-selected";
+const WSL_RUNTIME_READY_MARKER = ".dispatch-wsl-runtime-ready";
+const LEGACY_WSL_RUNTIME_READY_MARKER = ".t3code-wsl-runtime-ready";
+const WSL_RUNTIME_SELECTED_MARKER = ".dispatch-wsl-runtime-selected";
+const LEGACY_WSL_RUNTIME_SELECTED_MARKER = ".t3code-wsl-runtime-selected";
 const WSL_RUNTIME_SELECTION_GRACE_MINUTES = 5;
 
 const sanitizeWslRuntimeId = (value: string): string => value.replace(/[^A-Za-z0-9._-]/g, "_");
@@ -303,6 +305,7 @@ export const buildWslRuntimeInstallScript = (
     "fi",
     `runtime_root="$runtime_parent/${safeRuntimeId}"`,
     `ready_marker="$runtime_root/${WSL_RUNTIME_READY_MARKER}"`,
+    `legacy_ready_marker="$runtime_root/${LEGACY_WSL_RUNTIME_READY_MARKER}"`,
     // The runtime is a self-contained `t3` executable with Node inside, so the
     // readiness proof is the same one the SSH runner and the CLI installers
     // use: the file is executable and `t3 --version` exits 0. That covers the
@@ -320,12 +323,14 @@ export const buildWslRuntimeInstallScript = (
     `  sha256sum "$1/t3" 2>/dev/null | cut -d ' ' -f 1`,
     "}",
     "runtime_is_ready() {",
-    '  [ -f "$ready_marker" ] &&',
+    '  active_ready_marker="$ready_marker"',
+    '  if [ ! -f "$active_ready_marker" ] && [ -f "$legacy_ready_marker" ]; then active_ready_marker="$legacy_ready_marker"; fi',
+    '  [ -f "$active_ready_marker" ] &&',
     '    runtime_entry_runs "$runtime_root" &&',
     // An empty or unreadable marker is a miss, not a pass: that is what a
     // runtime installed before the marker carried a digest looks like, and one
     // reinstall is the cheapest way to make it verifiable from then on.
-    `    recorded_entry_digest=$(tr -d '[:space:]' < "$ready_marker" 2>/dev/null) &&`,
+    `    recorded_entry_digest=$(tr -d '[:space:]' < "$active_ready_marker" 2>/dev/null) &&`,
     '    [ -n "$recorded_entry_digest" ] &&',
     '    [ "$recorded_entry_digest" = "$(runtime_server_entry_digest "$runtime_root")" ]',
     "}",
@@ -335,6 +340,7 @@ export const buildWslRuntimeInstallScript = (
     'exec 9> "$runtime_lock"',
     "flock -x 9",
     "if runtime_is_ready; then",
+    '  if [ "$active_ready_marker" != "$ready_marker" ]; then cp "$active_ready_marker" "$ready_marker"; fi',
     `  touch "$runtime_root/${WSL_RUNTIME_SELECTED_MARKER}"`,
     `  printf 'runtimeRoot:%s\\n' "$runtime_root"`,
     "  exit 0",
@@ -446,7 +452,7 @@ export const buildWslRuntimePruneScript = (runtimeId: string): string => {
     'for candidate in "$runtime_parent"/sha256-*; do',
     '  [ -d "$candidate" ] || continue',
     '  [ "$candidate" != "$current_runtime" ] || continue',
-    `  [ -f "$candidate/${WSL_RUNTIME_READY_MARKER}" ] || continue`,
+    `  [ -f "$candidate/${WSL_RUNTIME_READY_MARKER}" ] || [ -f "$candidate/${LEGACY_WSL_RUNTIME_READY_MARKER}" ] || continue`,
     '  if [ -z "$previous_runtime" ] || [ "$candidate" -nt "$previous_runtime" ]; then',
     '    previous_runtime="$candidate"',
     "  fi",
@@ -465,7 +471,8 @@ export const buildWslRuntimePruneScript = (runtimeId: string): string => {
     // Skip instead of waiting or deleting underneath it.
     "  flock -n 9 || continue",
     `  selected_marker="$candidate/${WSL_RUNTIME_SELECTED_MARKER}"`,
-    `  if [ -f "$selected_marker" ] && find "$selected_marker" -maxdepth 0 -mmin -${String(WSL_RUNTIME_SELECTION_GRACE_MINUTES)} -print -quit | grep -q .; then`,
+    `  legacy_selected_marker="$candidate/${LEGACY_WSL_RUNTIME_SELECTED_MARKER}"`,
+    `  if { [ -f "$selected_marker" ] && find "$selected_marker" -maxdepth 0 -mmin -${String(WSL_RUNTIME_SELECTION_GRACE_MINUTES)} -print -quit | grep -q .; } || { [ -f "$legacy_selected_marker" ] && find "$legacy_selected_marker" -maxdepth 0 -mmin -${String(WSL_RUNTIME_SELECTION_GRACE_MINUTES)} -print -quit | grep -q .; }; then`,
     "    flock -u 9",
     "    continue",
     "  fi",
@@ -496,7 +503,7 @@ export const buildWslRuntimeInvalidateScript = (runtimeId: string): string => {
     'if [ ! -d "$runtime_parent" ] && [ -d "$HOME/.t3/wsl-runtime" ]; then',
     '  runtime_parent="$HOME/.t3/wsl-runtime"',
     "fi",
-    `rm -f "$runtime_parent/${safeRuntimeId}/${WSL_RUNTIME_READY_MARKER}"`,
+    `rm -f "$runtime_parent/${safeRuntimeId}/${WSL_RUNTIME_READY_MARKER}" "$runtime_parent/${safeRuntimeId}/${LEGACY_WSL_RUNTIME_READY_MARKER}"`,
   ].join("\n");
 };
 

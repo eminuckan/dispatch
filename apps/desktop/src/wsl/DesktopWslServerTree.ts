@@ -24,7 +24,8 @@ export type WslServerTreeResult =
   | { readonly ok: true; readonly root: string }
   | { readonly ok: false; readonly reason: string; readonly fatal: boolean };
 
-const MARKER_FILE_NAME = "t3code-wsl-server-tree.json";
+const MARKER_FILE_NAME = "dispatch-wsl-server-tree.json";
+const LEGACY_MARKER_FILE_NAME = "t3code-wsl-server-tree.json";
 const COPY_CONCURRENCY = 8;
 
 const Marker = Schema.Struct({ version: Schema.String });
@@ -140,9 +141,25 @@ export const make = Effect.gen(function* () {
   });
 
   const markerMatches = Effect.gen(function* () {
-    const raw = yield* fs.readFileString(join(versionDir, MARKER_FILE_NAME));
-    const marker = yield* decodeMarker(raw);
-    return marker.version === version;
+    const canonicalPath = join(versionDir, MARKER_FILE_NAME);
+    const canonical = yield* fs
+      .readFileString(canonicalPath)
+      .pipe(Effect.flatMap(decodeMarker), Effect.option);
+    if (canonical._tag === "Some") return canonical.value.version === version;
+
+    const legacyPath = join(versionDir, LEGACY_MARKER_FILE_NAME);
+    const legacy = yield* fs
+      .readFileString(legacyPath)
+      .pipe(Effect.flatMap(decodeMarker), Effect.option);
+    if (legacy._tag === "None" || legacy.value.version !== version) return false;
+
+    // Adopt a completed pre-Dispatch extraction in place. The tree itself is
+    // immutable for this app version, so only the ownership marker needs to
+    // move forward; no expensive re-extraction or live-file copy is required.
+    const markerJson = yield* encodeMarker(legacy.value);
+    yield* fs.writeFileString(canonicalPath, `${markerJson}\n`);
+    yield* fs.remove(legacyPath, { force: true }).pipe(Effect.ignore);
+    return true;
   }).pipe(Effect.orElseSucceed(() => false));
 
   const extract = Effect.gen(function* () {
@@ -186,6 +203,7 @@ export const make = Effect.gen(function* () {
             // this ordering, a surviving marker makes ensure reuse that
             // half-deleted fallback instead of extracting it again.
             yield* fs.remove(join(versionDir, MARKER_FILE_NAME), { force: true });
+            yield* fs.remove(join(versionDir, LEGACY_MARKER_FILE_NAME), { force: true });
             yield* fs.remove(treeRoot, { recursive: true, force: true });
           }).pipe(
             Effect.catch((cause) =>

@@ -4,20 +4,25 @@ import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Encoding from "effect/Encoding";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as SynchronizedRef from "effect/SynchronizedRef";
 
-const PREVIEW_PARTITION_PREFIX = "persist:t3code-preview-";
+const PREVIEW_PARTITION_PREFIX = "persist:dispatch-preview-";
+const LEGACY_PREVIEW_PARTITION_PREFIX = "persist:t3code-preview-";
 /**
  * Incognito partitions deliberately omit the `persist:` prefix, which is what
  * makes Chromium keep them in memory and discard them with the process. They
  * still carry the product prefix so `isPartition` can admit them — the
  * `will-attach-webview` gate rejects anything it does not recognise.
  */
-const PREVIEW_EPHEMERAL_PARTITION_PREFIX = "t3code-preview-ephemeral-";
+const PREVIEW_EPHEMERAL_PARTITION_PREFIX = "dispatch-preview-ephemeral-";
+const LEGACY_PREVIEW_EPHEMERAL_PARTITION_PREFIX = "t3code-preview-ephemeral-";
 const PROFILE_PARTITION_MARKER = "profile-";
+const PARTITION_ADOPTION_MARKER_PREFIX = ".dispatch-preview-partition-";
 
 export type BrowserSessionPartitionNamespace = "profile";
 
@@ -48,6 +53,19 @@ export class BrowserSessionPartitionDerivationError extends Schema.TaggedError<B
 ) {
   override get message(): string {
     return `Failed to derive a desktop preview browser partition for scope ${this.scope}.`;
+  }
+}
+
+export class BrowserSessionPartitionResolutionError extends Schema.TaggedError<BrowserSessionPartitionResolutionError>()(
+  "BrowserSessionPartitionResolutionError",
+  {
+    scope: Schema.String,
+    partition: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Failed to resolve a desktop preview browser partition for scope ${this.scope} (partition ${this.partition}).`;
   }
 }
 
@@ -88,14 +106,22 @@ export class BrowserSessionCacheClearError extends Schema.TaggedError<BrowserSes
   }
 }
 
+export const BrowserSessionGetPartitionError = Schema.Union([
+  BrowserSessionPartitionDerivationError,
+  BrowserSessionPartitionResolutionError,
+]);
+export type BrowserSessionGetPartitionError = typeof BrowserSessionGetPartitionError.Type;
+
 export const BrowserSessionGetSessionError = Schema.Union([
   BrowserSessionPartitionDerivationError,
+  BrowserSessionPartitionResolutionError,
   BrowserSessionCreationError,
 ]);
 export type BrowserSessionGetSessionError = typeof BrowserSessionGetSessionError.Type;
 
 export const BrowserSessionError = Schema.Union([
   BrowserSessionPartitionDerivationError,
+  BrowserSessionPartitionResolutionError,
   BrowserSessionCreationError,
   BrowserSessionStorageClearError,
   BrowserSessionCacheClearError,
@@ -109,7 +135,7 @@ export class BrowserSession extends Context.Service<
       scope?: string,
       persistent?: boolean,
       namespace?: BrowserSessionPartitionNamespace,
-    ) => Effect.Effect<string, BrowserSessionPartitionDerivationError>;
+    ) => Effect.Effect<string, BrowserSessionGetPartitionError>;
     readonly isPartition: (partition: string) => boolean;
     readonly getSession: (
       scope?: string,
@@ -162,7 +188,80 @@ const encodeScopeForDigest = (scope: string): Uint8Array =>
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* BrowserSessionMake() {
   const crypto = yield* Crypto.Crypto;
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
   const sessionsRef = yield* SynchronizedRef.make<ReadonlyMap<string, Session>>(new Map());
+  const adoptedPartitions = new Map<string, string>();
+  const probedSessions = new Map<string, Session>();
+
+  const resolvePersistedPartition = Effect.fn("BrowserSession.resolvePersistedPartition")(
+    function* (scope: string, canonicalPartition: string, legacyPartition: string, suffix: string) {
+      const cached = adoptedPartitions.get(canonicalPartition);
+      if (cached) return cached;
+
+      const mapResolutionError = (cause: unknown) =>
+        new BrowserSessionPartitionResolutionError({
+          scope,
+          partition: canonicalPartition,
+          cause,
+        });
+
+      // Electron tells us the real profile root, avoiding a hard-coded userData
+      // layout. From that canonical sibling we can detect the deterministic
+      // pre-Dispatch partition without opening or copying it.
+      const canonicalSession = yield* Effect.try({
+        try: () => session.fromPartition(canonicalPartition),
+        catch: mapResolutionError,
+      });
+      probedSessions.set(canonicalPartition, canonicalSession);
+      const canonicalStoragePath = canonicalSession.storagePath;
+      if (!canonicalStoragePath) {
+        adoptedPartitions.set(canonicalPartition, canonicalPartition);
+        return canonicalPartition;
+      }
+      const canonicalName = canonicalPartition.slice("persist:".length);
+      if (path.basename(canonicalStoragePath) !== canonicalName) {
+        adoptedPartitions.set(canonicalPartition, canonicalPartition);
+        return canonicalPartition;
+      }
+      const parent = path.dirname(canonicalStoragePath);
+      const legacyName = legacyPartition.slice("persist:".length);
+      const legacyStoragePath = path.join(parent, legacyName);
+      const markerPath = path.join(parent, `${PARTITION_ADOPTION_MARKER_PREFIX}${suffix}`);
+      const markerExists = yield* fs.exists(markerPath).pipe(Effect.mapError(mapResolutionError));
+      const recorded = markerExists
+        ? yield* fs.readFileString(markerPath).pipe(
+            Effect.map((value) => value.trim()),
+            Effect.mapError(mapResolutionError),
+          )
+        : "";
+      const legacyExists = yield* fs
+        .exists(legacyStoragePath)
+        .pipe(Effect.mapError(mapResolutionError));
+      const selected =
+        recorded === "canonical"
+          ? canonicalPartition
+          : recorded === "legacy" && legacyExists
+            ? legacyPartition
+            : legacyExists
+              ? legacyPartition
+              : canonicalPartition;
+
+      // Persist only the ownership decision, not Chromium state. Existing T3
+      // profile data is adopted in place; fresh profiles are Dispatch-owned.
+      yield* fs
+        .makeDirectory(parent, { recursive: true })
+        .pipe(Effect.mapError(mapResolutionError));
+      yield* fs
+        .writeFileString(markerPath, `${selected === legacyPartition ? "legacy" : "canonical"}\n`)
+        .pipe(Effect.mapError(mapResolutionError));
+      if (selected !== canonicalPartition) {
+        probedSessions.delete(canonicalPartition);
+      }
+      adoptedPartitions.set(canonicalPartition, selected);
+      return selected;
+    },
+  );
 
   const getPartition = Effect.fn("BrowserSession.getPartition")(function* (
     scope = "shared",
@@ -178,11 +277,14 @@ export const make = Effect.gen(function* BrowserSessionMake() {
           }),
       ),
     );
-    const prefix = persistent ? PREVIEW_PARTITION_PREFIX : PREVIEW_EPHEMERAL_PARTITION_PREFIX;
-    // Legacy/default partitions are prefix + hex digest. The non-hex profile
-    // marker creates a disjoint namespace while leaving every legacy default
-    // partition byte-for-byte unchanged.
-    return `${prefix}${namespace === "profile" ? PROFILE_PARTITION_MARKER : ""}${Encoding.encodeHex(digest).slice(0, 20)}`;
+    const suffix = `${namespace === "profile" ? PROFILE_PARTITION_MARKER : ""}${Encoding.encodeHex(digest).slice(0, 20)}`;
+    if (!persistent) return `${PREVIEW_EPHEMERAL_PARTITION_PREFIX}${suffix}`;
+    return yield* resolvePersistedPartition(
+      scope,
+      `${PREVIEW_PARTITION_PREFIX}${suffix}`,
+      `${LEGACY_PREVIEW_PARTITION_PREFIX}${suffix}`,
+      suffix,
+    );
   });
 
   const getSession = Effect.fn("BrowserSession.getSession")(function* (
@@ -196,7 +298,8 @@ export const make = Effect.gen(function* BrowserSessionMake() {
       if (existing) return Effect.succeed([existing, sessions] as const);
       return Effect.try({
         try: () => {
-          const browserSession = session.fromPartition(partition);
+          const browserSession = probedSessions.get(partition) ?? session.fromPartition(partition);
+          probedSessions.delete(partition);
           // The guest keeps Electron's native User-Agent. Rewriting it in any
           // form — even variants that keep the Electron token — makes Cloudflare
           // Turnstile fail its integrity check with error 600010 and recreate
@@ -227,7 +330,9 @@ export const make = Effect.gen(function* BrowserSessionMake() {
     getPartition,
     isPartition: (partition) =>
       partition.startsWith(PREVIEW_PARTITION_PREFIX) ||
-      partition.startsWith(PREVIEW_EPHEMERAL_PARTITION_PREFIX),
+      partition.startsWith(PREVIEW_EPHEMERAL_PARTITION_PREFIX) ||
+      partition.startsWith(LEGACY_PREVIEW_PARTITION_PREFIX) ||
+      partition.startsWith(LEGACY_PREVIEW_EPHEMERAL_PARTITION_PREFIX),
     getSession,
     clearCookies: Effect.fn("BrowserSession.clearCookies")(function* (partitions?) {
       const sessions = yield* SynchronizedRef.get(sessionsRef);

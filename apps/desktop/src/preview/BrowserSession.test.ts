@@ -2,9 +2,14 @@ import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import { beforeEach, vi } from "vite-plus/test";
+
+let storageRoot: string | undefined;
+let partitionStoragePath: ((partition: string) => string | undefined) | undefined;
 
 const { fromPartition, sessions } = vi.hoisted(() => ({
   fromPartition: vi.fn(),
@@ -14,6 +19,7 @@ const { fromPartition, sessions } = vi.hoisted(() => ({
       readonly clearCache: ReturnType<typeof vi.fn>;
       readonly clearStorageData: ReturnType<typeof vi.fn>;
       readonly getUserAgent: ReturnType<typeof vi.fn<() => string>>;
+      readonly storagePath: string | undefined;
       readonly setPermissionRequestHandler: ReturnType<typeof vi.fn>;
       readonly setPermissionCheckHandler: ReturnType<typeof vi.fn>;
       readonly setUserAgent: ReturnType<typeof vi.fn>;
@@ -30,9 +36,12 @@ vi.mock("electron", () => ({
 import * as BrowserSession from "./BrowserSession.ts";
 
 const layer = BrowserSession.layer.pipe(Layer.provide(NodeServices.layer));
+const layerWithNodeServices = Layer.merge(layer, NodeServices.layer);
 
 describe("BrowserSession", () => {
   beforeEach(() => {
+    storageRoot = undefined;
+    partitionStoragePath = undefined;
     sessions.clear();
     fromPartition.mockReset();
     fromPartition.mockImplementation((partition: string) => {
@@ -40,6 +49,7 @@ describe("BrowserSession", () => {
         clearCache: vi.fn(() => Promise.resolve()),
         clearStorageData: vi.fn(() => Promise.resolve()),
         getUserAgent: vi.fn(() => "Mozilla/5.0 Electron/41.5.0 t3code/0.0.27"),
+        storagePath: partitionStoragePath?.(partition),
         setPermissionRequestHandler: vi.fn(),
         setPermissionCheckHandler: vi.fn(),
         setUserAgent: vi.fn(),
@@ -56,9 +66,14 @@ describe("BrowserSession", () => {
       const partition = yield* browserSessions.getPartition("scope-a");
       const first = yield* browserSessions.getSession("scope-a");
       const second = yield* browserSessions.getSession("scope-a");
+      const ephemeral = yield* browserSessions.getPartition("scope-a", false);
 
-      assert.strictEqual(partition, "persist:t3code-preview-f051bb2c68cb7b2fe969");
+      assert.strictEqual(partition, "persist:dispatch-preview-f051bb2c68cb7b2fe969");
+      assert.strictEqual(ephemeral, "dispatch-preview-ephemeral-f051bb2c68cb7b2fe969");
       assert.strictEqual(first, second);
+      // Partition resolution probes Electron once so it can discover the real
+      // profile root. The canonical probe is reused when getSession configures
+      // permissions, so no second canonical Session is created.
       assert.strictEqual(fromPartition.mock.calls.length, 1);
     }).pipe(Effect.provide(layer)),
   );
@@ -77,29 +92,109 @@ describe("BrowserSession", () => {
       const literal = yield* browserSessions.getPartition("p\\ud800");
       assert.notStrictEqual(literal, loneSurrogate);
 
-      // And a well-formed scope still lands on its historical partition.
+      // Well-formed scopes keep the same digest while fresh ownership moves to
+      // the Dispatch partition namespace.
       assert.strictEqual(
         yield* browserSessions.getPartition("scope-a"),
-        "persist:t3code-preview-f051bb2c68cb7b2fe969",
+        "persist:dispatch-preview-f051bb2c68cb7b2fe969",
       );
     }).pipe(Effect.provide(layer)),
   );
 
-  it.effect("keeps legacy defaults disjoint from nondefault profile partitions", () =>
+  it.effect("keeps default and nondefault profile partitions disjoint across both identities", () =>
     Effect.gen(function* () {
       const browserSessions = yield* BrowserSession.BrowserSession;
 
       // These share the same scope string: default environment `a::b`, and
       // environment `a` with nondefault profile `b`.
-      const legacyDefault = yield* browserSessions.getPartition("a::b");
+      const defaultPartition = yield* browserSessions.getPartition("a::b");
       const nondefaultProfile = yield* browserSessions.getPartition("a::b", true, "profile");
 
-      assert.strictEqual(legacyDefault, "persist:t3code-preview-78f0be89237d77f7a70e");
-      assert.strictEqual(nondefaultProfile, "persist:t3code-preview-profile-78f0be89237d77f7a70e");
-      assert.notStrictEqual(nondefaultProfile, legacyDefault);
-      assert.isTrue(browserSessions.isPartition(legacyDefault));
+      assert.strictEqual(defaultPartition, "persist:dispatch-preview-78f0be89237d77f7a70e");
+      assert.strictEqual(
+        nondefaultProfile,
+        "persist:dispatch-preview-profile-78f0be89237d77f7a70e",
+      );
+      assert.notStrictEqual(nondefaultProfile, defaultPartition);
+      assert.isTrue(browserSessions.isPartition(defaultPartition));
       assert.isTrue(browserSessions.isPartition(nondefaultProfile));
+      assert.isTrue(browserSessions.isPartition("persist:t3code-preview-78f0be89237d77f7a70e"));
+      assert.isTrue(browserSessions.isPartition("t3code-preview-ephemeral-78f0be89237d77f7a70e"));
     }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("adopts an existing legacy persistent partition in place", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      storageRoot = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "dispatch-browser-session-test-",
+      });
+      partitionStoragePath = (partition) =>
+        storageRoot && partition.startsWith("persist:")
+          ? path.join(storageRoot, partition.slice("persist:".length))
+          : undefined;
+      const suffix = "f051bb2c68cb7b2fe969";
+      const legacyDirectory = path.join(storageRoot, `t3code-preview-${suffix}`);
+      const sentinel = path.join(legacyDirectory, "legacy-state");
+      yield* fileSystem.makeDirectory(legacyDirectory, { recursive: true });
+      yield* fileSystem.writeFileString(sentinel, "keep-me");
+
+      const browserSessions = yield* BrowserSession.BrowserSession;
+      const partition = yield* browserSessions.getPartition("scope-a");
+
+      assert.strictEqual(partition, `persist:t3code-preview-${suffix}`);
+      assert.equal(
+        yield* fileSystem.readFileString(
+          path.join(storageRoot, `.dispatch-preview-partition-${suffix}`),
+        ),
+        "legacy\n",
+      );
+      assert.equal(yield* fileSystem.readFileString(sentinel), "keep-me");
+
+      const browserSession = yield* browserSessions.getSession("scope-a");
+      assert.strictEqual(browserSession as unknown, sessions.get(partition));
+      assert.strictEqual(fromPartition.mock.calls.length, 2);
+    }).pipe(Effect.provide(layerWithNodeServices), Effect.scoped),
+  );
+
+  it.effect("keeps a recorded canonical decision when a legacy sibling appears later", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      storageRoot = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "dispatch-browser-session-test-",
+      });
+      partitionStoragePath = (partition) =>
+        storageRoot && partition.startsWith("persist:")
+          ? path.join(storageRoot, partition.slice("persist:".length))
+          : undefined;
+      const suffix = "f051bb2c68cb7b2fe969";
+      const canonical = `persist:dispatch-preview-${suffix}`;
+
+      const first = yield* Effect.gen(function* () {
+        const browserSessions = yield* BrowserSession.BrowserSession;
+        return yield* browserSessions.getPartition("scope-a");
+      }).pipe(Effect.provide(BrowserSession.layer.pipe(Layer.provide(NodeServices.layer))));
+      assert.strictEqual(first, canonical);
+
+      yield* fileSystem.makeDirectory(path.join(storageRoot, `t3code-preview-${suffix}`), {
+        recursive: true,
+      });
+
+      const second = yield* Effect.gen(function* () {
+        const browserSessions = yield* BrowserSession.BrowserSession;
+        return yield* browserSessions.getPartition("scope-a");
+      }).pipe(Effect.provide(BrowserSession.layer.pipe(Layer.provide(NodeServices.layer))));
+
+      assert.strictEqual(second, canonical);
+      assert.equal(
+        yield* fileSystem.readFileString(
+          path.join(storageRoot, `.dispatch-preview-partition-${suffix}`),
+        ),
+        "canonical\n",
+      );
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
   // A rewritten session UA — any variant, even ones that keep the Electron
@@ -120,6 +215,7 @@ describe("BrowserSession", () => {
           clearCache: vi.fn(() => Promise.resolve()),
           clearStorageData: vi.fn(() => Promise.resolve()),
           getUserAgent: vi.fn(() => userAgent),
+          storagePath: partitionStoragePath?.(partition),
           setPermissionRequestHandler: vi.fn(),
           setPermissionCheckHandler: vi.fn(),
           setUserAgent: vi.fn((next: string) => {
@@ -205,6 +301,10 @@ describe("BrowserSession", () => {
       }),
     );
 
+    const failingLayer = BrowserSession.layer.pipe(
+      Layer.provide(Layer.merge(NodeServices.layer, failingCryptoLayer)),
+    );
+
     return Effect.gen(function* () {
       const browserSessions = yield* BrowserSession.BrowserSession;
       const error = yield* browserSessions.getPartition("environment-a").pipe(Effect.flip);
@@ -218,18 +318,35 @@ describe("BrowserSession", () => {
         "Failed to derive a desktop preview browser partition for scope environment-a.",
       );
       assert.notInclude(error.message, nativeCause.message);
-    }).pipe(Effect.provide(BrowserSession.layer.pipe(Layer.provide(failingCryptoLayer))));
+    }).pipe(Effect.provide(failingLayer));
   });
 
-  it.effect("preserves session scope, partition, and the Electron failure", () =>
+  it.effect("correlates Electron failures while resolving a persistent partition", () =>
     Effect.gen(function* () {
-      const cause = new Error("Electron session failed");
+      const cause = new Error("Electron partition probe failed");
       fromPartition.mockImplementationOnce(() => {
         throw cause;
       });
       const browserSessions = yield* BrowserSession.BrowserSession;
-      const partition = yield* browserSessions.getPartition("environment-b");
-      const error = yield* browserSessions.getSession("environment-b").pipe(Effect.flip);
+      const error = yield* browserSessions.getPartition("environment-b").pipe(Effect.flip);
+
+      assert.instanceOf(error, BrowserSession.BrowserSessionPartitionResolutionError);
+      assert.equal(error.scope, "environment-b");
+      assert.equal(error.partition, "persist:dispatch-preview-833e6f1ab2167cddd25d");
+      assert.strictEqual(error.cause, cause);
+      assert.notInclude(error.message, cause.message);
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("preserves session scope, partition, and the Electron failure", () =>
+    Effect.gen(function* () {
+      const browserSessions = yield* BrowserSession.BrowserSession;
+      const partition = yield* browserSessions.getPartition("environment-b", false);
+      const cause = new Error("Electron session failed");
+      fromPartition.mockImplementationOnce(() => {
+        throw cause;
+      });
+      const error = yield* browserSessions.getSession("environment-b", false).pipe(Effect.flip);
 
       assert.instanceOf(error, BrowserSession.BrowserSessionCreationError);
       assert.equal(error.scope, "environment-b");
@@ -270,13 +387,13 @@ describe("BrowserSession", () => {
       const browserSessions = yield* BrowserSession.BrowserSession;
       const partition = yield* browserSessions.getPartition("scope-untouched");
 
-      // Deriving the partition string does not create the session, and the
-      // clear only walks sessions it already holds. Without loading it first
-      // this reports success and deletes nothing — which is what a user
-      // clearing a profile after a restart would get.
-      assert.isUndefined(sessions.get(partition));
+      // Persistent partition derivation probes Electron only to discover the
+      // profile root. It is not registered in BrowserSession's configured
+      // session map yet, so clear remains a no-op until getSession is called.
+      const probed = sessions.get(partition);
+      assert.isDefined(probed);
       yield* browserSessions.clearCookies([partition]);
-      assert.isUndefined(sessions.get(partition));
+      assert.strictEqual(probed.clearStorageData.mock.calls.length, 0);
 
       yield* browserSessions.getSession("scope-untouched");
       yield* browserSessions.clearCookies([partition]);
