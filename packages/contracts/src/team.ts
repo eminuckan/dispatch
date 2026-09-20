@@ -1,6 +1,6 @@
 import * as Schema from "effect/Schema";
 import { ModelSelection, ThreadTurnStartCommand } from "./orchestration.ts";
-import { MessageId, ProjectId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { MessageId, ProjectId, ThreadId, TurnId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 
 const Id = TrimmedNonEmptyString.check(Schema.isMaxLength(128));
 const Count = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
@@ -104,6 +104,10 @@ export const TeamTask = Schema.Struct({
 export type TeamTask = typeof TeamTask.Type;
 export const TeamExecutionTurn = Schema.Struct({
   id: Id,
+  /** Canonical provider turn receipt for exact protocol-message presentation. */
+  providerTurnId: Schema.optional(TurnId),
+  /** Final assistant message emitted by this managed turn, when known. */
+  resultMessageId: Schema.optional(MessageId),
   estimatedAttemptUsd: Schema.optional(
     Schema.NullOr(
       Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0), Schema.isLessThanOrEqualTo(1_000_000)),
@@ -242,6 +246,8 @@ export const TeamThreadView = Schema.Struct({
       status: TeamExecutionTurn.fields.status,
       succeeded: Schema.Boolean,
       summary: Schema.NullOr(Schema.String),
+      providerTurnId: Schema.optional(TurnId),
+      resultMessageId: Schema.optional(MessageId),
     }),
   ),
 });

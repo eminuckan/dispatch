@@ -1,46 +1,11 @@
 import { teamAgentDisplayName } from "@t3tools/shared/teamAgentNames";
+import type { TeamThreadView } from "@t3tools/contracts";
+import {
+  isTeamProtocolRole,
+  looksLikeTeamProtocol,
+  teamProtocolSummary,
+} from "@t3tools/shared/teamProtocolPresentation";
 import type { TimelineEntry } from "../../session-logic";
-
-function structuredTeamReply(text: string): string | null {
-  const trimmed = text.trim();
-  if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return text;
-  let value: unknown;
-  try {
-    value = JSON.parse(trimmed);
-  } catch {
-    // Managed protocol JSON streams through partial states. Do not flash raw
-    // scheduler syntax while the final object is still being assembled.
-    return null;
-  }
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
-  const record = value as Record<string, unknown>;
-  if (
-    (record.action === "accept" || record.action === "correct") &&
-    typeof record.summary === "string" &&
-    Array.isArray(record.checks)
-  ) {
-    return record.summary.trim() || null;
-  }
-  if (
-    typeof record.rationale === "string" &&
-    Array.isArray(record.acceptance) &&
-    Array.isArray(record.tasks)
-  ) {
-    const objectives = record.tasks.flatMap((task) => {
-      if (typeof task !== "object" || task === null || !("objective" in task)) return [];
-      const objective = (task as Record<string, unknown>).objective;
-      return typeof objective === "string" ? [objective.trim()] : [];
-    });
-    const sections = [record.rationale.trim()];
-    if (objectives.length > 0)
-      sections.push(
-        `**Planlanan işler**\n${objectives.map((objective) => `- ${objective}`).join("\n")}`,
-      );
-    return sections.filter(Boolean).join("\n\n") || null;
-  }
-  if (typeof record.summary === "string") return record.summary.trim() || null;
-  return null;
-}
 
 // Exact managed-thread membership lets us hide only scheduler prompts while
 // preserving the provider's real reasoning/tool/message stream in the normal
@@ -48,30 +13,61 @@ function structuredTeamReply(text: string): string | null {
 export function teamConversationEntries(
   entries: ReadonlyArray<TimelineEntry>,
   coordinationIds: ReadonlyArray<string>,
+  turns: TeamThreadView["turns"] = [],
 ): TimelineEntry[] {
   const internal = new Set(coordinationIds);
-  // Reserved runtime message IDs can arrive before the next ledger refresh.
-  // This guard runs only after exact managed-thread membership has been confirmed.
-  const isCoordination = (id: string) => internal.has(id) || id.startsWith("team-");
-  const visible: TimelineEntry[] = [];
-  for (const entry of entries) {
-    if (entry.kind !== "message") {
-      visible.push(entry);
-      continue;
+  const protocolTurns = turns.filter((turn) => isTeamProtocolRole(turn.role));
+  const byTurn = new Map(
+    protocolTurns.flatMap((turn) =>
+      turn.providerTurnId ? [[turn.providerTurnId, turn] as const] : [],
+    ),
+  );
+  const byResult = new Map(
+    protocolTurns.flatMap((turn) =>
+      turn.resultMessageId ? [[turn.resultMessageId, turn] as const] : [],
+    ),
+  );
+  const byRequest = new Map<string, (typeof protocolTurns)[number]>(
+    protocolTurns.map((turn) => [`team-${turn.id}`, turn]),
+  );
+  let precedingRequest: (typeof protocolTurns)[number] | undefined;
+  let unknownManagedRequest = false;
+
+  return entries.flatMap((entry): TimelineEntry[] => {
+    if (entry.kind !== "message") return [entry];
+    if (entry.message.role === "assistant") {
+      const turn =
+        byResult.get(entry.message.id) ??
+        (entry.message.turnId ? byTurn.get(entry.message.turnId) : undefined) ??
+        (precedingRequest?.providerTurnId ? undefined : precedingRequest);
+      if (!turn || !isTeamProtocolRole(turn.role)) {
+        // A freshly reserved scheduler request can reach the native timeline a
+        // moment before its team-ledger/receipt metadata. The reserved team-*
+        // namespace is exact enough to suppress only protocol-shaped leakage
+        // during that short window; normal commentary remains visible.
+        if (unknownManagedRequest && looksLikeTeamProtocol(entry.message.text)) return [];
+        return [entry];
+      }
+      if (turn.resultMessageId && turn.resultMessageId !== entry.message.id) return [entry];
+      const summary = teamProtocolSummary(turn.role, entry.message.text);
+      if (summary) return [{ ...entry, message: { ...entry.message, text: summary } }];
+      if (!looksLikeTeamProtocol(entry.message.text)) return [entry];
+      if (entry.message.streaming) return [];
+      return [
+        {
+          ...entry,
+          message: {
+            ...entry.message,
+            text: "The lead’s structured response could not be read. Check the team status in Agents.",
+          },
+        },
+      ];
     }
-    if (entry.message.role === "user") {
-      if (!isCoordination(entry.message.id)) visible.push(entry);
-      continue;
-    }
-    const rendered = structuredTeamReply(entry.message.text);
-    if (rendered === null) continue;
-    visible.push(
-      rendered === entry.message.text
-        ? entry
-        : { ...entry, message: { ...entry.message, text: rendered } },
-    );
-  }
-  return visible;
+    if (entry.message.role !== "user") return [entry];
+    precedingRequest = byRequest.get(entry.message.id);
+    unknownManagedRequest = precedingRequest === undefined && entry.message.id.startsWith("team-");
+    return internal.has(entry.message.id) || entry.message.id.startsWith("team-") ? [] : [entry];
+  });
 }
 
 export function teamAgentName(

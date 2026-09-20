@@ -8,12 +8,13 @@ import {
 } from "@t3tools/contracts";
 import type { TimelineEntry } from "../../session-logic";
 import { teamConversationEntries, teamTurnLabel } from "./teamConversation.logic";
+type MessageTimelineEntry = Extract<TimelineEntry, { kind: "message" }>;
 function message(
   id: string,
   role: "user" | "assistant",
   turn: string | null,
   text: string,
-): TimelineEntry {
+): MessageTimelineEntry {
   return {
     id,
     kind: "message",
@@ -29,6 +30,20 @@ function message(
     },
   };
 }
+
+const protocolTurn: TeamThreadView["turns"][number] = {
+  id: "review",
+  role: "review",
+  taskId: "task",
+  threadId: ThreadId.make("lead"),
+  model: "lead",
+  effort: "high",
+  status: "settled",
+  succeeded: true,
+  summary: "Check complete.",
+  providerTurnId: TurnId.make("review-turn"),
+  resultMessageId: MessageId.make("review-result"),
+};
 it("hides coordination prompts while keeping normal managed assistant output and follow-ups", () => {
   const entries = [
     message("internal", "user", "a", "hidden prompt"),
@@ -91,7 +106,7 @@ it("renders managed review protocol JSON as a normal assistant message", () => {
       '{"action":"accept","summary":"Altı ölçüt karşılandı.","checks":[{"criterionIndex":0}]}',
     ),
   ];
-  const visible = teamConversationEntries(entries, ["team-review"]);
+  const visible = teamConversationEntries(entries, ["team-review"], [protocolTurn]);
   expect(visible).toHaveLength(1);
   expect(visible[0]?.kind).toBe("message");
   if (visible[0]?.kind === "message")
@@ -107,12 +122,68 @@ it("renders managed planning JSON without exposing the protocol object", () => {
       '{"acceptance":["Works"],"tasks":[{"objective":"Runtimeı güncelle"},{"objective":"UIyi doğrula"}],"rationale":"İki bağımsız iş yeterli."}',
     ),
   ];
-  const visible = teamConversationEntries(entries, []);
+  const visible = teamConversationEntries(
+    entries,
+    [],
+    [
+      {
+        ...protocolTurn,
+        id: "plan",
+        role: "plan",
+        providerTurnId: TurnId.make("plan-turn"),
+        resultMessageId: MessageId.make("plan-result"),
+      },
+    ],
+  );
   expect(visible).toHaveLength(1);
   if (visible[0]?.kind !== "message") throw new Error("Expected message");
   expect(visible[0].message.text).toContain("İki bağımsız iş yeterli.");
   expect(visible[0].message.text).toContain("- Runtimeı güncelle");
   expect(visible[0].message.text).not.toContain('"acceptance"');
+});
+
+it("rewrites only the exact managed final response and preserves commentary or manual JSON", () => {
+  const json =
+    '{"action":"correct","summary":"Add the missing timeout check.","checks":[{"command":"PRIVATE_COMMAND"}]}';
+  const entries = [
+    message("commentary", "assistant", "review-turn", json),
+    message("review-result", "assistant", "review-turn", json),
+    message("manual", "assistant", "manual-turn", json),
+  ];
+  const visible = teamConversationEntries(entries, [], [protocolTurn]);
+  expect(visible[0]).toBe(entries[0]);
+  expect(visible[1]).toEqual({
+    ...entries[1],
+    message: { ...entries[1]!.message, text: "Add the missing timeout check." },
+  });
+  expect(visible[2]).toBe(entries[2]);
+});
+
+it("suppresses only protocol-shaped streaming output for a known managed turn", () => {
+  const turn = { ...protocolTurn, resultMessageId: undefined, status: "dispatched" as const };
+  const partial = message("partial", "assistant", "review-turn", '{"action":"correct","summary":"');
+  partial.message = { ...partial.message, streaming: true };
+  const progress = message(
+    "progress",
+    "assistant",
+    "review-turn",
+    "Checking the timeout behavior.",
+  );
+  progress.message = { ...progress.message, streaming: true };
+  expect(teamConversationEntries([progress, partial], [], [turn])).toEqual([progress]);
+});
+
+it("replaces malformed completed managed protocol output instead of leaking it", () => {
+  const broken = message(
+    "review-result",
+    "assistant",
+    "review-turn",
+    '{"action":"correct","checks":',
+  );
+  const visible = teamConversationEntries([broken], [], [protocolTurn]);
+  expect(visible[0]?.kind === "message" && visible[0].message.text).toBe(
+    "The lead’s structured response could not be read. Check the team status in Agents.",
+  );
 });
 
 it("does not confuse a finished worker response with lead acceptance", () => {

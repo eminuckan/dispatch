@@ -1,5 +1,6 @@
 import { usableModel } from "./pool.ts";
 import { teamAgentDisplayName } from "@t3tools/shared/teamAgentNames";
+import { isTeamProtocolRole } from "@t3tools/shared/teamProtocolPresentation";
 import { teamThreadView } from "./presentation.ts";
 import {
   isOrchestrationCommandRejection,
@@ -380,7 +381,16 @@ export const make = Effect.gen(function* () {
             execution: {
               ...next.execution!,
               turns: next.execution!.turns.map((t) =>
-                t.id === turn.id ? { ...t, status: "settled", result, succeeded } : t,
+                t.id === turn.id
+                  ? {
+                      ...t,
+                      status: "settled",
+                      result,
+                      succeeded,
+                      ...(persistedTurn.turnId ? { providerTurnId: persistedTurn.turnId } : {}),
+                      ...(answer ? { resultMessageId: answer.id } : {}),
+                    }
+                  : t,
               ),
             },
           };
@@ -928,8 +938,35 @@ export const make = Effect.gen(function* () {
     tick,
     list: store.list,
     get: store.get,
-    forThread: (threadId: ThreadId) =>
-      store.findByThread(threadId).pipe(Effect.map(teamThreadView)),
+    forThread: Effect.fn(function* (threadId: ThreadId) {
+      const run = yield* store.findByThread(threadId);
+      const view = teamThreadView(run);
+      if (!view) return null;
+
+      // Persisted receipts backfill exact identities for older runs and for a
+      // response that is still streaming before the team ledger has settled it.
+      const receipts = yield* turns
+        .listByThreadId({ threadId: view.leadThreadId })
+        .pipe(Effect.mapError(mapError));
+      const byMessage = new Map(receipts.map((receipt) => [receipt.pendingMessageId, receipt]));
+      return {
+        ...view,
+        turns: view.turns.map((turn) => {
+          if (!isTeamProtocolRole(turn.role)) return turn;
+          const command = run?.execution?.turns.find(
+            (candidate) => candidate.id === turn.id,
+          )?.command;
+          const receipt = command ? byMessage.get(command.message.messageId) : undefined;
+          return {
+            ...turn,
+            ...(!turn.providerTurnId && receipt?.turnId ? { providerTurnId: receipt.turnId } : {}),
+            ...(!turn.resultMessageId && receipt?.assistantMessageId && receipt.completedAt
+              ? { resultMessageId: receipt.assistantMessageId }
+              : {}),
+          };
+        }),
+      };
+    }),
   };
 });
 export class TeamRuntime extends Context.Service<TeamRuntime, Effect.Success<typeof make>>()(

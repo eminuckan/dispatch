@@ -21,7 +21,10 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { OrchestrationEngineService } from "../orchestration/Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
-import { ProjectionTurnRepository } from "../persistence/Services/ProjectionTurns.ts";
+import {
+  ProjectionTurnRepository,
+  type ProjectionTurn,
+} from "../persistence/Services/ProjectionTurns.ts";
 import { ProviderRegistry } from "../provider/Services/ProviderRegistry.ts";
 import { ProcessRunner } from "../processRunner.ts";
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
@@ -90,6 +93,10 @@ function fixture(
   const checks: string[] = [];
   const threads = new Map<string, OrchestrationThread>();
   const requests = new Map<string, MessageId>();
+  const receipts = new Map<string, ProjectionTurn[]>();
+  const addReceipt = (receipt: ProjectionTurn) => {
+    receipts.set(receipt.threadId, [...(receipts.get(receipt.threadId) ?? []), receipt]);
+  };
   const complete = (
     command: Extract<OrchestrationCommand, { type: "thread.turn.start" }>,
     text: string,
@@ -97,6 +104,22 @@ function fixture(
     const turnId = TurnId.make(`turn-${command.commandId}`);
     const answer = MessageId.make(`answer-${command.commandId}`);
     requests.set(turnId, command.message.messageId);
+    addReceipt({
+      threadId: command.threadId,
+      turnId,
+      pendingMessageId: command.message.messageId,
+      sourceProposedPlanThreadId: null,
+      sourceProposedPlanId: null,
+      assistantMessageId: answer,
+      state: "completed",
+      requestedAt: date,
+      startedAt: date,
+      completedAt: date,
+      checkpointTurnCount: null,
+      checkpointRef: null,
+      checkpointStatus: null,
+      checkpointFiles: [],
+    });
     threads.set(
       command.threadId,
       decodeThread({
@@ -247,48 +270,30 @@ function fixture(
       getThreadDetailById: (id) => Effect.succeed(Option.fromUndefinedOr(threads.get(id))),
     }),
     Layer.mock(ProjectionTurnRepository)({
-      listByThreadId: ({ threadId }) => {
-        const thread = threads.get(threadId);
-        const latest = thread?.latestTurn;
-        if (!latest) return Effect.succeed([]);
-        return Effect.succeed([
-          {
-            threadId,
-            turnId: latest.turnId,
-            pendingMessageId: requests.get(latest.turnId) ?? null,
-            sourceProposedPlanThreadId: null,
-            sourceProposedPlanId: null,
-            assistantMessageId: latest.assistantMessageId,
-            state: latest.state,
-            requestedAt: latest.requestedAt,
-            startedAt: latest.startedAt,
-            completedAt: latest.completedAt,
-            checkpointTurnCount: null,
-            checkpointRef: null,
-            checkpointStatus: null,
-            checkpointFiles: [],
-          },
-        ]);
+      listByThreadId: ({ threadId }) => Effect.succeed(receipts.get(threadId) ?? []),
+      getByTurnId: ({ threadId, turnId }) => {
+        const receipt = (receipts.get(threadId) ?? []).find((entry) => entry.turnId === turnId);
+        return Effect.succeed(
+          receipt?.turnId
+            ? Option.some({ ...receipt, turnId: receipt.turnId })
+            : Option.some({
+                threadId,
+                turnId,
+                pendingMessageId: requests.get(turnId) ?? null,
+                sourceProposedPlanThreadId: null,
+                sourceProposedPlanId: null,
+                assistantMessageId: null,
+                state: "completed",
+                requestedAt: date,
+                startedAt: date,
+                completedAt: date,
+                checkpointTurnCount: null,
+                checkpointRef: null,
+                checkpointStatus: null,
+                checkpointFiles: [],
+              }),
+        );
       },
-      getByTurnId: ({ threadId, turnId }) =>
-        Effect.succeed(
-          Option.some({
-            threadId,
-            turnId,
-            pendingMessageId: requests.get(turnId) ?? null,
-            sourceProposedPlanThreadId: null,
-            sourceProposedPlanId: null,
-            assistantMessageId: null,
-            state: "completed",
-            requestedAt: date,
-            startedAt: date,
-            completedAt: date,
-            checkpointTurnCount: null,
-            checkpointRef: null,
-            checkpointStatus: null,
-            checkpointFiles: [],
-          }),
-        ),
     }),
     Layer.mock(OrchestrationEngineService)({
       dispatch: (command) =>
@@ -305,7 +310,7 @@ function fixture(
         }),
     }),
   );
-  return { commands, complete, failStart, layers, checks };
+  return { commands, complete, failStart, addReceipt, layers, checks };
 }
 it.effect(
   "dispatches a durable plan once and matches completion through the canonical request receipt",
@@ -328,11 +333,32 @@ it.effect(
         plan,
         '{"acceptance":["Combined result"],"tasks":[],"rationale":"Lead-only bounded work"}',
       );
+      f.addReceipt({
+        threadId: plan.threadId,
+        turnId: TurnId.make("turn-newer-manual"),
+        pendingMessageId: MessageId.make("manual-follow-up"),
+        sourceProposedPlanThreadId: null,
+        sourceProposedPlanId: null,
+        assistantMessageId: MessageId.make("manual-follow-up-answer"),
+        state: "completed",
+        requestedAt: date,
+        startedAt: date,
+        completedAt: date,
+        checkpointTurnCount: null,
+        checkpointRef: null,
+        checkpointStatus: null,
+        checkpointFiles: [],
+      });
+      const historicalView = yield* runtime.forThread(plan.threadId);
+      expect(historicalView?.turns[0]?.providerTurnId).toBe(`turn-${plan.commandId}`);
+      expect(historicalView?.turns[0]?.resultMessageId).toBe(`answer-${plan.commandId}`);
       yield* runtime.tick();
       expect(f.commands).toHaveLength(2);
       const run = yield* store.get(initial.id);
       expect(run.execution?.phase).toBe("integrate");
       expect(run.execution?.turns[0]?.status).toBe("settled");
+      expect(run.execution?.turns[0]?.providerTurnId).toBe(`turn-${plan.commandId}`);
+      expect(run.execution?.turns[0]?.resultMessageId).toBe(`answer-${plan.commandId}`);
       expect(run.execution?.turns[1]?.command.threadId).toBe(initial.execution?.leadThreadId);
     }).pipe(Effect.provide(SqlitePersistenceMemory));
   },

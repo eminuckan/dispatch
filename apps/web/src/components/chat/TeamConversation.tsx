@@ -66,7 +66,7 @@ export function TeamConversation({
       </div>
     );
   }
-  const visibleEntries = teamConversationEntries(entries, run.coordinationMessageIds);
+  const visibleEntries = teamConversationEntries(entries, run.coordinationMessageIds, run.turns);
   const isLead = run.leadThreadId === threadId;
   const hasObjective = visibleEntries.some(
     (entry) =>
