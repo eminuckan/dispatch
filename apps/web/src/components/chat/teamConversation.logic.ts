@@ -14,6 +14,7 @@ export function teamConversationEntries(
   entries: ReadonlyArray<TimelineEntry>,
   coordinationIds: ReadonlyArray<string>,
   turns: TeamThreadView["turns"] = [],
+  initialMessage?: { id: string; objective: string },
 ): TimelineEntry[] {
   const internal = new Set(coordinationIds);
   const protocolTurns = turns.filter((turn) => isTeamProtocolRole(turn.role));
@@ -66,6 +67,9 @@ export function teamConversationEntries(
     if (entry.message.role !== "user") return [entry];
     precedingRequest = byRequest.get(entry.message.id);
     unknownManagedRequest = precedingRequest === undefined && entry.message.id.startsWith("team-");
+    if (entry.message.id === initialMessage?.id) {
+      return [{ ...entry, message: { ...entry.message, text: initialMessage.objective } }];
+    }
     return internal.has(entry.message.id) || entry.message.id.startsWith("team-") ? [] : [entry];
   });
 }

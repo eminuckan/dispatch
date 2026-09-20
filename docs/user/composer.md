@@ -96,7 +96,10 @@ Enter to start a managed coding run. With the switch off, draft classification,
 automatic model selection, and team creation are disabled for that draft; normal
 send uses your selected model. Teams currently support
 ready configured provider adapters, use isolated worktrees from committed HEAD, and preserve the
-original checkout. Uncommitted changes and attachments are not included. The lead
+original checkout. Uncommitted changes are not included. Images and files attached
+to the composer are uploaded before team creation and are available on the team's
+initial managed turn. Terminal context, preview annotations, and review comments are
+not supported by team routing yet; remove them before starting a team. The lead
 plans work, workers receive persistent task contracts, and the lead reviews their
 results before integrating and verifying the combined change. Native subagent
 tools are disabled in managed Codex, Claude, and OpenCode sessions. Other adapters

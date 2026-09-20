@@ -4,6 +4,7 @@ import {
   ATTACHMENT_UPLOAD_URL_TTL_MS,
   type AttachmentCreateUploadUrlInput,
   AttachmentUploadSigningKeyError,
+  type ChatAttachment,
 } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
@@ -16,10 +17,16 @@ import type * as HttpServerRequest from "effect/unstable/http/HttpServerRequest"
 
 import {
   attachmentFileExtension,
+  copyLeasedPendingAttachmentsForThread,
   createPendingAttachmentId,
+  deleteThreadAttachmentCopies,
+  hasPendingAttachmentLease,
   parseThreadSegmentFromAttachmentId,
+  pendingAttachmentLeaseHasOwner,
   PENDING_ATTACHMENT_THREAD_SEGMENT,
+  releasePendingAttachmentLease,
   resolveAttachmentPathById,
+  retainPendingAttachmentLease,
   sweepStalePendingAttachments,
 } from "../attachmentStore.ts";
 import { resolveAttachmentRelativePath } from "../attachmentPaths.ts";
@@ -39,6 +46,88 @@ export const ATTACHMENT_UPLOAD_ROUTE_PREFIX = "/api/attachments/upload";
 const SIGNING_SECRET_NAME = "asset-access-signing-key";
 const PENDING_ATTACHMENT_SWEEP_INTERVAL_MS = 15 * 60_000;
 const lastPendingSweepByDirectory = new Map<string, number>();
+
+export const retainPendingAttachmentsForOwner = Effect.fn("AttachmentUpload.retainPendingForOwner")(
+  function* (input: {
+    readonly ownerId: string;
+    readonly attachments: ReadonlyArray<ChatAttachment>;
+  }) {
+    if (input.attachments.length === 0) return true;
+    const config = yield* ServerConfig.ServerConfig;
+    const nowMs = yield* Clock.currentTimeMillis;
+    const retained: string[] = [];
+    for (const attachment of input.attachments) {
+      const alreadyOwned = pendingAttachmentLeaseHasOwner({
+        attachmentsDir: config.attachmentsDir,
+        attachmentId: attachment.id,
+        ownerId: input.ownerId,
+      });
+      if (
+        parseThreadSegmentFromAttachmentId(attachment.id) !== PENDING_ATTACHMENT_THREAD_SEGMENT ||
+        !retainPendingAttachmentLease({
+          attachmentsDir: config.attachmentsDir,
+          attachmentId: attachment.id,
+          ownerId: input.ownerId,
+          nowMs,
+        })
+      ) {
+        for (const attachmentId of retained) {
+          releasePendingAttachmentLease({
+            attachmentsDir: config.attachmentsDir,
+            attachmentId,
+            ownerId: input.ownerId,
+            deleteSourceWhenUnowned: false,
+          });
+        }
+        return false;
+      }
+      if (!alreadyOwned) retained.push(attachment.id);
+    }
+    return true;
+  },
+);
+
+export const releasePendingAttachmentsForOwner = Effect.fn(
+  "AttachmentUpload.releasePendingForOwner",
+)(function* (input: {
+  readonly ownerId: string;
+  readonly attachments: ReadonlyArray<ChatAttachment>;
+}) {
+  if (input.attachments.length === 0) return;
+  const config = yield* ServerConfig.ServerConfig;
+  for (const attachment of input.attachments) {
+    releasePendingAttachmentLease({
+      attachmentsDir: config.attachmentsDir,
+      attachmentId: attachment.id,
+      ownerId: input.ownerId,
+    });
+  }
+});
+
+export const materializePendingAttachmentsForThread = Effect.fn(
+  "AttachmentUpload.materializePendingForThread",
+)(function* (input: {
+  readonly ownerId: string;
+  readonly threadId: string;
+  readonly attachments: ReadonlyArray<ChatAttachment>;
+}) {
+  if (input.attachments.length === 0) return [] as ReadonlyArray<ChatAttachment>;
+  const config = yield* ServerConfig.ServerConfig;
+  return copyLeasedPendingAttachmentsForThread({
+    attachmentsDir: config.attachmentsDir,
+    attachments: input.attachments,
+    ownerId: input.ownerId,
+    threadId: input.threadId,
+  });
+});
+
+export const deleteMaterializedThreadAttachments = Effect.fn(
+  "AttachmentUpload.deleteMaterializedThreadAttachments",
+)(function* (attachments: ReadonlyArray<ChatAttachment>) {
+  if (attachments.length === 0) return;
+  const config = yield* ServerConfig.ServerConfig;
+  deleteThreadAttachmentCopies({ attachmentsDir: config.attachmentsDir, attachments });
+});
 
 const AttachmentUploadClaims = Schema.Struct({
   version: Schema.Literal(1),
@@ -229,6 +318,14 @@ export const deletePendingAttachment = Effect.fn("AttachmentUpload.deletePending
   }
 
   const config = yield* ServerConfig.ServerConfig;
+  if (
+    hasPendingAttachmentLease({
+      attachmentsDir: config.attachmentsDir,
+      attachmentId,
+    })
+  ) {
+    return;
+  }
   const attachmentPath = resolveAttachmentPathById({
     attachmentsDir: config.attachmentsDir,
     attachmentId,

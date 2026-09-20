@@ -1,5 +1,10 @@
 import * as Schema from "effect/Schema";
-import { ModelSelection, ThreadTurnStartCommand } from "./orchestration.ts";
+import {
+  ChatAttachment,
+  ModelSelection,
+  PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
+  ThreadTurnStartCommand,
+} from "./orchestration.ts";
 import { MessageId, ProjectId, ThreadId, TurnId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 
 const Id = TrimmedNonEmptyString.check(Schema.isMaxLength(128));
@@ -155,6 +160,9 @@ export const TeamRun = Schema.Struct({
   decisions: Schema.Array(Schema.String),
   createdAt: Schema.String,
   updatedAt: Schema.String,
+  attachments: Schema.optional(
+    Schema.Array(ChatAttachment).check(Schema.isMaxLength(PROVIDER_SEND_TURN_MAX_ATTACHMENTS)),
+  ),
   execution: Schema.optional(TeamExecution),
 });
 export type TeamRun = typeof TeamRun.Type;
@@ -163,6 +171,9 @@ export const TeamStart = Schema.Struct({
   projectId: ProjectId,
   draft: TeamDraft,
   fingerprint: Id,
+  attachments: Schema.optional(
+    Schema.Array(ChatAttachment).check(Schema.isMaxLength(PROVIDER_SEND_TURN_MAX_ATTACHMENTS)),
+  ),
   // Legacy clients may send this field; execution no longer uses a turn ceiling.
   maxTurns: Schema.optional(Schema.Int),
 });

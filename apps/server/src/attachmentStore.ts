@@ -16,6 +16,8 @@ const ATTACHMENT_ID_THREAD_SEGMENT_MAX_CHARS = 80;
 const ATTACHMENT_ID_THREAD_SEGMENT_PATTERN = "[a-z0-9_]+(?:-[a-z0-9_]+)*";
 const ATTACHMENT_ID_UUID_PATTERN = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
 const ATTACHMENT_ID_FILE_EXTENSION_PATTERN = "[a-z0-9]{1,10}";
+const PENDING_ATTACHMENT_LEASE_SUFFIX = ".team-lease.json";
+const PENDING_ATTACHMENT_LEASE_REFRESH_INTERVAL_MS = 60 * 60 * 1000;
 const ATTACHMENT_ID_PATTERN = new RegExp(
   `^(${ATTACHMENT_ID_THREAD_SEGMENT_PATTERN})-(${ATTACHMENT_ID_UUID_PATTERN})(?:-(${ATTACHMENT_ID_FILE_EXTENSION_PATTERN}))?$`,
   "i",
@@ -159,6 +161,257 @@ export function resolveAttachmentPathById(input: {
   return null;
 }
 
+type PendingAttachmentLease = {
+  readonly version: 1;
+  readonly owners: ReadonlyArray<string>;
+};
+
+type PendingAttachmentLeaseRead =
+  | { readonly state: "missing" }
+  | { readonly state: "invalid" }
+  | { readonly state: "valid"; readonly owners: Set<string> };
+
+function pendingAttachmentLeasePath(input: {
+  readonly attachmentsDir: string;
+  readonly attachmentId: string;
+}): string | null {
+  if (
+    parseThreadSegmentFromAttachmentId(input.attachmentId) !== PENDING_ATTACHMENT_THREAD_SEGMENT
+  ) {
+    return null;
+  }
+  return resolveAttachmentRelativePath({
+    attachmentsDir: input.attachmentsDir,
+    relativePath: `${input.attachmentId}${PENDING_ATTACHMENT_LEASE_SUFFIX}`,
+  });
+}
+
+function readPendingAttachmentLease(leasePath: string): PendingAttachmentLeaseRead {
+  if (!NodeFS.existsSync(leasePath)) {
+    return { state: "missing" };
+  }
+  try {
+    const value = JSON.parse(
+      NodeFS.readFileSync(leasePath, "utf8"),
+    ) as Partial<PendingAttachmentLease>;
+    if (
+      value.version !== 1 ||
+      !Array.isArray(value.owners) ||
+      value.owners.length === 0 ||
+      value.owners.some((owner) => typeof owner !== "string" || owner.trim().length === 0)
+    ) {
+      return { state: "invalid" };
+    }
+    return { state: "valid", owners: new Set(value.owners) };
+  } catch {
+    return { state: "invalid" };
+  }
+}
+
+export function pendingAttachmentLeaseHasOwner(input: {
+  readonly attachmentsDir: string;
+  readonly attachmentId: string;
+  readonly ownerId: string;
+}): boolean {
+  const leasePath = pendingAttachmentLeasePath(input);
+  if (!leasePath) return false;
+  const lease = readPendingAttachmentLease(leasePath);
+  return lease.state === "valid" && lease.owners.has(input.ownerId);
+}
+
+function writePendingAttachmentLease(leasePath: string, owners: ReadonlySet<string>): boolean {
+  const temporaryPath = `${leasePath}.${NodeCrypto.randomUUID()}.part`;
+  try {
+    NodeFS.writeFileSync(
+      temporaryPath,
+      JSON.stringify({ version: 1, owners: [...owners].sort() } satisfies PendingAttachmentLease),
+      { flag: "wx" },
+    );
+    NodeFS.renameSync(temporaryPath, leasePath);
+    return true;
+  } catch {
+    return false;
+  } finally {
+    try {
+      NodeFS.rmSync(temporaryPath, { force: true });
+    } catch {
+      // Best-effort cleanup. Stale partials are also covered by the normal sweep.
+    }
+  }
+}
+
+export function retainPendingAttachmentLease(input: {
+  readonly attachmentsDir: string;
+  readonly attachmentId: string;
+  readonly ownerId: string;
+  readonly nowMs: number;
+}): boolean {
+  const ownerId = input.ownerId.trim();
+  if (!ownerId) return false;
+  const attachmentPath = resolveAttachmentPathById(input);
+  const leasePath = pendingAttachmentLeasePath(input);
+  if (!attachmentPath || !leasePath) return false;
+
+  const lease = readPendingAttachmentLease(leasePath);
+  if (lease.state === "invalid") return false;
+  const owners = lease.state === "valid" ? lease.owners : new Set<string>();
+  owners.add(ownerId);
+  if (!writePendingAttachmentLease(leasePath, owners)) return false;
+
+  try {
+    const stat = NodeFS.statSync(attachmentPath);
+    if (input.nowMs - stat.mtimeMs >= PENDING_ATTACHMENT_LEASE_REFRESH_INTERVAL_MS) {
+      const nowSeconds = input.nowMs / 1000;
+      NodeFS.utimesSync(attachmentPath, nowSeconds, nowSeconds);
+    }
+  } catch {
+    releasePendingAttachmentLease({
+      attachmentsDir: input.attachmentsDir,
+      attachmentId: input.attachmentId,
+      ownerId,
+      deleteSourceWhenUnowned: false,
+    });
+    return false;
+  }
+  return true;
+}
+
+export function releasePendingAttachmentLease(input: {
+  readonly attachmentsDir: string;
+  readonly attachmentId: string;
+  readonly ownerId: string;
+  readonly deleteSourceWhenUnowned?: boolean;
+}): { readonly released: boolean; readonly deleted: boolean } {
+  const leasePath = pendingAttachmentLeasePath(input);
+  if (!leasePath) return { released: false, deleted: false };
+  const lease = readPendingAttachmentLease(leasePath);
+  if (lease.state !== "valid" || !lease.owners.has(input.ownerId)) {
+    return { released: false, deleted: false };
+  }
+
+  lease.owners.delete(input.ownerId);
+  if (lease.owners.size > 0) {
+    return writePendingAttachmentLease(leasePath, lease.owners)
+      ? { released: true, deleted: false }
+      : { released: false, deleted: false };
+  }
+
+  try {
+    NodeFS.rmSync(leasePath, { force: true });
+  } catch {
+    return { released: false, deleted: false };
+  }
+  if (input.deleteSourceWhenUnowned === false) {
+    return { released: true, deleted: false };
+  }
+
+  const attachmentPath = resolveAttachmentPathById(input);
+  if (!attachmentPath) return { released: true, deleted: false };
+  try {
+    NodeFS.rmSync(attachmentPath, { force: true });
+    return { released: true, deleted: true };
+  } catch {
+    return { released: true, deleted: false };
+  }
+}
+
+export function copyLeasedPendingAttachmentsForThread(input: {
+  readonly attachmentsDir: string;
+  readonly attachments: ReadonlyArray<ChatAttachment>;
+  readonly ownerId: string;
+  readonly threadId: string;
+}): ReadonlyArray<ChatAttachment> | null {
+  const copied: ChatAttachment[] = [];
+  const cleanup = () => {
+    for (const attachment of copied) {
+      const path = resolveAttachmentPath({ attachmentsDir: input.attachmentsDir, attachment });
+      if (!path) continue;
+      try {
+        NodeFS.rmSync(path, { force: true });
+      } catch {
+        // Thread-owned copies are best effort cleanup on a failed materialization.
+      }
+    }
+  };
+
+  for (const attachment of input.attachments) {
+    const leasePath = pendingAttachmentLeasePath({
+      attachmentsDir: input.attachmentsDir,
+      attachmentId: attachment.id,
+    });
+    if (!leasePath) {
+      cleanup();
+      return null;
+    }
+    const lease = readPendingAttachmentLease(leasePath);
+    if (lease.state !== "valid" || !lease.owners.has(input.ownerId)) {
+      cleanup();
+      return null;
+    }
+    const claim = planAttachmentClaim({
+      attachmentsDir: input.attachmentsDir,
+      threadId: input.threadId,
+      attachmentId: attachment.id,
+    });
+    if (!claim.ok) {
+      cleanup();
+      return null;
+    }
+    const materialized = { ...attachment, id: claim.finalId };
+    if (
+      resolveAttachmentPath({ attachmentsDir: input.attachmentsDir, attachment: materialized }) !==
+      claim.finalPath
+    ) {
+      cleanup();
+      return null;
+    }
+    try {
+      NodeFS.copyFileSync(claim.currentPath, claim.finalPath, NodeFS.constants.COPYFILE_EXCL);
+    } catch {
+      cleanup();
+      return null;
+    }
+    copied.push(materialized);
+  }
+  return copied;
+}
+
+export function deleteThreadAttachmentCopies(input: {
+  readonly attachmentsDir: string;
+  readonly attachments: ReadonlyArray<ChatAttachment>;
+}): void {
+  for (const attachment of input.attachments) {
+    if (parseThreadSegmentFromAttachmentId(attachment.id) === PENDING_ATTACHMENT_THREAD_SEGMENT) {
+      continue;
+    }
+    const path = resolveAttachmentPath({ attachmentsDir: input.attachmentsDir, attachment });
+    if (!path) continue;
+    try {
+      NodeFS.rmSync(path, { force: true });
+    } catch {
+      // Best-effort rollback for a command reservation that did not persist.
+    }
+  }
+}
+
+export function hasPendingAttachmentLease(input: {
+  readonly attachmentsDir: string;
+  readonly attachmentId: string;
+}): boolean {
+  const leasePath = pendingAttachmentLeasePath(input);
+  if (!leasePath) return false;
+  const lease = readPendingAttachmentLease(leasePath);
+  if (lease.state === "valid" && lease.owners.size > 0) return true;
+  if (lease.state === "invalid") {
+    try {
+      NodeFS.rmSync(leasePath, { force: true });
+    } catch {
+      // Invalid markers do not protect pending uploads even when cleanup fails.
+    }
+  }
+  return false;
+}
+
 export type AttachmentClaimPlan =
   | {
       readonly ok: true;
@@ -234,6 +487,9 @@ export function sweepStalePendingAttachments(input: {
         !attachmentId ||
         parseThreadSegmentFromAttachmentId(attachmentId) !== PENDING_ATTACHMENT_THREAD_SEGMENT
       ) {
+        continue;
+      }
+      if (hasPendingAttachmentLease({ attachmentsDir: input.attachmentsDir, attachmentId })) {
         continue;
       }
     }

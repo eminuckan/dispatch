@@ -15,11 +15,18 @@ import * as TestClock from "effect/testing/TestClock";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import { base64UrlEncode, signPayload } from "../auth/utils.ts";
 import * as ServerConfig from "../config.ts";
-import { parseThreadSegmentFromAttachmentId } from "../attachmentStore.ts";
+import {
+  parseThreadSegmentFromAttachmentId,
+  pendingAttachmentLeaseHasOwner,
+  releasePendingAttachmentLease,
+} from "../attachmentStore.ts";
 import {
   ATTACHMENT_UPLOAD_ROUTE_PREFIX,
   deletePendingAttachment,
   issueAttachmentUploadUrl,
+  materializePendingAttachmentsForThread,
+  releasePendingAttachmentsForOwner,
+  retainPendingAttachmentsForOwner,
   storeAttachmentUpload,
   validateAttachmentUploadToken,
 } from "./AttachmentUpload.ts";
@@ -49,6 +56,133 @@ const encodeLegacyAttachmentUploadClaims = Schema.encodeEffect(
 );
 
 describe("AttachmentUpload", () => {
+  it.effect("leases pending uploads and materializes isolated copies for managed threads", () =>
+    Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      const attachmentId = "pending-00000000-0000-4000-8000-0000000000aa";
+      const pendingPath = NodePath.join(config.attachmentsDir, `${attachmentId}.png`);
+      NodeFS.writeFileSync(pendingPath, Buffer.from("original"));
+      const attachment = {
+        type: "image" as const,
+        id: attachmentId,
+        name: "diagram.png",
+        mimeType: "image/png",
+        sizeBytes: Buffer.byteLength("original"),
+      };
+
+      expect(
+        yield* retainPendingAttachmentsForOwner({
+          ownerId: "team-run",
+          attachments: [attachment],
+        }),
+      ).toBe(true);
+      const lead = yield* materializePendingAttachmentsForThread({
+        ownerId: "team-run",
+        threadId: "team-lead",
+        attachments: [attachment],
+      });
+      const worker = yield* materializePendingAttachmentsForThread({
+        ownerId: "team-run",
+        threadId: "team-worker",
+        attachments: [attachment],
+      });
+      expect(lead?.[0]?.id).not.toBe(worker?.[0]?.id);
+      expect(parseThreadSegmentFromAttachmentId(lead?.[0]?.id ?? "")).toBe("team-lead");
+      expect(parseThreadSegmentFromAttachmentId(worker?.[0]?.id ?? "")).toBe("team-worker");
+      expect(NodeFS.readFileSync(pendingPath, "utf8")).toBe("original");
+
+      yield* releasePendingAttachmentsForOwner({
+        ownerId: "team-run",
+        attachments: [attachment],
+      });
+      expect(NodeFS.existsSync(pendingPath)).toBe(false);
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect("does not roll back a pre-existing lease when a later refresh is incomplete", () =>
+    Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      const first = {
+        type: "image" as const,
+        id: "pending-00000000-0000-4000-8000-0000000000ab",
+        name: "first.png",
+        mimeType: "image/png",
+        sizeBytes: 5,
+      };
+      const second = {
+        ...first,
+        id: "pending-00000000-0000-4000-8000-0000000000ac",
+        name: "second.png",
+      };
+      for (const attachment of [first, second]) {
+        NodeFS.writeFileSync(
+          NodePath.join(config.attachmentsDir, `${attachment.id}.png`),
+          Buffer.from("bytes"),
+        );
+      }
+      expect(
+        yield* retainPendingAttachmentsForOwner({
+          ownerId: "team-run",
+          attachments: [first, second],
+        }),
+      ).toBe(true);
+
+      NodeFS.rmSync(NodePath.join(config.attachmentsDir, `${second.id}.png`));
+      expect(
+        yield* retainPendingAttachmentsForOwner({
+          ownerId: "team-run",
+          attachments: [first, second],
+        }),
+      ).toBe(false);
+      expect(
+        pendingAttachmentLeaseHasOwner({
+          attachmentsDir: config.attachmentsDir,
+          attachmentId: first.id,
+          ownerId: "team-run",
+        }),
+      ).toBe(true);
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect(
+    "protects a leased pending upload from explicit deletion until its owner releases",
+    () =>
+      Effect.gen(function* () {
+        const config = yield* ServerConfig.ServerConfig;
+        const attachment = {
+          type: "image" as const,
+          id: "pending-00000000-0000-4000-8000-0000000000ad",
+          name: "leased.png",
+          mimeType: "image/png",
+          sizeBytes: 6,
+        };
+        const pendingPath = NodePath.join(config.attachmentsDir, `${attachment.id}.png`);
+        NodeFS.writeFileSync(pendingPath, Buffer.from("pixels"));
+        expect(
+          yield* retainPendingAttachmentsForOwner({
+            ownerId: "team-run",
+            attachments: [attachment],
+          }),
+        ).toBe(true);
+
+        yield* deletePendingAttachment(attachment.id);
+        expect(NodeFS.existsSync(pendingPath)).toBe(true);
+
+        expect(
+          releasePendingAttachmentLease({
+            attachmentsDir: config.attachmentsDir,
+            attachmentId: attachment.id,
+            ownerId: "team-run",
+            deleteSourceWhenUnowned: false,
+          }),
+        ).toEqual({ released: true, deleted: false });
+        expect(NodeFS.existsSync(pendingPath)).toBe(true);
+
+        yield* deletePendingAttachment(attachment.id);
+        expect(NodeFS.existsSync(pendingPath)).toBe(false);
+      }).pipe(Effect.provide(testLayer)),
+  );
+
   it.effect("signs the attachment metadata and validates the upload token", () =>
     Effect.gen(function* () {
       const issued = yield* issueAttachmentUploadUrl(uploadInput);

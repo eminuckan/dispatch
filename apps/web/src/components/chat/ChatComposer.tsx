@@ -1,4 +1,5 @@
 import {
+  clearStartedTeamDraftIfUnchanged,
   TeamRoutingProvider,
   useTeamRoutingState,
   TeamRoutingStatus,
@@ -3760,13 +3761,16 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     projectId: routeKind === "draft" ? props.teamProjectId : null,
     prompt: routeKind === "draft" ? prompt : "",
     allowRouting: routeKind === "draft" && multipleModelSelections === null,
-    hasAttachments:
-      composerImages.length +
-        composerFiles.length +
-        composerTerminalContexts.length +
+    hasAttachments: composerImages.length + composerFiles.length > 0,
+    hasUnsupportedContext:
+      composerTerminalContexts.length +
         composerPreviewAnnotations.length +
         composerReviewComments.length >
       0,
+    attachments: [...composerImages, ...composerFiles],
+    attachmentUploadsCapabilityKnown,
+    supportsAttachmentUploads,
+    attachmentDraftTarget,
     composing: teamComposing,
   });
 
@@ -3805,8 +3809,32 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       }
       if (teamRouting.orchestration) {
         event?.preventDefault();
-        if (!isConnecting && !isSendBusy && environmentUnavailable === null)
-          void teamRouting.submit();
+        if (!isConnecting && !isSendBusy && environmentUnavailable === null) {
+          const teamPromptSnapshot = promptRef.current;
+          const teamAttachmentIds = [...composerImages, ...composerFiles].map(
+            (attachment) => attachment.id,
+          );
+          const teamTarget = composerDraftTarget;
+          const teamTargetKey = composerTargetKey(teamTarget);
+          void teamRouting.submit().then((started) => {
+            if (!started) return;
+            const currentDraft = getComposerDraft(teamTarget);
+            if (
+              !clearStartedTeamDraftIfUnchanged({
+                currentDraft,
+                promptSnapshot: teamPromptSnapshot,
+                attachmentIds: teamAttachmentIds,
+                clear: () => clearComposerDraftPromptAndImages(teamTarget),
+              })
+            )
+              return;
+            if (composerDraftTargetKeyRef.current !== teamTargetKey) return;
+            promptRef.current = "";
+            composerImagesRef.current = [];
+            composerFilesRef.current = [];
+            composerRef.current?.resetCursorState();
+          });
+        }
         return;
       }
       const submission = submitComposerDraft({
@@ -3836,6 +3864,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       activePendingProgress,
       attachmentTargetKey,
       blurMobileComposerAfterSend,
+      clearComposerDraftPromptAndImages,
+      composerDraftTarget,
+      composerFiles,
+      composerImages,
+      composerDraftTargetKeyRef,
+      getComposerDraft,
       isSendDisabled,
       noProviderAvailable,
       onSend,

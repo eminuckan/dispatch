@@ -7,12 +7,25 @@ import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime"
 import { useRightPanelStore } from "../../rightPanelStore";
 import { randomUUID } from "../../lib/utils";
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
-import type { EnvironmentId, ProjectId, TeamAssessment } from "@t3tools/contracts";
+import type { ChatAttachment, EnvironmentId, ProjectId, TeamAssessment } from "@t3tools/contracts";
 import { createTeamDraftCoordinator } from "@t3tools/client-runtime/state/team-draft";
 import { teamEnvironment } from "../../state/team";
 import { useEnvironmentQuery } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { waitForThreadShell } from "../../state/entities";
+import type {
+  ComposerFileAttachment,
+  ComposerImageAttachment,
+  ComposerThreadDraftState,
+  ComposerThreadTarget,
+} from "../../composerDraftStore";
+import {
+  awaitAttachmentUploads,
+  forgetDraftAttachmentUploads,
+  getUploadedAttachments,
+  startAttachmentUpload,
+} from "../../lib/attachmentUploadQueue";
+import { ATTACHMENT_ONLY_BOOTSTRAP_PROMPT } from "./composerPromptHistory";
 
 const RoutingContext = createContext<ReturnType<typeof useTeamRoutingState> | null>(null);
 export const useComposerRouting = () => useContext(RoutingContext);
@@ -33,15 +46,46 @@ type RoutingProps = {
   projectId: ProjectId | null;
   prompt: string;
   hasAttachments: boolean;
+  hasUnsupportedContext: boolean;
+  attachments: ReadonlyArray<ComposerImageAttachment | ComposerFileAttachment>;
+  attachmentUploadsCapabilityKnown: boolean;
+  supportsAttachmentUploads: boolean;
+  attachmentDraftTarget: ComposerThreadTarget;
   composing: boolean;
   allowRouting: boolean;
 };
+
+export function clearStartedTeamDraftIfUnchanged(input: {
+  currentDraft: Pick<ComposerThreadDraftState, "prompt" | "images" | "files"> | null;
+  promptSnapshot: string;
+  attachmentIds: ReadonlyArray<string>;
+  clear: () => void;
+}): boolean {
+  const currentIds = input.currentDraft
+    ? [...input.currentDraft.images, ...input.currentDraft.files].map((attachment) => attachment.id)
+    : null;
+  if (
+    !input.currentDraft ||
+    input.currentDraft.prompt !== input.promptSnapshot ||
+    currentIds?.length !== input.attachmentIds.length ||
+    !currentIds.every((id, index) => id === input.attachmentIds[index])
+  ) {
+    return false;
+  }
+  input.clear();
+  return true;
+}
 export function useTeamRoutingState({
   scopeKey,
   environmentId,
   projectId,
   prompt,
   hasAttachments,
+  hasUnsupportedContext,
+  attachments,
+  attachmentUploadsCapabilityKnown,
+  supportsAttachmentUploads,
+  attachmentDraftTarget,
   composing,
   allowRouting,
 }: RoutingProps) {
@@ -70,6 +114,8 @@ export function useTeamRoutingState({
   const save = useAtomCommand(teamEnvironment.saveSettings, { reportFailure: false });
   const [saving, setSaving] = useState(false);
   const [modeError, setModeError] = useState<string | null>(null);
+  const promptForRouting =
+    prompt.trim() || (hasAttachments ? ATTACHMENT_ONLY_BOOTSTRAP_PROMPT : "");
   async function setMode(mode: "off" | "shadow" | "auto") {
     if (!settings.data || saving) return false;
     setSaving(true);
@@ -89,8 +135,9 @@ export function useTeamRoutingState({
   const policyRevision = settings.data?.policy.revision ?? 0;
   const requestKey = JSON.stringify([
     environmentId,
-    prompt,
+    promptForRouting,
     hasAttachments,
+    hasUnsupportedContext,
     composing,
     enabled,
     policyRevision,
@@ -109,13 +156,13 @@ export function useTeamRoutingState({
       },
       onError: () => setResult({ key: requestKey, assessment: null, failed: true }),
     });
-    if (enabled)
+    if (enabled && (promptForRouting.length > 0 || hasAttachments))
       coordinator.schedule(
         {
           draftId,
           revision: ++revision.current,
           policyRevision,
-          prompt,
+          prompt: promptForRouting,
           hasAttachments,
         },
         composing,
@@ -125,8 +172,9 @@ export function useTeamRoutingState({
     draftId,
     assess,
     environmentId,
-    prompt,
+    promptForRouting,
     hasAttachments,
+    hasUnsupportedContext,
     composing,
     enabled,
     policyRevision,
@@ -141,7 +189,7 @@ export function useTeamRoutingState({
     ? "Routing unavailable"
     : assessment
       ? `${modelLabel}${typeof effort === "string" ? ` · ${effort}` : ""}`
-      : prompt.trim()
+      : promptForRouting
         ? "Choosing model…"
         : "Chooses when you type";
   async function setOrchestration(on: boolean) {
@@ -154,55 +202,97 @@ export function useTeamRoutingState({
     ? "Starting team"
     : !settings.data?.jevConfigured
       ? "Add your Jev key in Orchestration settings"
-      : hasAttachments
-        ? "Orchestration currently supports text-only requests"
-        : composing
-          ? "Finish typing to start orchestration"
-          : !assessment?.selection
-            ? failed
-              ? "Routing unavailable; check Orchestration settings"
-              : "Choosing team lead"
-            : null;
-  async function submit() {
-    if (!orchestration || blocked || !assessment || !projectId || starting.current) return;
+      : hasUnsupportedContext
+        ? "Remove terminal, preview, or review context to start orchestration"
+        : !promptForRouting && !hasAttachments
+          ? "Add a prompt or attachment"
+          : composing
+            ? "Finish typing to start orchestration"
+            : !assessment?.selection
+              ? failed
+                ? "Routing unavailable; check Orchestration settings"
+                : "Choosing team lead"
+              : null;
+  async function submit(): Promise<boolean> {
+    if (!orchestration || blocked || !assessment || !projectId || starting.current) return false;
     starting.current = true;
     setPending(true);
     setStartError(null);
-    const key = JSON.stringify([scopeKey, prompt, assessment.fingerprint]);
-    if (command.current?.key !== key) command.current = { key, id: randomUUID() };
     try {
+      const key = JSON.stringify([
+        scopeKey,
+        promptForRouting,
+        assessment.fingerprint,
+        attachments.map((attachment) => attachment.id),
+      ]);
+      if (command.current?.key !== key) command.current = { key, id: randomUUID() };
+      const commandId = command.current.id;
+      let uploadedAttachments: ChatAttachment[] = [];
+      if (attachments.length > 0) {
+        if (!attachmentUploadsCapabilityKnown || !supportsAttachmentUploads) {
+          setStartError("This server cannot upload attachments for orchestration.");
+          return false;
+        }
+        for (const attachment of attachments) {
+          startAttachmentUpload({
+            environmentId,
+            image: attachment,
+            draftTarget: attachmentDraftTarget,
+          });
+        }
+        await awaitAttachmentUploads(attachments.map((attachment) => attachment.id));
+        const ready = getUploadedAttachments({ environmentId, images: attachments });
+        if (ready === null) {
+          setStartError("Retry or remove failed uploads before starting orchestration.");
+          return false;
+        }
+        uploadedAttachments = ready;
+      }
       const response = await start({
         environmentId,
         input: {
-          commandId: command.current.id,
+          commandId,
           projectId,
           fingerprint: assessment.fingerprint,
           draft: {
             draftId: assessment.draftId,
             revision: assessment.revision,
             policyRevision: assessment.policyRevision,
-            prompt,
+            prompt: promptForRouting,
             hasAttachments,
           },
+          ...(uploadedAttachments.length > 0 ? { attachments: uploadedAttachments } : {}),
         },
       });
       if (response._tag === "Failure") {
         const error = squashAtomCommandFailure(response);
         setStartError(error instanceof Error ? error.message : "Could not start orchestration.");
-        return;
+        return false;
       }
+      if (uploadedAttachments.length > 0) forgetDraftAttachmentUploads(attachments);
       if (response.value.execution) {
         const threadId = response.value.execution.leadThreadId;
-        const ready = await waitForThreadShell(scopeThreadRef(environmentId, threadId));
-        if (!ready) {
+        try {
+          const ready = await waitForThreadShell(scopeThreadRef(environmentId, threadId));
+          if (!ready) {
+            setStartError(
+              "Team started, but its lead thread is still syncing. Try opening it again.",
+            );
+            return true;
+          }
+          useRightPanelStore.getState().open({ environmentId, threadId }, "agents");
+          await navigate({ to: "/$environmentId/$threadId", params: { environmentId, threadId } });
+        } catch {
           setStartError(
             "Team started, but its lead thread is still syncing. Try opening it again.",
           );
-          return;
+          return true;
         }
-        useRightPanelStore.getState().open({ environmentId, threadId }, "agents");
-        await navigate({ to: "/$environmentId/$threadId", params: { environmentId, threadId } });
       }
+      return true;
+    } catch (error) {
+      setStartError(error instanceof Error ? error.message : "Could not start orchestration.");
+      return false;
     } finally {
       starting.current = false;
       setPending(false);
@@ -213,6 +303,7 @@ export function useTeamRoutingState({
     projectId,
     prompt,
     hasAttachments,
+    hasUnsupportedContext,
     composing,
     allowRouting,
     settings,

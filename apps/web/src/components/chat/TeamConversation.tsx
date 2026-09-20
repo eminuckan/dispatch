@@ -6,12 +6,7 @@ import type { TimelineEntry } from "../../session-logic";
 import { teamConversationEntries, teamAgentName, teamTurnLabel } from "./teamConversation.logic";
 import { useEffect, useState, type ReactNode } from "react";
 import { ChevronRightIcon, RefreshCwIcon } from "lucide-react";
-import {
-  MessageId,
-  type EnvironmentId,
-  type TeamThreadView,
-  type ThreadId,
-} from "@t3tools/contracts";
+import type { EnvironmentId, TeamThreadView, ThreadId } from "@t3tools/contracts";
 import { teamEnvironment } from "../../state/team";
 import { useEnvironmentQuery } from "../../state/query";
 import { Button } from "../ui/button";
@@ -66,39 +61,18 @@ export function TeamConversation({
       </div>
     );
   }
-  const visibleEntries = teamConversationEntries(entries, run.coordinationMessageIds, run.turns);
-  const isLead = run.leadThreadId === threadId;
-  const hasObjective = visibleEntries.some(
-    (entry) =>
-      entry.kind === "message" &&
-      entry.message.role === "user" &&
-      entry.message.text.trim() === run.objective.trim(),
+  const initialTurn = run.turns.find((turn) => turn.threadId === threadId);
+  const objective =
+    threadId === run.leadThreadId
+      ? run.objective
+      : (run.tasks.find((task) => task.threadId === threadId)?.objective ?? run.objective);
+  const visibleEntries = teamConversationEntries(
+    entries,
+    run.coordinationMessageIds,
+    run.turns,
+    initialTurn ? { id: `team-${initialTurn.id}`, objective } : undefined,
   );
-  if (!isLead || hasObjective) return children(visibleEntries);
-  const createdAt =
-    entries.find(
-      (entry) => entry.kind === "message" && run.coordinationMessageIds.includes(entry.message.id),
-    )?.createdAt ??
-    entries[0]?.createdAt ??
-    "1970-01-01T00:00:00.000Z";
-  const objectiveId = MessageId.make(`team-objective-${run.id}`);
-  return children([
-    {
-      id: objectiveId,
-      kind: "message",
-      createdAt,
-      message: {
-        id: objectiveId,
-        role: "user",
-        text: run.objective,
-        turnId: null,
-        streaming: false,
-        createdAt,
-        updatedAt: createdAt,
-      },
-    },
-    ...visibleEntries,
-  ]);
+  return children(visibleEntries);
 }
 
 function TeamActivity({

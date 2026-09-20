@@ -96,6 +96,38 @@ it("keeps a newly dispatched coordination turn and incomplete protocol hidden be
   expect(teamConversationEntries(entries, []).map((entry) => entry.id)).toEqual(["manual"]);
 });
 
+it("presents the initial managed request in place so its attachment references survive", () => {
+  const initial = message("team-plan", "user", null, "INTERNAL CONTRACT");
+  initial.message = {
+    ...initial.message,
+    attachments: [
+      {
+        type: "image",
+        id: "attachment-ref",
+        name: "shot.png",
+        mimeType: "image/png",
+        sizeBytes: 42,
+      },
+    ],
+  };
+  const visible = teamConversationEntries([initial], ["team-plan"], [], {
+    id: "team-plan",
+    objective: "Inspect the attached screenshot",
+  });
+  expect(visible).toEqual([
+    {
+      ...initial,
+      message: {
+        ...initial.message,
+        text: "Inspect the attached screenshot",
+      },
+    },
+  ]);
+  expect(visible[0]?.kind === "message" && visible[0].message.attachments).toEqual(
+    initial.message.attachments,
+  );
+});
+
 it("renders managed review protocol JSON as a normal assistant message", () => {
   const entries = [
     message("team-review", "user", null, "hidden review contract"),

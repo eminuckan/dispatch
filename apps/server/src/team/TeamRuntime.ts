@@ -27,12 +27,16 @@ import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import { forkParked } from "../serverActivation.ts";
 import * as DateTime from "effect/DateTime";
+import * as Predicate from "effect/Predicate";
 import { OrchestrationEngineService } from "../orchestration/Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { ProviderRegistry } from "../provider/Services/ProviderRegistry.ts";
 import { GitWorkflowService } from "../git/GitWorkflowService.ts";
 import { ProcessRunner, layer as ProcessRunnerLive } from "../processRunner.ts";
-import { ProjectionTurnRepository } from "../persistence/Services/ProjectionTurns.ts";
+import {
+  ProjectionTurnRepository,
+  type ProjectionTurn,
+} from "../persistence/Services/ProjectionTurns.ts";
 import { ProjectionTurnRepositoryLive } from "../persistence/Layers/ProjectionTurns.ts";
 import { TeamStore } from "./TeamStore.ts";
 import { TeamRouter } from "./TeamRouter.ts";
@@ -46,8 +50,25 @@ import {
 } from "./decider.ts";
 import { validatePool, defaultTeamPolicy } from "./routing.ts";
 import { parseProposal, LeadReview, reviewCoverage } from "./execution.ts";
+import { openRequests } from "../orchestration/decider.ts";
+import {
+  deleteMaterializedThreadAttachments,
+  materializePendingAttachmentsForThread,
+  releasePendingAttachmentsForOwner,
+  retainPendingAttachmentsForOwner,
+} from "../assets/AttachmentUpload.ts";
 
 const encode = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
+const asyncQuestionRequestId = (activity: { readonly kind: string; readonly payload: unknown }) => {
+  if (
+    activity.kind !== "user-input.requested" ||
+    !Predicate.isObject(activity.payload) ||
+    activity.payload.responseMode !== "message" ||
+    typeof activity.payload.requestId !== "string"
+  )
+    return null;
+  return activity.payload.requestId;
+};
 const safeError = () =>
   new TeamError({
     code: "unavailable",
@@ -110,6 +131,15 @@ export const make = Effect.gen(function* () {
     const existing = yield* projection
       .getThreadDetailById(threadId)
       .pipe(Effect.mapError(mapError));
+    const pending = yield* turns
+      .getPendingTurnStartByThreadId({ threadId })
+      .pipe(Effect.mapError(mapError));
+    if (
+      Option.isSome(pending) ||
+      (Option.isSome(existing) &&
+        (existing.value.latestTurn?.state === "running" || openRequests(existing.value).size > 0))
+    )
+      return run;
     const createdAt = yield* now;
     const id = NodeCrypto.randomUUID();
     const agentName = teamAgentDisplayName(
@@ -121,6 +151,19 @@ export const make = Effect.gen(function* () {
       ],
       threadId,
     );
+    const firstTurnAttachments =
+      Option.isNone(existing) && (run.attachments?.length ?? 0) > 0
+        ? yield* materializePendingAttachmentsForThread({
+            ownerId: run.id,
+            threadId,
+            attachments: run.attachments!,
+          })
+        : [];
+    if (firstTurnAttachments === null)
+      return yield* new TeamError({
+        code: "unavailable",
+        message: "Managed team attachments could not be prepared for this agent.",
+      });
     const turn: TeamExecutionTurn = {
       id,
       estimatedAttemptUsd: profile.estimatedAttemptUsd,
@@ -133,7 +176,12 @@ export const make = Effect.gen(function* () {
         type: "thread.turn.start",
         commandId: CommandId.make(`team-${id}`),
         threadId,
-        message: { messageId: MessageId.make(`team-${id}`), role: "user", text, attachments: [] },
+        message: {
+          messageId: MessageId.make(`team-${id}`),
+          role: "user",
+          text,
+          attachments: firstTurnAttachments,
+        },
         modelSelection: profile.selection,
         runtimeMode: "full-access",
         interactionMode: "default",
@@ -166,7 +214,9 @@ export const make = Effect.gen(function* () {
           : {}),
       },
     };
-    return yield* store.reserveTurn(run.id, run.revision, turn);
+    return yield* store
+      .reserveTurn(run.id, run.revision, turn)
+      .pipe(Effect.tapError(() => deleteMaterializedThreadAttachments(firstTurnAttachments)));
   }, lock.withPermits(1));
   const reconcile = Effect.fn("TeamRuntime.reconcile")(function* (id: string) {
     let run = yield* store.get(id);
@@ -177,6 +227,30 @@ export const make = Effect.gen(function* () {
         ["reserved", "dispatching"].includes(turn.status) &&
         !["paused", "cancelled", "failed"].includes(run.status)
       ) {
+        const current = yield* projection
+          .getThreadDetailById(turn.command.threadId)
+          .pipe(Effect.mapError(mapError));
+        const pending = yield* turns
+          .getPendingTurnStartByThreadId({ threadId: turn.command.threadId })
+          .pipe(Effect.mapError(mapError));
+        if (Option.isSome(pending) && pending.value.messageId !== turn.command.message.messageId)
+          continue;
+        if (
+          Option.isSome(current) &&
+          (current.value.latestTurn?.state === "running" || openRequests(current.value).size > 0)
+        ) {
+          const latest = current.value.latestTurn;
+          const receipt = latest
+            ? yield* turns
+                .getByTurnId({ threadId: turn.command.threadId, turnId: latest.turnId })
+                .pipe(Effect.mapError(mapError))
+            : Option.none();
+          if (
+            Option.isNone(receipt) ||
+            receipt.value.pendingMessageId !== turn.command.message.messageId
+          )
+            continue;
+        }
         if (turn.status === "reserved") {
           const selection = turn.command.modelSelection;
           const currentProviders = yield* registry.getProviders;
@@ -304,6 +378,7 @@ export const make = Effect.gen(function* () {
         .pipe(Effect.mapError(mapError));
       if (Option.isNone(detail)) continue;
       const thread = detail.value;
+      if (openRequests(thread).size > 0) continue;
       const projectedTurns = yield* turns
         .listByThreadId({ threadId: thread.id })
         .pipe(Effect.mapError(mapError));
@@ -359,10 +434,98 @@ export const make = Effect.gen(function* () {
         continue;
       }
       if (persistedTurn.state === "pending" || persistedTurn.state === "running") continue;
-      const answer = thread.messages.find((m) => m.id === persistedTurn.assistantMessageId);
-      const result = answer?.text ?? `Provider turn ended with ${persistedTurn.state}.`;
-      const succeeded = persistedTurn.state === "completed" && !!answer && !answer.streaming;
-      if (persistedTurn.state === "completed" && !succeeded) continue;
+      if (
+        thread.latestTurn &&
+        thread.latestTurn.turnId !== persistedTurn.turnId &&
+        thread.latestTurn.state === "running"
+      )
+        continue;
+      let settledTurn = persistedTurn;
+      let waitingForContinuation = false;
+      const visitedTurnIds = new Set<string>();
+      while (settledTurn.turnId !== null) {
+        const settledTurnId = settledTurn.turnId;
+        if (visitedTurnIds.has(settledTurnId))
+          return yield* pause(
+            run,
+            "The question continuation is inconsistent. Inspect the agent conversation before resuming.",
+          );
+        visitedTurnIds.add(settledTurnId);
+        const requestIds = new Set(
+          thread.activities.flatMap((activity) => {
+            const requestId =
+              activity.turnId === settledTurnId ? asyncQuestionRequestId(activity) : null;
+            return requestId === null ? [] : [requestId];
+          }),
+        );
+        const resolution = thread.activities.findLast(
+          (activity) =>
+            activity.kind === "user-input.resolved" &&
+            activity.turnId === settledTurnId &&
+            Predicate.isObject(activity.payload) &&
+            activity.payload.responseMode === "message" &&
+            typeof activity.payload.requestId === "string" &&
+            requestIds.has(activity.payload.requestId) &&
+            activity.payload.answers !== undefined,
+        );
+        if (!resolution || !Predicate.isObject(resolution.payload)) break;
+        const answerMessageId = `async-answer:${resolution.payload.requestId}`;
+        const continuation = projectedTurns.find(
+          (candidate) => candidate.pendingMessageId === answerMessageId,
+        );
+        if (
+          !continuation &&
+          thread.activities.some(
+            (activity) =>
+              activity.kind === "provider.turn.start.failed" &&
+              Predicate.isObject(activity.payload) &&
+              activity.payload.requestId === answerMessageId,
+          )
+        )
+          return yield* pause(
+            run,
+            "The provider could not start the question answer turn. Inspect the agent conversation before resuming.",
+          );
+        if (
+          !continuation ||
+          continuation.turnId === null ||
+          continuation.state === "pending" ||
+          continuation.state === "running"
+        ) {
+          waitingForContinuation = true;
+          break;
+        }
+        settledTurn = continuation;
+      }
+      if (waitingForContinuation) continue;
+      const overtaken =
+        settledTurn.completedAt !== null &&
+        projectedTurns.some(
+          (candidate) =>
+            candidate.turnId !== settledTurn.turnId &&
+            candidate.startedAt !== null &&
+            candidate.requestedAt >= settledTurn.requestedAt &&
+            candidate.startedAt >= (settledTurn.startedAt ?? settledTurn.requestedAt) &&
+            candidate.startedAt <= settledTurn.completedAt!,
+        );
+      if (overtaken)
+        return yield* pause(
+          run,
+          "A newer message interrupted the managed turn. Inspect the agent conversation before resuming orchestration.",
+        );
+      const answer = settledTurn.assistantMessageId
+        ? thread.messages.find((m) => m.id === settledTurn.assistantMessageId)
+        : undefined;
+      const result = answer?.text ?? `Provider turn ended with ${settledTurn.state}.`;
+      const succeeded = settledTurn.state === "completed" && !!answer && !answer.streaming;
+      if (settledTurn.state === "completed" && !succeeded) {
+        if (thread.latestTurn && thread.latestTurn.turnId !== settledTurn.turnId)
+          return yield* pause(
+            run,
+            "The managed turn ended without a final response before a newer message. Inspect the agent conversation before resuming.",
+          );
+        continue;
+      }
       run = yield* store.update(
         run.id,
         run.revision,
@@ -387,7 +550,7 @@ export const make = Effect.gen(function* () {
                       status: "settled",
                       result,
                       succeeded,
-                      ...(persistedTurn.turnId ? { providerTurnId: persistedTurn.turnId } : {}),
+                      ...(settledTurn.turnId ? { providerTurnId: settledTurn.turnId } : {}),
                       ...(answer ? { resultMessageId: answer.id } : {}),
                     }
                   : t,
@@ -444,7 +607,7 @@ export const make = Effect.gen(function* () {
                     acceptance: task.acceptance,
                     context: task.context,
                   }),
-                  hasAttachments: false,
+                  hasAttachments: (run.attachments?.length ?? 0) > 0,
                 },
                 "worker",
               )
@@ -799,12 +962,58 @@ export const make = Effect.gen(function* () {
           : { ...r, status: "paused", execution: { ...r.execution!, notice } },
       "run-paused",
     );
+  const reconcileAttachmentLease = Effect.fnUntraced(function* (run: TeamRun) {
+    const attachments = run.attachments ?? [];
+    if (attachments.length === 0) return run;
+    const terminal = ["completed", "cancelled", "failed"].includes(run.status);
+    if (terminal) {
+      let unsafeReceipt = false;
+      const receiptsByThread = new Map<string, ReadonlyArray<ProjectionTurn>>();
+      for (const turn of run.execution?.turns ?? []) {
+        let receipts = receiptsByThread.get(turn.command.threadId);
+        if (!receipts) {
+          receipts = yield* turns
+            .listByThreadId({ threadId: turn.command.threadId })
+            .pipe(Effect.mapError(mapError));
+          receiptsByThread.set(turn.command.threadId, receipts);
+        }
+        const receipt = receipts.find(
+          (candidate) => candidate.pendingMessageId === turn.command.message.messageId,
+        );
+        if (
+          receipt?.state === "pending" ||
+          receipt?.state === "running" ||
+          (!receipt && ["dispatching", "dispatched"].includes(turn.status))
+        ) {
+          unsafeReceipt = true;
+          break;
+        }
+      }
+      if (!unsafeReceipt) {
+        yield* releasePendingAttachmentsForOwner({ ownerId: run.id, attachments });
+        return run;
+      }
+    }
+
+    const retained = yield* retainPendingAttachmentsForOwner({ ownerId: run.id, attachments });
+    if (retained || terminal || run.status === "paused") return run;
+    return yield* pause(
+      run,
+      "Managed team attachments are no longer available. Start a new team with fresh uploads.",
+    );
+  });
   const start = Effect.fn("TeamRuntime.start")(function* (input: TeamStart) {
     const settings = yield* router.settings;
-    if (!settings.jevConfigured || settings.policy.mode === "off" || input.draft.hasAttachments)
+    const attachments = input.attachments ?? [];
+    if (!settings.jevConfigured || settings.policy.mode === "off")
       return yield* new TeamError({
         code: "invalid",
-        message: "Enable Jev routing and use a text-only objective to start a managed team.",
+        message: "Enable Jev routing to start a managed team.",
+      });
+    if (input.draft.hasAttachments !== attachments.length > 0)
+      return yield* new TeamError({
+        code: "conflict",
+        message: "The attachment metadata changed. Refresh the orchestration preview.",
       });
     const assessment = yield* router.assess(input.draft);
     if (assessment.fingerprint !== input.fingerprint || !assessment.profileId)
@@ -839,7 +1048,7 @@ export const make = Effect.gen(function* () {
       });
     const id = NodeCrypto.randomUUID();
     const createdAt = yield* now;
-    const run = yield* store.create({
+    let run = yield* store.create({
       id,
       commandId: input.commandId,
       projectId: input.projectId,
@@ -852,6 +1061,7 @@ export const make = Effect.gen(function* () {
       decisions: [],
       createdAt,
       updatedAt: createdAt,
+      attachments,
       execution: {
         workspaceRoot,
         baseCommit: git.stdout.trim(),
@@ -861,6 +1071,17 @@ export const make = Effect.gen(function* () {
         notice: null,
       },
     });
+    if (encode(run.attachments ?? []) !== encode(attachments))
+      return yield* new TeamError({
+        code: "conflict",
+        message: "Command ID already belongs to a team with different attachments.",
+      });
+    run = yield* reconcileAttachmentLease(run);
+    if (run.status === "paused")
+      return yield* new TeamError({
+        code: "conflict",
+        message: "Managed team attachments are no longer available. Upload them again.",
+      });
     yield* advance(run.id);
     return yield* reconcile(run.id);
   }, schedulerLock.withPermits(1));
@@ -915,12 +1136,18 @@ export const make = Effect.gen(function* () {
           })
           .pipe(Effect.mapError(mapError));
       }
-    return next;
+    return yield* reconcileAttachmentLease(next);
   }, lock.withPermits(1));
   const tick = Effect.fn("TeamRuntime.tick")(function* () {
+    const knownRuns = new Map<string, TeamRun>();
+    for (const run of yield* store.list) knownRuns.set(run.id, run);
+    for (const run of yield* store.active) knownRuns.set(run.id, run);
+    for (const run of knownRuns.values()) yield* reconcileAttachmentLease(run);
+
     for (const run of yield* store.active)
       yield* advance(run.id)
         .pipe(Effect.flatMap(() => reconcile(run.id)))
+        .pipe(Effect.flatMap(reconcileAttachmentLease))
         .pipe(
           Effect.catch((error) =>
             error.code === "conflict"
@@ -992,7 +1219,16 @@ export const reactorLayer = Layer.effectDiscard(
                 event.aggregateId.startsWith("team-") &&
                 (event.type === "thread.session-set" ||
                   event.type === "thread.turn-diff-completed" ||
-                  (event.type === "thread.message-sent" && !event.payload.streaming)),
+                  (event.type === "thread.message-sent" && !event.payload.streaming) ||
+                  (event.type === "thread.activity-appended" &&
+                    [
+                      "approval.resolved",
+                      "user-input.resolved",
+                      "user-input.answer-submitted",
+                      "provider.approval.respond.failed",
+                      "provider.user-input.respond.failed",
+                      "provider.turn.start.failed",
+                    ].includes(event.payload.activity.kind))),
             ),
           ),
           () => runtime.tick().pipe(Effect.ignoreCause({ log: true })),
