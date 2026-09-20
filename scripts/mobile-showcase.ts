@@ -10,6 +10,7 @@ import * as NodeProcess from "node:process";
 import * as NodeURL from "node:url";
 
 import { PNG } from "pngjs";
+import { normalizeThemeId } from "@dispatch/shared/themePalettes";
 
 import showcaseConfig, {
   type ShowcaseAppearance,
@@ -33,7 +34,12 @@ const REPO_ROOT = NodePath.resolve(NodePath.dirname(NodeURL.fileURLToPath(import
 const MOBILE_ROOT = NodePath.join(REPO_ROOT, "apps/mobile");
 const ANDROID_PACKAGE = "com.eminuckan.dispatch";
 const APP_SCHEME = "dispatch";
-const IOS_READY_FILENAME = "T3ShowcaseReadyScene";
+const IOS_SCENE_FILENAME = "DispatchShowcaseScene";
+const IOS_READY_FILENAME = "DispatchShowcaseReadyScene";
+const LEGACY_IOS_READY_FILENAME = "T3ShowcaseReadyScene";
+const ANDROID_SCENE_FILENAME = "dispatch-showcase-scene";
+const ANDROID_READY_FILENAME = "dispatch-showcase-ready";
+const LEGACY_ANDROID_READY_FILENAME = "t3-showcase-ready";
 const SERVER_HOST = "0.0.0.0";
 const IOS_SIMULATOR_ARCH = NodeProcess.arch === "arm64" ? "arm64" : "x86_64";
 const IOS_APP_PATH = NodePath.join(
@@ -337,12 +343,17 @@ export function parseShowcaseCliArgs(args: ReadonlyArray<string>): CliOptions {
       const value = argumentValue(args, index, argument);
       if (value === "all") {
         for (const theme of SHOWCASE_THEMES) themes.add(theme);
-      } else if (SHOWCASE_THEMES.some((theme) => theme === value)) {
-        themes.add(value as ShowcaseTheme);
       } else {
-        // The app silently falls back to its default palette for an unknown id,
-        // so reject it here rather than shipping a mislabeled screenshot.
-        throw new Error(`Unsupported theme '${value}'. Use ${SHOWCASE_THEMES.join(", ")}, or all.`);
+        const normalizedTheme = normalizeThemeId(value);
+        if (SHOWCASE_THEMES.some((theme) => theme === normalizedTheme)) {
+          themes.add(normalizedTheme as ShowcaseTheme);
+        } else {
+          // The app silently falls back to its default palette for an unknown id,
+          // so reject it here rather than shipping a mislabeled screenshot.
+          throw new Error(
+            `Unsupported theme '${value}'. Use ${SHOWCASE_THEMES.join(", ")}, or all.`,
+          );
+        }
       }
       index += 1;
     } else if (argument === "--skip-build") {
@@ -924,15 +935,16 @@ async function waitForIosShowcaseScene(
   scene: ShowcaseScene,
   timeoutMs = 90_000,
 ): Promise<void> {
-  const readyPath = NodePath.join(
-    await iosAppContainer(udid),
-    "Library/Caches",
-    IOS_READY_FILENAME,
+  const cacheDirectory = NodePath.join(await iosAppContainer(udid), "Library/Caches");
+  const readyPaths = [IOS_READY_FILENAME, LEGACY_IOS_READY_FILENAME].map((filename) =>
+    NodePath.join(cacheDirectory, filename),
   );
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const readyScene = await NodeFSP.readFile(readyPath, "utf8").catch(() => "");
-    if (readyScene.trim() === scene) return;
+    for (const readyPath of readyPaths) {
+      const readyScene = await NodeFSP.readFile(readyPath, "utf8").catch(() => "");
+      if (readyScene.trim() === scene) return;
+    }
     await delay(500);
   }
   throw new Error(`iOS showcase scene '${scene}' did not render within ${timeoutMs}ms.`);
@@ -988,14 +1000,10 @@ async function captureIos(
   }
 
   const metroUrl = `http://${metroHost}:${config.metroPort}?disableOnboarding=1`;
-  const scenePath = NodePath.join(
-    await iosAppContainer(simulator.udid),
-    "Library/Caches/T3ShowcaseScene",
-  );
-  const readyPath = NodePath.join(
-    await iosAppContainer(simulator.udid),
-    "Library/Caches",
-    IOS_READY_FILENAME,
+  const cacheDirectory = NodePath.join(await iosAppContainer(simulator.udid), "Library/Caches");
+  const scenePath = NodePath.join(cacheDirectory, IOS_SCENE_FILENAME);
+  const readyPaths = [IOS_READY_FILENAME, LEGACY_IOS_READY_FILENAME].map((filename) =>
+    NodePath.join(cacheDirectory, filename),
   );
   const firstScene = capture.scenes[0] ?? "threads";
   const launchShowcaseApp = async (terminateRunningProcess: boolean) => {
@@ -1019,11 +1027,13 @@ async function captureIos(
       capture.device.orientation ?? "portrait",
     ]);
   };
-  await NodeFSP.rm(readyPath, { force: true });
+  await Promise.all(readyPaths.map((readyPath) => NodeFSP.rm(readyPath, { force: true })));
   await NodeFSP.writeFile(scenePath, firstScene);
   await launchShowcaseApp(false);
   for (const [sceneIndex, scene] of capture.scenes.entries()) {
-    if (sceneIndex > 0) await NodeFSP.rm(readyPath, { force: true });
+    if (sceneIndex > 0) {
+      await Promise.all(readyPaths.map((readyPath) => NodeFSP.rm(readyPath, { force: true })));
+    }
     await NodeFSP.writeFile(scenePath, scene);
     if (sceneIndex === 0) {
       for (let attempt = 0; attempt < 2; attempt += 1) {
@@ -1175,14 +1185,16 @@ async function waitForAndroidShowcaseScene(
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const readyScene = await adbOutput(serial, [
-      "shell",
-      "run-as",
-      ANDROID_PACKAGE,
-      "cat",
-      "files/t3-showcase-ready",
-    ]).catch(() => "");
-    if (readyScene.trim() === scene) return;
+    for (const filename of [ANDROID_READY_FILENAME, LEGACY_ANDROID_READY_FILENAME]) {
+      const readyScene = await adbOutput(serial, [
+        "shell",
+        "run-as",
+        ANDROID_PACKAGE,
+        "cat",
+        `files/${filename}`,
+      ]).catch(() => "");
+      if (readyScene.trim() === scene) return;
+    }
     await delay(500);
   }
   throw new Error(`Android showcase scene '${scene}' did not render within ${timeoutMs}ms.`);
@@ -1191,7 +1203,7 @@ async function waitForAndroidShowcaseScene(
 async function writeAndroidShowcaseScene(serial: string, scene: ShowcaseScene): Promise<void> {
   await runAdb(serial, [
     "shell",
-    `run-as ${ANDROID_PACKAGE} sh -c 'mkdir -p files && rm -f files/t3-showcase-ready && printf %s ${scene} > files/t3-showcase-scene'`,
+    `run-as ${ANDROID_PACKAGE} sh -c 'mkdir -p files && rm -f files/${ANDROID_READY_FILENAME} files/${LEGACY_ANDROID_READY_FILENAME} && printf %s ${scene} > files/${ANDROID_SCENE_FILENAME}'`,
   ]);
 }
 
@@ -1350,7 +1362,7 @@ async function main(): Promise<void> {
   }
 
   const showcaseRootDir = await NodeFSP.mkdtemp(
-    NodePath.join(NodeOS.tmpdir(), "t3-mobile-showcase-"),
+    NodePath.join(NodeOS.tmpdir(), "dispatch-mobile-showcase-"),
   );
   const showcaseServers: NodeChildProcess.ChildProcess[] = [];
   const showcaseEnvironments: Array<{

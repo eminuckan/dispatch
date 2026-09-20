@@ -74,7 +74,7 @@
         // Keep this small boot-time copy in sync with the built-in palettes so
         // the selected theme is visible before the app has mounted.
         const BUILT_IN_THEME_PALETTES = {
-          "t3-chat": {
+          "dispatch-chat": {
             light: {
               background: "oklch(0.982446 0.010114 325.653)",
               foreground: "oklch(0.325698 0.116116 325.037)",
@@ -146,7 +146,7 @@
           },
         };
         // Keep the built-in mode list in sync with the runtime so the selected
-        // T3 Chat palette is visible before React has mounted.
+        // Dispatch Chat palette is visible before React has mounted.
         const BUILT_IN_THEME_MODES = Object.fromEntries(
           Object.entries(BUILT_IN_THEME_PALETTES).map(([id, palettes]) => [
             id,
@@ -157,11 +157,14 @@
           "system",
           "light",
           "dark",
-          "t3-chat",
+          "dispatch",
+          "dispatch-chat",
           "grove",
           "ocean",
           "ember",
           "iris",
+          "t3-code",
+          "t3-chat",
           "t3-chat-dark",
           "t3-grove",
           "t3-ocean",
@@ -240,11 +243,13 @@
         try {
           const storedTheme = readDispatchStorageItem("dispatch:theme");
           const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
-          // Older builds stored the dark T3 Chat palette as its own theme id
-          // and every maintainer theme under a t3- prefix; keep those
+          // Older builds stored Dispatch palettes under T3 ids and every
+          // maintainer theme under a t3- prefix; keep those
           // preferences readable. Mirrors the runtime's legacy alias table.
           const LEGACY_THEME_IDS = {
-            "t3-chat-dark": "t3-chat",
+            "t3-code": "dispatch",
+            "t3-chat": "dispatch-chat",
+            "t3-chat-dark": "dispatch-chat",
             "t3-grove": "grove",
             "t3-ocean": "ocean",
             "t3-ember": "ember",

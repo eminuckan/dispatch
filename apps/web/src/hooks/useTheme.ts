@@ -58,10 +58,9 @@ export function readThemeHalves(): ThemeHalves | null {
 }
 
 /**
- * The stored mix as written, without resolvability pruning. Flows that
- * rebuild the whole mix must capture this before a `setTheme` clears it: a
- * published id resolves only once its set has streamed in, and treating "not
- * resolvable yet" as "absent" silently rewrites that half.
+ * The stored mix without resolvability pruning. Known legacy product ids are
+ * canonicalized while unresolved custom/environment ids are preserved until
+ * their published set arrives.
  */
 export function readThemeHalvesRaw(): { light?: string; dark?: string } {
   if (typeof window === "undefined") return {};
@@ -78,10 +77,9 @@ function readStoredThemeHalves(): ThemeHalves | null {
 }
 
 /**
- * The stored mix as written, without resolvability pruning. An environment
- * published id resolves only once its set has streamed in, so a write that
- * merged over the pruned parse would silently erase that half whenever the
- * other one changed before the set arrived.
+ * An environment-published id resolves only once its set has streamed in, so
+ * a write that merged over the pruned parse would silently erase that half
+ * whenever the other one changed before the set arrived.
  */
 function readStoredThemeHalvesRaw(): { light?: string; dark?: string } {
   try {
@@ -92,7 +90,7 @@ function readStoredThemeHalvesRaw(): { light?: string; dark?: string } {
     const halves: { light?: string; dark?: string } = {};
     for (const appearance of ["light", "dark"] as const) {
       const themeId = (value as Record<string, unknown>)[appearance];
-      if (typeof themeId === "string") halves[appearance] = themeId;
+      if (typeof themeId === "string") halves[appearance] = canonicalThemePreference(themeId);
     }
     return halves;
   } catch {
@@ -186,6 +184,14 @@ export function readAppearanceModePreference(theme: Theme): ThemePreferenceMode 
   }
 
   if (readStoredFollowSystem(theme)) return "system";
+  if (typeof window !== "undefined") {
+    try {
+      const rawTheme = readMigratedStorageItem(window.localStorage, STORAGE_KEY);
+      if (rawTheme === "t3-chat-dark") return "dark";
+    } catch {
+      // The canonical preference remains enough to choose the palette.
+    }
+  }
   return getThemePreferenceMode(theme) ?? "light";
 }
 
@@ -229,7 +235,7 @@ export function readThemePreference(): Theme {
 export function writeThemePreference(theme: Theme): void {
   if (typeof window === "undefined") return;
   try {
-    writeMigratedStorageItem(window.localStorage, STORAGE_KEY, theme);
+    writeMigratedStorageItem(window.localStorage, STORAGE_KEY, canonicalThemePreference(theme));
     themeStorageReadFailure = null;
   } catch (cause) {
     throw new ThemeStorageError({
@@ -523,6 +529,7 @@ export function useTheme() {
 
   const setTheme = useCallback((next: Theme): boolean => {
     if (typeof window === "undefined") return false;
+    const canonicalNext = canonicalThemePreference(next);
     try {
       // Preserve the current mode before replacing a legacy or inferred theme
       // preference. Otherwise a fresh System preference is re-inferred from
@@ -537,7 +544,7 @@ export function useTheme() {
       );
       removeMigratedStorageItem(window.localStorage, THEME_HALVES_STORAGE_KEY);
       try {
-        writeThemePreference(next);
+        writeThemePreference(canonicalNext);
       } catch (cause) {
         if (previousHalvesRaw !== null) {
           try {
@@ -569,7 +576,7 @@ export function useTheme() {
       });
       return false;
     }
-    applyTheme(next, { suppressTransitions: true });
+    applyTheme(canonicalNext, { suppressTransitions: true });
     emitChange();
     return true;
   }, []);
@@ -619,7 +626,7 @@ export function useTheme() {
         const current = readStoredThemeHalvesRaw();
         const next: { light?: string; dark?: string } = { ...current };
         if (themeId === null) delete next[appearance];
-        else next[appearance] = themeId;
+        else next[appearance] = canonicalThemePreference(themeId);
         if (next.light === undefined && next.dark === undefined) {
           removeMigratedStorageItem(window.localStorage, THEME_HALVES_STORAGE_KEY);
         } else {

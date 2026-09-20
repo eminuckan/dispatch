@@ -14,12 +14,12 @@ const initialState: MobileThemeRuntimeState = {
 
 describe("mobileThemeRuntime", () => {
   it("keeps the default palette on Uniwind's built-in appearance themes", () => {
-    expect(getMobileUniwindThemeName("t3-code", "light")).toBe("light");
-    expect(getMobileUniwindThemeName("t3-code", "dark")).toBe("dark");
+    expect(getMobileUniwindThemeName("dispatch", "light")).toBe("light");
+    expect(getMobileUniwindThemeName("dispatch", "dark")).toBe("dark");
   });
 
   it("maps custom palettes and appearances to registered themes", () => {
-    expect(getMobileUniwindThemeName("t3-chat", "dark")).toBe("t3-chat-dark");
+    expect(getMobileUniwindThemeName("dispatch-chat", "dark")).toBe("dispatch-chat-dark");
   });
 
   it("hydrates text variables and clears the native appearance override", () => {

@@ -248,8 +248,26 @@ describe("mobile connection storage", () => {
     const themes = { lightThemeId: "material-you", darkThemeId: "ocean" } as const;
     await savePreferencesPatch(themes);
     await expect(loadPreferences()).resolves.toEqual(themes);
-    await savePreferencesPatch({ lightThemeId: "t3-chat" });
-    await expect(loadPreferences()).resolves.toEqual({ ...themes, lightThemeId: "t3-chat" });
+    await savePreferencesPatch({ lightThemeId: "dispatch-chat" });
+    await expect(loadPreferences()).resolves.toEqual({ ...themes, lightThemeId: "dispatch-chat" });
+  });
+
+  it("canonicalizes legacy theme ids and preserves the old dark-theme hint", async () => {
+    mocks.setPreferencesJson(
+      JSON.stringify({
+        themeId: "t3-chat-dark",
+        lightThemeId: "t3-ocean",
+        darkThemeId: "t3-grove",
+      }),
+      10,
+    );
+
+    await expect(loadPreferences()).resolves.toEqual({
+      themeId: "dispatch-chat",
+      lightThemeId: "ocean",
+      darkThemeId: "grove",
+      themeMode: "dark",
+    });
   });
 
   it.each([true, false])("drops the removed Android layout preference (%s)", async (enabled) => {
@@ -260,7 +278,7 @@ describe("mobile connection storage", () => {
       }),
       10,
     );
-    await expect(loadPreferences()).resolves.toEqual({ lightThemeId: "t3-chat" });
+    await expect(loadPreferences()).resolves.toEqual({ lightThemeId: "dispatch-chat" });
   });
 
   it("drops the removed theme transition preference", async () => {

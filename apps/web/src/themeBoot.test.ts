@@ -8,7 +8,7 @@ import {
   invalidateCustomThemes,
   isKnownThemePreference,
   resolveThemeAppearance,
-  T3_CHAT_THEME,
+  DISPATCH_CHAT_THEME,
   EMBER_THEME,
   GROVE_THEME,
   IRIS_THEME,
@@ -156,12 +156,12 @@ describe("index.html boot script", () => {
   }> = [
     { name: "no stored preference on a dark OS", storage: {}, prefersDark: true },
     {
-      name: "T3 Chat follows a dark OS",
+      name: "Dispatch Chat follows a dark OS",
       storage: { [THEME_STORAGE_KEY]: "t3-chat", [THEME_FOLLOW_SYSTEM_STORAGE_KEY]: "true" },
       prefersDark: true,
     },
     {
-      name: "an explicit global dark mode applies to T3 Chat",
+      name: "an explicit global dark mode applies to Dispatch Chat",
       storage: {
         [THEME_STORAGE_KEY]: "t3-chat",
         [THEME_APPEARANCE_MODE_STORAGE_KEY]: "dark",
@@ -195,7 +195,7 @@ describe("index.html boot script", () => {
       prefersDark: true,
     },
     {
-      name: "legacy t3-chat-dark resolves to dark T3 Chat",
+      name: "legacy t3-chat-dark resolves to dark Dispatch Chat",
       storage: { [THEME_STORAGE_KEY]: "t3-chat-dark" },
       prefersDark: true,
     },
@@ -262,7 +262,7 @@ describe("index.html boot script", () => {
       storage: { [THEME_STORAGE_KEY]: "t3-chat", [THEME_FOLLOW_SYSTEM_STORAGE_KEY]: "true" },
       prefersDark: true,
     });
-    expect(chat.themeId).toBe("t3-chat");
+    expect(chat.themeId).toBe(DISPATCH_CHAT_THEME.id);
     expect(chat.themeSelected).toBe("true");
     expect(chat.isDark).toBe(true);
 
@@ -342,7 +342,7 @@ describe("index.html boot script", () => {
   // boot script's hand-maintained copy into a CI-enforced contract: any
   // palette change breaks this test until the copy in index.html is updated.
   it("keeps every built-in boot splash in sync with the real palettes", () => {
-    for (const theme of [T3_CHAT_THEME, GROVE_THEME, OCEAN_THEME, EMBER_THEME, IRIS_THEME]) {
+    for (const theme of [DISPATCH_CHAT_THEME, GROVE_THEME, OCEAN_THEME, EMBER_THEME, IRIS_THEME]) {
       // The boot script resolves every built-in from a light base appearance.
       expect(theme.appearance).toBe("light");
       for (const mode of ["light", "dark"] as const) {
@@ -382,9 +382,9 @@ describe("index.html boot script", () => {
 
     const light = runBootScript({ storage, prefersDark: false });
     expect(light.isDark).toBe(false);
-    expect(light.themeId).toBe("t3-chat");
+    expect(light.themeId).toBe(DISPATCH_CHAT_THEME.id);
     expect(light.bootVariables["--boot-background"]).toBe(
-      getThemeColorsForMode(T3_CHAT_THEME, "light")!.canvas,
+      getThemeColorsForMode(DISPATCH_CHAT_THEME, "light")!.canvas,
     );
   });
 
@@ -451,7 +451,7 @@ describe("index.html boot script", () => {
       },
       prefersDark: true,
     });
-    expect(boot.themeId).toBe("t3-chat");
+    expect(boot.themeId).toBe(DISPATCH_CHAT_THEME.id);
     expect(boot.isDark).toBe(true);
   });
 

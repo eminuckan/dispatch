@@ -4,13 +4,15 @@ import "culori/css";
 import { converter, parse } from "culori/fn";
 import {
   BUILT_IN_THEMES,
+  DISPATCH_CHAT_THEME,
+  DISPATCH_CHAT_THEME_ID as SHARED_DISPATCH_CHAT_THEME_ID,
+  DISPATCH_DARK_THEME_COLORS,
+  DISPATCH_LIGHT_THEME_COLORS,
   EMBER_THEME,
   GROVE_THEME,
   IRIS_THEME,
+  normalizeThemeId as normalizeSharedThemeId,
   OCEAN_THEME,
-  T3_CHAT_THEME,
-  T3_CODE_LIGHT_THEME_COLORS,
-  T3_CODE_DARK_THEME_COLORS,
   RESERVED_THEME_IDS,
   THEME_COLOR_ROLES,
   type ThemeAppearance,
@@ -21,10 +23,19 @@ import {
 } from "@dispatch/shared/themePalettes";
 import { readMigratedStorageItem, writeMigratedStorageItem } from "./lib/storage";
 
-export { EMBER_THEME, GROVE_THEME, IRIS_THEME, OCEAN_THEME, T3_CHAT_THEME, THEME_COLOR_ROLES };
+export {
+  DISPATCH_CHAT_THEME,
+  EMBER_THEME,
+  GROVE_THEME,
+  IRIS_THEME,
+  OCEAN_THEME,
+  THEME_COLOR_ROLES,
+};
 export type { ThemeAppearance, ThemeColorRole, ThemeColors, ThemeDefinition, ThemeVariants };
 
-export const T3_CHAT_THEME_ID = "t3-chat" as const;
+export const DISPATCH_CHAT_THEME_ID = SHARED_DISPATCH_CHAT_THEME_ID;
+/** @deprecated Use DISPATCH_CHAT_THEME. */
+export const T3_CHAT_THEME = DISPATCH_CHAT_THEME;
 const GROVE_THEME_ID = "grove" as const;
 export const OCEAN_THEME_ID = "ocean" as const;
 const EMBER_THEME_ID = "ember" as const;
@@ -295,35 +306,20 @@ export function subscribeToCustomThemes(listener: () => void): () => void {
   };
 }
 
-// Earlier builds shipped every maintainer theme under a t3- prefix; only the
-// genuinely T3-branded palette keeps it. Stored preferences and mixes with the
-// old ids stay readable through this alias table.
-const LEGACY_THEME_ID_ALIASES: Readonly<Record<string, string>> = {
-  [LEGACY_T3_CHAT_DARK_THEME_ID]: T3_CHAT_THEME_ID,
-  "t3-grove": GROVE_THEME_ID,
-  "t3-ocean": OCEAN_THEME_ID,
-  "t3-ember": EMBER_THEME_ID,
-  "t3-iris": IRIS_THEME_ID,
-};
-
 function normalizeThemeId(themeId: string): string {
-  return LEGACY_THEME_ID_ALIASES[themeId] ?? themeId;
+  return normalizeSharedThemeId(themeId);
 }
 
-/**
- * Map a stored preference onto the id the runtime applies, so selection state
- * matches the theme cards. The legacy dark-variant id stays as-is because it
- * still carries the appearance hint getThemePreferenceMode reads.
- */
+/** Map a stored preference onto the id the runtime applies and newly persists. */
 export function canonicalThemePreference(theme: string): string {
-  return theme === LEGACY_T3_CHAT_DARK_THEME_ID ? theme : normalizeThemeId(theme);
+  return normalizeThemeId(theme);
 }
 
 function themeIdFromPreference(theme: ThemePreference): string {
   return normalizeThemeId(theme);
 }
 
-// Older builds stored the dark T3 Chat palette as a separate theme. Keep
+// Older builds stored the dark Dispatch Chat palette as a separate theme. Keep
 // those preferences readable while mapping them to the dark variant.
 function legacyThemeMode(theme: ThemePreference): ThemeAppearance | null {
   return theme === LEGACY_T3_CHAT_DARK_THEME_ID ? "dark" : null;
@@ -332,14 +328,14 @@ function legacyThemeMode(theme: ThemePreference): ThemeAppearance | null {
 /**
  * The standard Dispatch look as a theme palette, for seeding a new theme when
  * no theme is installed. Distinct from {@link getDefaultThemeColors}, which
- * carries the flagship T3 Chat palette used to fill roles omitted by theme
+ * carries the flagship Dispatch Chat palette used to fill roles omitted by theme
  * files.
  */
 export function getStandardThemeColors(appearance: ThemeAppearance): ThemeColors {
   if (appearance === "dark") {
-    return (standardDarkThemeColors ??= decodeThemeColors(T3_CODE_DARK_THEME_COLORS));
+    return (standardDarkThemeColors ??= decodeThemeColors(DISPATCH_DARK_THEME_COLORS));
   }
-  return (standardLightThemeColors ??= decodeThemeColors(T3_CODE_LIGHT_THEME_COLORS));
+  return (standardLightThemeColors ??= decodeThemeColors(DISPATCH_LIGHT_THEME_COLORS));
 }
 
 type ThemeRgbColor = {
@@ -873,7 +869,7 @@ function standardMutedThemeText(
 
 /** Theme-file defaults follow the flagship palette for the requested mode. */
 export function getDefaultThemeColors(appearance: ThemeAppearance): ThemeColors {
-  return appearance === "dark" ? T3_CHAT_THEME.variants!.dark! : T3_CHAT_THEME.colors;
+  return appearance === "dark" ? DISPATCH_CHAT_THEME.variants!.dark! : DISPATCH_CHAT_THEME.colors;
 }
 
 /**

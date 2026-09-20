@@ -2,9 +2,9 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   BUILT_IN_THEME_IDS,
   BUILT_IN_THEMES,
-  T3_CHAT_THEME,
-  T3_CODE_LIGHT_THEME_COLORS,
-  T3_CODE_DARK_THEME_COLORS,
+  DISPATCH_CHAT_THEME,
+  DISPATCH_LIGHT_THEME_COLORS,
+  DISPATCH_DARK_THEME_COLORS,
   MOBILE_THEME_IDS,
   getThemeColorsForAppearance,
 } from "@dispatch/shared/themePalettes";
@@ -59,7 +59,7 @@ function compositeOver(overlay: string, background: string): string {
 
 describe("mobile themes", () => {
   it("declares every runtime theme variable in the static stylesheet", () => {
-    const generatedVariables = createMobileThemeVariables(T3_CHAT_THEME.colors, "light");
+    const generatedVariables = createMobileThemeVariables(DISPATCH_CHAT_THEME.colors, "light");
     expect(Object.keys(readDefaultMobileThemeVariables("light")).sort()).toEqual(
       Object.keys(generatedVariables).sort(),
     );
@@ -82,8 +82,8 @@ describe("mobile themes", () => {
       const colors = theme
         ? getThemeColorsForAppearance(theme, appearance)!
         : appearance === "dark"
-          ? T3_CODE_DARK_THEME_COLORS
-          : T3_CODE_LIGHT_THEME_COLORS;
+          ? DISPATCH_DARK_THEME_COLORS
+          : DISPATCH_LIGHT_THEME_COLORS;
       const variables =
         themeId === DEFAULT_MOBILE_THEME_ID
           ? readDefaultMobileThemeVariables(appearance)
@@ -170,13 +170,13 @@ describe("mobile themes", () => {
   it.each(["light", "dark"] as const)(
     "separates default settings groups from their %s background",
     (appearance) => {
-      const variables = getMobileThemeVariables("t3-code", appearance);
+      const variables = getMobileThemeVariables("dispatch", appearance);
       expect(
         contrastRatio(variables["--color-grouped-card"], variables["--color-sheet-solid"]),
       ).toBeGreaterThanOrEqual(1.06);
       expect(variables["--color-grouped-card"]).not.toBe(variables["--color-card"]);
       for (const platform of ["ios", "android"]) {
-        const runtime = getMobileThemeRuntimeVariables("t3-code", appearance, platform);
+        const runtime = getMobileThemeRuntimeVariables("dispatch", appearance, platform);
         const sidebar = flattenThemeColor(runtime["--color-drawer"], runtime["--color-screen"]);
         const chrome = flattenThemeColor(
           runtime[platform === "android" ? "--color-header" : "--color-drawer"],
@@ -200,9 +200,9 @@ describe("mobile themes", () => {
   it.each(["light", "dark"] as const)(
     "slightly strengthens default %s messages and separates fallback materials",
     (appearance) => {
-      const variables = getMobileThemeVariables("t3-code", appearance);
+      const variables = getMobileThemeVariables("dispatch", appearance);
       const desktop =
-        appearance === "dark" ? T3_CODE_DARK_THEME_COLORS : T3_CODE_LIGHT_THEME_COLORS;
+        appearance === "dark" ? DISPATCH_DARK_THEME_COLORS : DISPATCH_LIGHT_THEME_COLORS;
       const bubbleContrast = contrastRatio(
         variables["--color-user-bubble"],
         variables["--color-screen"],
@@ -239,6 +239,13 @@ describe("mobile themes", () => {
 
   it("normalizes persisted theme preferences", () => {
     expect(normalizeMobileThemeId("ocean")).toBe("ocean");
+    expect(normalizeMobileThemeId("t3-code")).toBe("dispatch");
+    expect(normalizeMobileThemeId("t3-chat")).toBe("dispatch-chat");
+    expect(normalizeMobileThemeId("t3-chat-dark")).toBe("dispatch-chat");
+    expect(normalizeMobileThemeId("t3-grove")).toBe("grove");
+    expect(normalizeMobileThemeId("t3-ocean")).toBe("ocean");
+    expect(normalizeMobileThemeId("t3-ember")).toBe("ember");
+    expect(normalizeMobileThemeId("t3-iris")).toBe("iris");
     expect(normalizeMobileThemeId("missing-theme")).toBe(DEFAULT_MOBILE_THEME_ID);
     expect(normalizeMobileThemeMode("dark")).toBe("dark");
     expect(normalizeMobileThemeMode("sepia")).toBe("system");
@@ -259,11 +266,11 @@ describe("mobile themes", () => {
   });
 
   it("changes either theme without switching the active appearance", () => {
-    const themeIds = { light: "t3-chat", dark: "grove" } as const;
+    const themeIds = { light: "dispatch-chat", dark: "grove" } as const;
     expect(createMobileThemeSelectionPatch(themeIds, "light", "dark", "ocean")).toEqual({
-      lightThemeId: "t3-chat",
+      lightThemeId: "dispatch-chat",
       darkThemeId: "ocean",
-      themeId: "t3-chat",
+      themeId: "dispatch-chat",
     });
     expect(createMobileThemeSelectionPatch(themeIds, "light", "light", "iris")).toEqual({
       lightThemeId: "iris",
@@ -292,15 +299,15 @@ describe("mobile themes", () => {
   });
 
   it("maps semantic palette roles onto every mobile color variable", () => {
-    const variables = createMobileThemeVariables(T3_CHAT_THEME.colors, "light");
+    const variables = createMobileThemeVariables(DISPATCH_CHAT_THEME.colors, "light");
     expect(variables["--color-sheet-solid"]).toBe(
-      themeColorToNativeColor(T3_CHAT_THEME.colors.chrome),
+      themeColorToNativeColor(DISPATCH_CHAT_THEME.colors.chrome),
     );
     expect(variables["--color-warning"]).toBe(
-      themeColorToNativeColor(T3_CHAT_THEME.colors.warningSurface),
+      themeColorToNativeColor(DISPATCH_CHAT_THEME.colors.warningSurface),
     );
     expect(variables["--color-warning-foreground"]).toBe(
-      themeColorToNativeColor(T3_CHAT_THEME.colors.warningForeground),
+      themeColorToNativeColor(DISPATCH_CHAT_THEME.colors.warningForeground),
     );
     expect(variables["--color-primary"]).not.toBe(variables["--color-screen"]);
     expect(variables["--color-primary-shadow"]).toBe("#000000");

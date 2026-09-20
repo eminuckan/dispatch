@@ -70,16 +70,28 @@ describe("theme failure handling", () => {
     }
   });
 
-  it("reads the persisted T3 Chat theme preference", async () => {
-    vi.stubGlobal("window", {
-      localStorage: createStorage({
-        getItem: () => "t3-chat",
-      }),
-    });
+  it("canonicalizes persisted legacy Dispatch Chat preferences", async () => {
+    const storage = createStorage();
+    storage.setItem("dispatch:theme", "t3-chat");
+    vi.stubGlobal("window", { localStorage: storage });
 
-    const { readThemePreference } = await import("./useTheme");
+    const { readThemePreference, writeThemePreference } = await import("./useTheme");
 
-    expect(readThemePreference()).toBe("t3-chat");
+    expect(readThemePreference()).toBe("dispatch-chat");
+    writeThemePreference("t3-chat");
+    expect(storage.getItem("dispatch:theme")).toBe("dispatch-chat");
+  });
+
+  it("keeps the legacy t3-chat-dark appearance hint while canonicalizing its id", async () => {
+    const storage = createStorage();
+    storage.setItem("dispatch:theme", "t3-chat-dark");
+    vi.stubGlobal("window", { localStorage: storage });
+
+    const { readAppearanceModePreference, readThemePreference } = await import("./useTheme");
+    const theme = readThemePreference();
+
+    expect(theme).toBe("dispatch-chat");
+    expect(readAppearanceModePreference(theme)).toBe("dark");
   });
 
   it("falls back during initial theme application and logs only safe attributes", async () => {

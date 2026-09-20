@@ -60,7 +60,7 @@ const config: ShowcaseConfig = {
       platform: "ios",
       simulator: "iPhone Test",
       appearance: "dark",
-      theme: "t3-code",
+      theme: "dispatch",
       scenes: ["thread", "review"],
       storeAsset: appleSpec,
     },
@@ -69,7 +69,7 @@ const config: ShowcaseConfig = {
       platform: "android",
       avd: "Pixel_Test",
       appearance: "light",
-      theme: "t3-code",
+      theme: "dispatch",
       scenes: ["thread", "terminal"],
       storeAsset: googleSpec,
     },
@@ -110,6 +110,16 @@ it("parses repeatable and expanded theme filters", () => {
   assert.deepStrictEqual(
     [...parseShowcaseCliArgs(["--theme", "all"]).themes],
     [...SHOWCASE_THEMES],
+  );
+});
+
+it("normalizes legacy theme filters before planning captures", () => {
+  assert.deepStrictEqual(
+    [
+      ...parseShowcaseCliArgs(["--theme", "t3-code", "--theme", "t3-chat", "--theme", "t3-grove"])
+        .themes,
+    ],
+    ["dispatch", "dispatch-chat", "grove"],
   );
 });
 
@@ -172,11 +182,11 @@ it("expands both appearances into independent upload-ready directories", () => {
     [
       {
         appearance: "light",
-        directory: NodePath.join("/captures", "apple", "iphone-test", "light", "t3-code"),
+        directory: NodePath.join("/captures", "apple", "iphone-test", "light", "dispatch"),
       },
       {
         appearance: "dark",
-        directory: NodePath.join("/captures", "apple", "iphone-test", "dark", "t3-code"),
+        directory: NodePath.join("/captures", "apple", "iphone-test", "dark", "dispatch"),
       },
     ],
   );
@@ -269,7 +279,7 @@ it("enforces store screenshot count limits", () => {
 });
 
 it("defaults every device to the app's own palette", () => {
-  assert.equal(DEFAULT_SHOWCASE_THEME, "t3-code");
+  assert.equal(DEFAULT_SHOWCASE_THEME, "dispatch");
   assert.equal(
     showcaseConfig.devices.every((device) => device.theme === DEFAULT_SHOWCASE_THEME),
     true,

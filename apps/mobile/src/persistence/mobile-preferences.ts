@@ -7,7 +7,11 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import type { ProviderInstanceId, SidebarProjectGroupingMode } from "@dispatch/contracts";
 import type { ComposerEnterBehavior } from "../lib/composerEnterBehavior";
-import { MOBILE_THEME_IDS, type MobileThemeId, type MobileThemeMode } from "../lib/mobileTheme";
+import {
+  normalizeKnownMobileThemeId,
+  type MobileThemeId,
+  type MobileThemeMode,
+} from "../lib/mobileTheme";
 import * as MobileDatabase from "./mobile-database";
 import * as MobileSecureStorage from "./mobile-secure-storage";
 import { MobileStorageDecodeError, MobileStorageEncodeError } from "./mobile-storage";
@@ -119,30 +123,23 @@ function sanitizePreferences(parsed: Preferences): Preferences {
   if (typeof parsed.liveActivitiesEnabled === "boolean") {
     preferences.liveActivitiesEnabled = parsed.liveActivitiesEnabled;
   }
-  if (
-    typeof parsed.themeId === "string" &&
-    (MOBILE_THEME_IDS as readonly string[]).includes(parsed.themeId)
-  ) {
-    preferences.themeId = parsed.themeId as MobileThemeId;
-  }
-  if (
-    typeof parsed.lightThemeId === "string" &&
-    (MOBILE_THEME_IDS as readonly string[]).includes(parsed.lightThemeId)
-  ) {
-    preferences.lightThemeId = parsed.lightThemeId as MobileThemeId;
-  }
-  if (
-    typeof parsed.darkThemeId === "string" &&
-    (MOBILE_THEME_IDS as readonly string[]).includes(parsed.darkThemeId)
-  ) {
-    preferences.darkThemeId = parsed.darkThemeId as MobileThemeId;
-  }
+  const rawThemeId: unknown = (parsed as { readonly themeId?: unknown }).themeId;
+  const rawLightThemeId: unknown = (parsed as { readonly lightThemeId?: unknown }).lightThemeId;
+  const rawDarkThemeId: unknown = (parsed as { readonly darkThemeId?: unknown }).darkThemeId;
+  const themeId = normalizeKnownMobileThemeId(rawThemeId);
+  if (themeId) preferences.themeId = themeId;
+  const lightThemeId = normalizeKnownMobileThemeId(rawLightThemeId);
+  if (lightThemeId) preferences.lightThemeId = lightThemeId;
+  const darkThemeId = normalizeKnownMobileThemeId(rawDarkThemeId);
+  if (darkThemeId) preferences.darkThemeId = darkThemeId;
   if (
     parsed.themeMode === "system" ||
     parsed.themeMode === "light" ||
     parsed.themeMode === "dark"
   ) {
     preferences.themeMode = parsed.themeMode;
+  } else if (rawThemeId === "t3-chat-dark") {
+    preferences.themeMode = "dark";
   }
   if (typeof parsed.baseFontSize === "number") preferences.baseFontSize = parsed.baseFontSize;
   if (typeof parsed.terminalFontSize === "number" || parsed.terminalFontSize === null) {

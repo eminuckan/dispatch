@@ -1,7 +1,16 @@
-export const BUILT_IN_THEME_IDS = ["t3-chat", "grove", "ocean", "ember", "iris"] as const;
+export const DISPATCH_THEME_ID = "dispatch" as const;
+export const DISPATCH_CHAT_THEME_ID = "dispatch-chat" as const;
+
+export const BUILT_IN_THEME_IDS = [
+  DISPATCH_CHAT_THEME_ID,
+  "grove",
+  "ocean",
+  "ember",
+  "iris",
+] as const;
 
 /** The standard Dispatch palette, kept separate from the optional built-in theme library. */
-export const MOBILE_DEFAULT_THEME_ID = "t3-code";
+export const MOBILE_DEFAULT_THEME_ID = DISPATCH_THEME_ID;
 
 /**
  * Every palette the mobile app can render. Declared here so host-side tooling
@@ -10,34 +19,39 @@ export const MOBILE_DEFAULT_THEME_ID = "t3-code";
  */
 export const MOBILE_THEME_IDS = [MOBILE_DEFAULT_THEME_ID, ...BUILT_IN_THEME_IDS] as const;
 
+/** Persisted ids emitted by T3 builds before the Dispatch identity migration. */
+export const LEGACY_THEME_ID_ALIASES: Readonly<Record<string, string>> = {
+  "t3-code": DISPATCH_THEME_ID,
+  "t3-chat": DISPATCH_CHAT_THEME_ID,
+  "t3-chat-dark": DISPATCH_CHAT_THEME_ID,
+  "t3-grove": "grove",
+  "t3-ocean": "ocean",
+  "t3-ember": "ember",
+  "t3-iris": "iris",
+};
+
+export function normalizeThemeId(themeId: string): string {
+  return LEGACY_THEME_ID_ALIASES[themeId] ?? themeId;
+}
+
 /**
  * Ids a theme may not take: the appearance keywords a stored preference uses,
- * every built-in, and the legacy aliases older saves still carry. Taking one
- * would either be shadowed by the built-in or capture clients that never chose
- * it, so the client library and the publish path both consult this set.
+ * the standard palette, every built-in, and the legacy aliases older saves
+ * still carry. Taking one would either be shadowed by a product palette or
+ * capture clients that never chose it, so the client library and the publish
+ * path both consult this set.
  */
 export const RESERVED_THEME_IDS: ReadonlySet<string> = new Set([
   "system",
   "light",
   "dark",
+  MOBILE_DEFAULT_THEME_ID,
   ...BUILT_IN_THEME_IDS,
-  "t3-chat-dark",
-  "t3-grove",
-  "t3-ocean",
-  "t3-ember",
-  "t3-iris",
+  ...Object.keys(LEGACY_THEME_ID_ALIASES),
 ]);
 
-/**
- * Additionally closed to a machine publishing a theme: the mobile default is
- * not a web or desktop built-in, so a saved theme may legitimately carry that
- * id, but no client that follows published themes can resolve it -- publishing
- * it would report success and change nothing.
- */
-export const UNPUBLISHABLE_THEME_IDS: ReadonlySet<string> = new Set([
-  ...RESERVED_THEME_IDS,
-  MOBILE_DEFAULT_THEME_ID,
-]);
+/** Product-owned and compatibility ids cannot be claimed by a published machine theme. */
+export const UNPUBLISHABLE_THEME_IDS: ReadonlySet<string> = new Set(RESERVED_THEME_IDS);
 
 export type BuiltInThemeId = (typeof BUILT_IN_THEME_IDS)[number];
 export type MobileThemeId = (typeof MOBILE_THEME_IDS)[number];
@@ -128,7 +142,7 @@ export type ThemeDefinition = Readonly<{
  * their real backdrops (canvas, or the sidebar for its rows) because theme
  * colors are stored as opaque OKLCH tokens.
  */
-export const T3_CODE_LIGHT_THEME_COLORS: ThemeColors = {
+export const DISPATCH_LIGHT_THEME_COLORS: ThemeColors = {
   canvas: "#fcfcfc",
   chrome: "#fcfcfc",
   toolbar: "#fcfcfc",
@@ -188,7 +202,7 @@ export const T3_CODE_LIGHT_THEME_COLORS: ThemeColors = {
   terminalScrollbarHover: "#bdbdbd",
 };
 
-export const T3_CODE_DARK_THEME_COLORS: ThemeColors = {
+export const DISPATCH_DARK_THEME_COLORS: ThemeColors = {
   canvas: "#0a0a0a",
   chrome: "#0a0a0a",
   toolbar: "#0a0a0a",
@@ -248,8 +262,8 @@ export const T3_CODE_DARK_THEME_COLORS: ThemeColors = {
   terminalScrollbarHover: "#363636",
 };
 
-export const T3_CHAT_THEME: ThemeDefinition = {
-  id: "t3-chat",
+export const DISPATCH_CHAT_THEME: ThemeDefinition = {
+  id: DISPATCH_CHAT_THEME_ID,
   label: "Dispatch Chat",
   appearance: "light",
   colors: {
@@ -884,7 +898,7 @@ export const IRIS_THEME: ThemeDefinition = {
 };
 
 export const BUILT_IN_THEMES: ReadonlyArray<ThemeDefinition> = [
-  T3_CHAT_THEME,
+  DISPATCH_CHAT_THEME,
   GROVE_THEME,
   OCEAN_THEME,
   EMBER_THEME,
