@@ -13,7 +13,7 @@ function shortHash(value: string): string {
 
 /**
  * Returns the local-only socket address shared by the desktop shell and CLI.
- * The state directory is hashed so custom T3 homes cannot exceed Unix socket
+ * The state directory is hashed so custom Dispatch homes cannot exceed Unix socket
  * path limits.
  */
 export function resolveDesktopAppControlAddress(input: {
@@ -24,6 +24,10 @@ export function resolveDesktopAppControlAddress(input: {
   readonly joinPath: (...segments: readonly string[]) => string;
 }): DesktopAppControlAddress {
   const stateHash = shortHash(input.stateDir);
+  // Keep the pre-Dispatch local control address as a deliberate mixed-version
+  // compatibility boundary: an older CLI and a newer desktop shell (or vice
+  // versa) can coexist during an upgrade. This is a local protocol address,
+  // not the canonical product/state namespace.
   if (input.platform === "win32") {
     return {
       address: `\\\\.\\pipe\\t3code-app-${stateHash}`,

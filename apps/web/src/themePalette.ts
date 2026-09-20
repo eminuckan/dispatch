@@ -34,8 +34,6 @@ export {
 export type { ThemeAppearance, ThemeColorRole, ThemeColors, ThemeDefinition, ThemeVariants };
 
 export const DISPATCH_CHAT_THEME_ID = SHARED_DISPATCH_CHAT_THEME_ID;
-/** @deprecated Use DISPATCH_CHAT_THEME. */
-export const T3_CHAT_THEME = DISPATCH_CHAT_THEME;
 const GROVE_THEME_ID = "grove" as const;
 export const OCEAN_THEME_ID = "ocean" as const;
 const EMBER_THEME_ID = "ember" as const;
