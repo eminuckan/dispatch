@@ -25,7 +25,7 @@ const runCli = (args: ReadonlyArray<string>) =>
     Effect.provide(Layer.mergeAll(NodeServices.layer, NetService.layer, TestConsole.layer)),
   );
 
-const makeBaseDir = () => NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3code-theme-cli-"));
+const makeBaseDir = () => NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "dispatch-theme-cli-"));
 
 const settingsPathFor = (baseDir: string) => NodePath.join(baseDir, "userdata", "settings.json");
 
@@ -47,7 +47,7 @@ const writeSettings = (baseDir: string, settings: Record<string, unknown>) => {
   NodeFS.writeFileSync(settingsPathFor(baseDir), `${JSON.stringify(settings, null, 2)}\n`);
 };
 
-describe("t3 theme", () => {
+describe("dispatch theme", () => {
   it.effect("writes a default theme when no settings file exists yet", () =>
     Effect.gen(function* () {
       const baseDir = makeBaseDir();
@@ -343,15 +343,28 @@ describe("t3 theme", () => {
     }),
   );
 
-  it.effect("honors T3CODE_HOME like the rest of the CLI", () =>
+  it.effect("prefers DISPATCH_HOME and keeps T3CODE_HOME as a compatibility fallback", () =>
     Effect.gen(function* () {
-      const baseDir = makeBaseDir();
+      const canonicalBaseDir = makeBaseDir();
+      const legacyBaseDir = makeBaseDir();
       yield* runCli(["theme", "set", "ocean"]).pipe(
         Effect.provide(
-          ConfigProvider.layer(ConfigProvider.fromEnv({ env: { T3CODE_HOME: baseDir } })),
+          ConfigProvider.layer(
+            ConfigProvider.fromEnv({
+              env: { DISPATCH_HOME: canonicalBaseDir, T3CODE_HOME: legacyBaseDir },
+            }),
+          ),
         ),
       );
-      assert.equal(readSettings(baseDir).defaultTheme, "ocean");
+      assert.equal(readSettings(canonicalBaseDir).defaultTheme, "ocean");
+      assert.equal(NodeFS.existsSync(settingsPathFor(legacyBaseDir)), false);
+
+      yield* runCli(["theme", "set", "grove"]).pipe(
+        Effect.provide(
+          ConfigProvider.layer(ConfigProvider.fromEnv({ env: { T3CODE_HOME: legacyBaseDir } })),
+        ),
+      );
+      assert.equal(readSettings(legacyBaseDir).defaultTheme, "grove");
     }),
   );
 

@@ -7,12 +7,12 @@ import { HostProcessPlatform } from "@dispatch/shared/hostProcess";
 
 import { findOwnedLauncher } from "./uninstall.ts";
 
-it.layer(NodeServices.layer)("t3 uninstall launcher", (it) => {
+it.layer(NodeServices.layer)("Dispatch uninstall launcher", (it) => {
   it.effect("claims only a launcher that points into this home's runtime tree", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-uninstall-" });
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "dispatch-uninstall-" });
       const versionsDir = path.join(root, "runtime/versions");
       const exe = path.join(versionsDir, "1.0.0/t3");
       const otherExe = path.join(root, "other/runtime/versions/1.0.0/t3");

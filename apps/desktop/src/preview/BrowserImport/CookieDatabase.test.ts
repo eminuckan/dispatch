@@ -20,7 +20,7 @@ describe("snapshotCookieDatabase", () => {
         const fileSystem = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
         const sourceDirectory = yield* fileSystem.makeTempDirectoryScoped({
-          prefix: "t3code-cookie-source-",
+          prefix: "dispatch-cookie-source-",
         });
         const source = path.join(sourceDirectory, "Cookies");
         const snapshot = yield* Effect.gen(function* () {
@@ -32,6 +32,7 @@ describe("snapshotCookieDatabase", () => {
           expect(yield* fileSystem.exists(`${source}-wal`)).toBe(true);
           return yield* snapshotCookieDatabase(source);
         }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: source })));
+        expect(path.basename(path.dirname(snapshot))).toMatch(/^dispatch-cookie-import-/);
         const rows = yield* Effect.gen(function* () {
           const sql = yield* SqlClient.SqlClient;
           return yield* sql<{ readonly name: string }>`SELECT name FROM cookies`;
@@ -47,11 +48,11 @@ describe("snapshotCookieDatabase", () => {
         const fileSystem = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
         const sourceDirectory = yield* fileSystem.makeTempDirectoryScoped({
-          prefix: "t3code-cookie-invalid-source-",
+          prefix: "dispatch-cookie-invalid-source-",
         });
         const source = path.join(sourceDirectory, "Cookies");
         yield* fileSystem.writeFileString(source, "not a sqlite database");
-        const prefix = `t3code-cookie-failed-${process.pid}-`;
+        const prefix = `dispatch-cookie-failed-${process.pid}-`;
         const error = yield* snapshotCookieDatabase(source, prefix).pipe(
           Effect.scoped,
           Effect.flip,
@@ -69,7 +70,7 @@ describe("snapshotCookieDatabase", () => {
         const fileSystem = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
         const sourceDirectory = yield* fileSystem.makeTempDirectoryScoped({
-          prefix: "t3code-cookie-cleanup-source-",
+          prefix: "dispatch-cookie-cleanup-source-",
         });
         const source = path.join(sourceDirectory, "Cookies");
         yield* Effect.gen(function* () {

@@ -1430,7 +1430,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         "--arch",
         "x64",
         "--output",
-        path.join("/stage/resources", "browser-secret", "t3-browser-secret"),
+        path.join("/stage/resources", "browser-secret", "dispatch-browser-secret"),
       ]);
     }).pipe(
       Effect.provide(
