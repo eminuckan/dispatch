@@ -301,7 +301,7 @@ export function selectGrokPermissionOptionId(
   if (preferredId) {
     return preferredId;
   }
-  // Grok 4.6 often omits allow_always. T3 still offers "Always allow this session".
+  // Grok 4.6 often omits allow_always. Dispatch still offers "Always allow this session".
   if (decision === "acceptForSession") {
     const once = request.options.find((entry) => entry.kind === "allow_once");
     const onceId = once?.optionId.trim();
@@ -880,7 +880,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
         );
       });
 
-    /** Surface Grok plan.md as T3's proposed-plan card (while writing + on exit). */
+    /** Surface Grok plan.md as Dispatch's proposed-plan card (while writing + on exit). */
     const emitProposedPlanCompleted = (
       ctx: GrokSessionContext,
       turnId: TurnId | undefined,
@@ -1099,7 +1099,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
               { discard: true },
             );
             // Grok intercepts exit_plan_mode and reverse-requests client approval.
-            // Capture plan into T3 proposed-plan UI and abandon the native gate so
+            // Capture plan into Dispatch proposed-plan UI and abandon the native gate so
             // the turn does not hang (Claude ExitPlanMode pattern).
             yield* Effect.forEach(
               ["x.ai/exit_plan_mode", "_x.ai/exit_plan_mode"] as const,
@@ -1525,7 +1525,8 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
           return yield* new ProviderAdapterRequestError({
             provider: PROVIDER,
             method: "session/prompt",
-            detail: "Change permissions with T3's permission selector instead of /always-approve.",
+            detail:
+              "Change permissions with Dispatch's permission selector instead of /always-approve.",
           });
         }
         const prepared = yield* withThreadLock(

@@ -832,7 +832,7 @@ describe("DesktopRemoteUpdates", () => {
         assert.equal(terminals[0]?.outcome, "failed");
         assert.equal(
           terminals[0]?.reason,
-          "Automatic updates are disabled by the T3CODE_DISABLE_AUTO_UPDATE setting.",
+          "Automatic updates are disabled by the DISPATCH_DISABLE_AUTO_UPDATE setting.",
         );
         assert.equal(harness.quitAndInstalls(), 0);
       }),

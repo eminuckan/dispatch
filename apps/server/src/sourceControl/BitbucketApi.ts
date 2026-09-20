@@ -563,7 +563,7 @@ function authFromConfig(
     account: Option.none(),
     host: Option.some("bitbucket.org"),
     detail: Option.some(
-      "Set T3CODE_BITBUCKET_EMAIL and T3CODE_BITBUCKET_API_TOKEN, or T3CODE_BITBUCKET_ACCESS_TOKEN.",
+      "Set DISPATCH_BITBUCKET_EMAIL and DISPATCH_BITBUCKET_API_TOKEN, or DISPATCH_BITBUCKET_ACCESS_TOKEN.",
     ),
   };
 }

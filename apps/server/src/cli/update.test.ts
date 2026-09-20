@@ -36,7 +36,7 @@ it("prefers the Dispatch release mirror with a blank-aware legacy fallback", () 
   );
 });
 
-it.layer(NodeServices.layer)("t3 update launcher", (it) => {
+it.layer(NodeServices.layer)("Dispatch update launcher", (it) => {
   it.effect("repoints a symlink that lives in a runtime versions tree", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -128,5 +128,35 @@ it.layer(NodeServices.layer)("t3 update launcher", (it) => {
       assert.equal(relative, launcher);
       assert.equal(absent, undefined);
     }).pipe(Effect.scoped, Effect.provideService(HostProcessPlatform, "linux")),
+  );
+
+  it.effect("repoints canonical and legacy Windows shims from the Dispatch install directory", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "dispatch-update-windows-" });
+      const oldExe = path.join(root, "runtime/versions/1.0.0/t3.exe");
+      const newExe = path.join(root, "runtime/versions/2.0.0/t3.exe");
+      const bin = path.join(root, "bin");
+      const dispatchShim = path.join(bin, "dispatch.cmd");
+      const legacyShim = path.join(bin, "t3.cmd");
+      yield* fs.makeDirectory(bin, { recursive: true });
+      yield* fs.writeFileString(dispatchShim, `@echo off\r\n"${oldExe}" %*`);
+      yield* fs.writeFileString(legacyShim, `@echo off\r\n"${oldExe}" %*`);
+
+      const repointed = yield* repointLauncher({
+        launchedAs: oldExe,
+        versionsDir: path.join(root, "runtime/versions"),
+        targetEntryPath: newExe,
+      }).pipe(
+        Effect.provideService(HostProcessEnvironment, {
+          DISPATCH_INSTALL_BIN_DIR: bin,
+        }),
+      );
+
+      assert.equal(Option.getOrUndefined(repointed), dispatchShim);
+      assert.equal(yield* fs.readFileString(dispatchShim), `@echo off\r\n"${newExe}" %*`);
+      assert.equal(yield* fs.readFileString(legacyShim), `@echo off\r\n"${newExe}" %*`);
+    }).pipe(Effect.scoped, Effect.provideService(HostProcessPlatform, "win32")),
   );
 });

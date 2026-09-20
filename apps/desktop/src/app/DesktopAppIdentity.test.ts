@@ -133,7 +133,7 @@ const withIdentity = <A, E, R>(
                     input.legacyPathExists === true && path.includes("T3 Jev (Alpha)"),
                   ),
             readFileString: () =>
-              Effect.succeed(input.packageJson ?? '{"t3codeCommitHash":"abcdef1234567890"}'),
+              Effect.succeed(input.packageJson ?? '{"dispatchCommitHash":"abcdef1234567890"}'),
           }),
         ),
         Layer.provideMerge(makeAssetsLayer(input.pngIconPath ?? Option.none())),
@@ -212,6 +212,49 @@ describe("DesktopAppIdentity", () => {
           },
         },
         pngIconPath: Option.some("/icon.png"),
+      },
+    );
+  });
+
+  it.effect("prefers embedded Dispatch commit metadata over the legacy key", () => {
+    const calls: ElectronAppCalls = {
+      setAboutPanelOptions: [],
+      setDockIcon: [],
+      setName: [],
+    };
+
+    return withIdentity(
+      Effect.gen(function* () {
+        const identity = yield* DesktopAppIdentity.DesktopAppIdentity;
+        yield* identity.configure;
+
+        assert.equal(calls.setAboutPanelOptions[0]?.version, "abcdef123456");
+      }),
+      {
+        calls,
+        packageJson:
+          '{"dispatchCommitHash":"abcdef1234567890","t3codeCommitHash":"1111111111111111"}',
+      },
+    );
+  });
+
+  it.effect("falls back to embedded legacy commit metadata", () => {
+    const calls: ElectronAppCalls = {
+      setAboutPanelOptions: [],
+      setDockIcon: [],
+      setName: [],
+    };
+
+    return withIdentity(
+      Effect.gen(function* () {
+        const identity = yield* DesktopAppIdentity.DesktopAppIdentity;
+        yield* identity.configure;
+
+        assert.equal(calls.setAboutPanelOptions[0]?.version, "1234567890ab");
+      }),
+      {
+        calls,
+        packageJson: '{"t3codeCommitHash":"1234567890abcdef"}',
       },
     );
   });

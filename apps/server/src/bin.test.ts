@@ -102,7 +102,7 @@ const makeCliTestServerConfig = (baseDir: string) =>
       otlpMetricsUrl: undefined,
       otlpLogsUrl: undefined,
       otlpExportIntervalMs: 10_000,
-      otlpServiceName: "t3-server",
+      otlpServiceName: "dispatch-server",
       otlpHeaders: undefined,
       otlpProtocol: "http/json",
       mode: "web",
@@ -518,7 +518,10 @@ it.layer(NodeServices.layer)("bin cli parsing", (it) => {
       assert.include(output, "T3 Connect\n  Exposure: disabled");
       assert.include(output, "  Authorization: missing");
       assert.include(output, "  Environment link: not provisioned");
-      assert.include(output, "Next: Run `t3 connect link` to authorize and enable T3 Connect.");
+      assert.include(
+        output,
+        "Next: Run `dispatch connect link` to authorize and enable T3 Connect.",
+      );
     }),
   );
 
@@ -586,7 +589,7 @@ it.layer(NodeServices.layer)("bin cli parsing", (it) => {
 
       assert.equal(
         output,
-        "Signed out of T3 Connect locally.\nThe background service is managed separately with `t3 service`.",
+        "Signed out of T3 Connect locally.\nThe background service is managed separately with `dispatch service`.",
       );
       assert.isFalse(NodeFS.existsSync(tokenPath));
     }),

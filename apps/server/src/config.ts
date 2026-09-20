@@ -114,7 +114,7 @@ export const make = (config: ServerConfig["Service"]) => ServerConfig.of(config)
 export const otlpResource = (config: ServerConfig["Service"]) => ({
   serviceName: config.otlpServiceName,
   attributes: {
-    "service.runtime": "t3-server",
+    "service.runtime": "dispatch-server",
     "service.mode": config.mode,
   },
 });
@@ -213,7 +213,7 @@ const makeTest = Effect.fn("ServerConfig.makeTest")(function* (
     otlpMetricsUrl: undefined,
     otlpLogsUrl: undefined,
     otlpExportIntervalMs: 10_000,
-    otlpServiceName: "t3-server",
+    otlpServiceName: "dispatch-server",
     otlpHeaders: undefined,
     otlpProtocol: "http/json",
     cwd,

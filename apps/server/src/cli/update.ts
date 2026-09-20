@@ -122,8 +122,9 @@ export function launcherOwnsVersionsDir(
 }
 
 /**
- * The launcher the install scripts leave behind: a symlink at `<bin>/t3` on
- * POSIX, a `t3.cmd` shim on Windows. `t3 update` repoints it so the next `t3`
+ * The launcher the install scripts leave behind: a symlink at `<bin>/dispatch` on
+ * POSIX, `dispatch.cmd` plus the compatibility `t3.cmd` shim on Windows. `dispatch update`
+ * repoints them so the next invocation
  * invocation is the new version. Only a launcher that already points into
  * this home's `runtime/versions` tree is touched; a plain copy of the
  * executable, or a launcher for some other install, is left alone.
@@ -144,23 +145,24 @@ export const repointLauncher = Effect.fn("cli.update.repoint_launcher")(function
 
   if (platform === "win32") {
     // The shim runs the executable by absolute path, so the executable sees
-    // itself as argv0; the shim is the `t3.cmd` next to it only when launched
-    // from an install script's bin directory. Find it by searching the
-    // directories that would resolve `t3` on this shell's PATH.
-    const shimPath = yield* findWindowsShim(input.launchedAs);
-    if (shimPath === undefined) return Option.none<string>();
-    const current = yield* fs.readFileString(shimPath).pipe(Effect.option);
-    const quoted = Option.isSome(current) ? /^"([^"]+)"/m.exec(current.value)?.[1] : undefined;
-    if (quoted === undefined || !ownsTarget(quoted)) return Option.none<string>();
-    yield* fs.writeFileString(shimPath, `@echo off\r\n"${input.targetEntryPath}" %*`).pipe(
-      Effect.mapError(
-        () =>
-          new CliUpdateError({
-            reason: `Could not rewrite the Dispatch launcher at ${shimPath}.`,
-          }),
-      ),
+    // itself as argv0. Find every install-script shim that targets this exact
+    // executable so the canonical Dispatch command and legacy alias stay in sync.
+    const shimPaths = yield* findWindowsShims(input.launchedAs);
+    if (shimPaths.length === 0) return Option.none<string>();
+    yield* Effect.forEach(
+      shimPaths,
+      (shimPath) =>
+        fs.writeFileString(shimPath, `@echo off\r\n"${input.targetEntryPath}" %*`).pipe(
+          Effect.mapError(
+            () =>
+              new CliUpdateError({
+                reason: `Could not rewrite the Dispatch launcher at ${shimPath}.`,
+              }),
+          ),
+        ),
+      { discard: true },
     );
-    return Option.some(shimPath);
+    return Option.some(shimPaths[0]!);
   }
 
   const linkTarget = yield* fs.readLink(input.launchedAs).pipe(Effect.option);
@@ -182,8 +184,8 @@ export const repointLauncher = Effect.fn("cli.update.repoint_launcher")(function
 
 /**
  * The path the executable was started through. Node keeps the shell's
- * spelling in argv0: a launcher symlink or `./t3` resolves against the
- * working directory, while a bare `t3` was found on PATH and has to be
+ * spelling in argv0: a launcher symlink or `./dispatch` resolves against the
+ * working directory, while a bare `dispatch` was found on PATH and has to be
  * looked up there again, or the launcher symlink is never seen.
  */
 export const resolveLauncherPath = Effect.gen(function* () {
@@ -209,32 +211,43 @@ export const resolveLauncherPath = Effect.gen(function* () {
 
 /**
  * On Windows a `.cmd` shim is what PATH resolves, but the executable it runs
- * only ever sees its own path. Walk PATH for a `t3.cmd` whose target is the
- * running executable; that is the launcher the install script wrote.
+ * only ever sees its own path. Walk configured install directories and PATH for
+ * Dispatch/legacy shims whose target is the running executable.
  */
-export const findWindowsShim = Effect.fn("cli.update.find_windows_shim")(function* (
+const findWindowsShims = Effect.fn("cli.update.find_windows_shims")(function* (
   executablePath: string,
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const environment = yield* HostProcessEnvironment;
   const candidates = [
+    ...(environment["DISPATCH_INSTALL_BIN_DIR"] ? [environment["DISPATCH_INSTALL_BIN_DIR"]] : []),
     ...(environment["T3CODE_INSTALL_BIN_DIR"] ? [environment["T3CODE_INSTALL_BIN_DIR"]] : []),
     ...(environment["PATH"] ?? environment["Path"] ?? "").split(";"),
   ].filter((entry) => entry.trim().length > 0);
+  const matches: string[] = [];
   for (const directory of candidates) {
-    const shimPath = path.join(directory, "t3.cmd");
-    const contents = yield* fs.readFileString(shimPath).pipe(Effect.option);
-    if (Option.isNone(contents)) continue;
-    const target = /^"([^"]+)"/m.exec(contents.value)?.[1];
-    if (
-      target !== undefined &&
-      path.resolve(target).toLowerCase() === path.resolve(executablePath).toLowerCase()
-    ) {
-      return shimPath;
+    for (const name of ["dispatch.cmd", "t3.cmd"] as const) {
+      const shimPath = path.join(directory, name);
+      if (matches.includes(shimPath)) continue;
+      const contents = yield* fs.readFileString(shimPath).pipe(Effect.option);
+      if (Option.isNone(contents)) continue;
+      const target = /^"([^"]+)"/m.exec(contents.value)?.[1];
+      if (
+        target !== undefined &&
+        path.resolve(target).toLowerCase() === path.resolve(executablePath).toLowerCase()
+      ) {
+        matches.push(shimPath);
+      }
     }
   }
-  return undefined;
+  return matches;
+});
+
+export const findWindowsShim = Effect.fn("cli.update.find_windows_shim")(function* (
+  executablePath: string,
+) {
+  return (yield* findWindowsShims(executablePath))[0];
 });
 
 const updateFlags = {
@@ -294,7 +307,7 @@ export const updateCommand = Command.make("update", {
 );
 
 /**
- * A `t3 serve` or `t3` someone started by hand, as opposed to the one the
+ * A `dispatch serve` or `dispatch` someone started by hand, as opposed to the one the
  * background service supervises. The server records its pid on startup; a
  * stale file from a crashed server is ignored by checking the pid is alive.
  *
@@ -413,7 +426,7 @@ const runUpdate = Effect.fn("cli.update.run")(function* (input: {
   // Work out everything that will be touched before touching anything, so the
   // user sees one plan and one question rather than a surprise restart.
   const status = yield* service.status;
-  // The unit name is per user, not per T3 home. Only touch the service when it
+  // The compatibility unit name is per user, not per Dispatch home. Only touch the service when it
   // serves the home this update targets; otherwise it belongs to another
   // install on this machine and restarting it would take that server down.
   const servesThisHome =
@@ -482,7 +495,7 @@ const runUpdate = Effect.fn("cli.update.run")(function* (input: {
   let restartService = false;
   if (serviceInstalled && !serviceCurrent) {
     yield* Console.log(
-      "  A background service is installed for this T3 home. Restarting it interrupts anything running in it: agent turns, terminals, remote clients.",
+      "  A background service is installed for this Dispatch home. Restarting it interrupts anything running in it: agent turns, terminals, remote clients.",
     );
     if (input.assumeYes) {
       restartService = true;
@@ -564,7 +577,7 @@ const runUpdate = Effect.fn("cli.update.run")(function* (input: {
   // downloaded runtime has already proven it runs (the `--version` check
   // above), and doing it here rather than through the target's own CLI means
   // a downgrade to a version without today's commands still works. The unit
-  // is rewritten either way so a later `t3 service restart` lands on the new
+  // is rewritten either way so a later `dispatch service restart` lands on the new
   // version; only the restart itself waits for the user's answer.
   let serviceUpdated = false;
   if (serviceInstalled && !serviceCurrent) {
@@ -610,7 +623,7 @@ const runUpdate = Effect.fn("cli.update.run")(function* (input: {
     );
   } else if (status.installed && !servesThisHome) {
     yield* Console.log(
-      `  The background service serves ${status.installedBaseDir ?? "another T3 home"} and was left unchanged.`,
+      `  The background service serves ${status.installedBaseDir ?? "another Dispatch home"} and was left unchanged.`,
     );
   }
   if (foreground !== undefined) {

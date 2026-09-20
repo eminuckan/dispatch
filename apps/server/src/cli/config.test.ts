@@ -52,7 +52,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
     otlpMetricsUrl: undefined,
     otlpLogsUrl: undefined,
     otlpExportIntervalMs: 10_000,
-    otlpServiceName: "t3-server",
+    otlpServiceName: "dispatch-server",
     otlpHeaders: undefined,
     otlpProtocol: "http/json",
     devAllowedOrigins: [],

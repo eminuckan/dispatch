@@ -29,7 +29,7 @@ const cliBuildChannel = /^[^-+]+-(?:nightly|preview)\./.test(packageJson.version
 // step refuses multi-chunk output and counts the sourcemap as a chunk, and the
 // executable needs a host Node that supports `--build-sea` (25.7+), so this is
 // a separate mode rather than a second entry in the default build.
-const packExecutable = process.env.T3CODE_PACK_EXE === "1";
+const packExecutable = (process.env.DISPATCH_PACK_EXE ?? process.env.T3CODE_PACK_EXE) === "1";
 // `<platform>-<arch>` in nodejs.org naming (darwin-x64, linux-arm64, win-x64).
 // When set, tsdown injects the bundle into a downloaded Node of that target
 // instead of the host Node, which is how the arm64 macOS runner produces the
@@ -47,10 +47,12 @@ const SEA_TARGETS = {
   "win-arm64": { platform: "win", arch: "arm64" },
   "win-x64": { platform: "win", arch: "x64" },
 } as const;
-const packExecutableTarget = process.env.T3CODE_PACK_EXE_TARGET?.trim();
+const packExecutableTarget = (
+  process.env.DISPATCH_PACK_EXE_TARGET ?? process.env.T3CODE_PACK_EXE_TARGET
+)?.trim();
 if (packExecutableTarget && !Object.hasOwn(SEA_TARGETS, packExecutableTarget)) {
   throw new Error(
-    `T3CODE_PACK_EXE_TARGET must be one of ${Object.keys(SEA_TARGETS).join(", ")}, got "${packExecutableTarget}".`,
+    `DISPATCH_PACK_EXE_TARGET must be one of ${Object.keys(SEA_TARGETS).join(", ")}, got "${packExecutableTarget}".`,
   );
 }
 const packExecutableTargets = packExecutableTarget
@@ -110,22 +112,22 @@ export default mergeConfig(
         js: "#!/usr/bin/env node\n",
       },
       define: {
-        __T3CODE_BUILD_CHANNEL__: JSON.stringify(cliBuildChannel),
-        __T3CODE_BUILD_RELAY_URL__: JSON.stringify(repoEnv.T3CODE_RELAY_URL?.trim() ?? ""),
-        __T3CODE_BUILD_CLERK_PUBLISHABLE_KEY__: JSON.stringify(
-          repoEnv.T3CODE_CLERK_PUBLISHABLE_KEY?.trim() ?? "",
+        __DISPATCH_BUILD_CHANNEL__: JSON.stringify(cliBuildChannel),
+        __DISPATCH_BUILD_RELAY_URL__: JSON.stringify(repoEnv.DISPATCH_RELAY_URL?.trim() ?? ""),
+        __DISPATCH_BUILD_CLERK_PUBLISHABLE_KEY__: JSON.stringify(
+          repoEnv.DISPATCH_CLERK_PUBLISHABLE_KEY?.trim() ?? "",
         ),
-        __T3CODE_BUILD_CLERK_CLI_OAUTH_CLIENT_ID__: JSON.stringify(
-          repoEnv.T3CODE_CLERK_CLI_OAUTH_CLIENT_ID?.trim() ?? "",
+        __DISPATCH_BUILD_CLERK_CLI_OAUTH_CLIENT_ID__: JSON.stringify(
+          repoEnv.DISPATCH_CLERK_CLI_OAUTH_CLIENT_ID?.trim() ?? "",
         ),
-        __T3CODE_BUILD_RELAY_CLIENT_OTLP_TRACES_URL__: JSON.stringify(
-          repoEnv.T3CODE_RELAY_CLIENT_OTLP_TRACES_URL?.trim() ?? "",
+        __DISPATCH_BUILD_RELAY_CLIENT_OTLP_TRACES_URL__: JSON.stringify(
+          repoEnv.DISPATCH_RELAY_CLIENT_OTLP_TRACES_URL?.trim() ?? "",
         ),
-        __T3CODE_BUILD_RELAY_CLIENT_OTLP_TRACES_DATASET__: JSON.stringify(
-          repoEnv.T3CODE_RELAY_CLIENT_OTLP_TRACES_DATASET?.trim() ?? "",
+        __DISPATCH_BUILD_RELAY_CLIENT_OTLP_TRACES_DATASET__: JSON.stringify(
+          repoEnv.DISPATCH_RELAY_CLIENT_OTLP_TRACES_DATASET?.trim() ?? "",
         ),
-        __T3CODE_BUILD_RELAY_CLIENT_OTLP_TRACES_TOKEN__: JSON.stringify(
-          repoEnv.T3CODE_RELAY_CLIENT_OTLP_TRACES_TOKEN?.trim() ?? "",
+        __DISPATCH_BUILD_RELAY_CLIENT_OTLP_TRACES_TOKEN__: JSON.stringify(
+          repoEnv.DISPATCH_RELAY_CLIENT_OTLP_TRACES_TOKEN?.trim() ?? "",
         ),
       },
     },

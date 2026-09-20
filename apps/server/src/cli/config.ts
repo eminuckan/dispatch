@@ -34,7 +34,7 @@ const hostFlag = Flag.String("host").pipe(
 );
 export const baseDirFlag = Flag.String("base-dir").pipe(
   Flag.withDescription(
-    "Explicit Dispatch data directory; runtime state is stored under userdata (equivalent to T3CODE_HOME).",
+    "Explicit Dispatch data directory; runtime state is stored under userdata (equivalent to DISPATCH_HOME).",
   ),
   Flag.optional,
 );
@@ -60,7 +60,7 @@ const autoBootstrapProjectFromCwdFlag = Flag.Boolean("auto-bootstrap-project-fro
 );
 const logWebSocketEventsFlag = Flag.Boolean("log-websocket-events").pipe(
   Flag.withDescription(
-    "Emit server-side logs for outbound WebSocket push traffic (equivalent to T3CODE_LOG_WS_EVENTS).",
+    "Emit server-side logs for outbound WebSocket push traffic (equivalent to DISPATCH_LOG_WS_EVENTS).",
   ),
   Flag.withAlias("log-ws-events"),
   Flag.optional,
@@ -103,7 +103,9 @@ const EnvServerConfig = Config.all({
   otlpExportIntervalMs: Config.Int("T3CODE_OTLP_EXPORT_INTERVAL_MS").pipe(
     Config.withDefault(10_000),
   ),
-  otlpServiceName: Config.String("T3CODE_OTLP_SERVICE_NAME").pipe(Config.withDefault("t3-server")),
+  otlpServiceName: Config.String("T3CODE_OTLP_SERVICE_NAME").pipe(
+    Config.withDefault("dispatch-server"),
+  ),
   otlpHeaders: Config.schema(OtlpHeadersFromString, "T3CODE_OTLP_HEADERS").pipe(
     Config.option,
     Config.map(Option.getOrUndefined),
@@ -163,7 +165,7 @@ const DevAuthTokenConfig = Config.Redacted("T3CODE_DEV_AUTH_TOKEN").pipe(
           new Config.ConfigError(
             new Schema.SchemaError(
               new SchemaIssue.InvalidValue({
-                message: "T3CODE_DEV_AUTH_TOKEN must contain at least 32 characters.",
+                message: "DISPATCH_DEV_AUTH_TOKEN must contain at least 32 characters.",
               }),
             ),
           ),

@@ -270,7 +270,7 @@ export class PortalCaptureShortcut {
     body: unknown[],
     options: Record<string, Variant<unknown>> = {},
   ) {
-    const token = `t3_${NodeCrypto.randomUUID().replaceAll("-", "")}`;
+    const token = `dispatch_${NodeCrypto.randomUUID().replaceAll("-", "")}`;
     const expectedPath = this.namespace + token;
     let resolve!: (body: unknown) => void;
     const response = new Promise<unknown>((done) => {
@@ -400,16 +400,21 @@ export class PortalCaptureShortcut {
     const created = await this.request("CreateSession", "", [], {
       session_handle_token: new Variant(
         "s",
-        `t3_capture_${NodeCrypto.randomUUID().replaceAll("-", "")}`,
+        `dispatch_capture_${NodeCrypto.randomUUID().replaceAll("-", "")}`,
       ),
     });
     const session = decodeSession(created).session_handle.value;
     const sessionNamespace = this.namespace.replace("/request/", "/session/");
     if (!session.startsWith(sessionNamespace)) throw new Error("Invalid shortcut session handle.");
     this.session = session;
+    const shortcutHash = NodeCrypto.createHash("sha256").update(trigger).digest("hex").slice(0, 16);
+    // Portal approvals are tied to the registered application identity and shortcut ID.
+    // Dispatch identities write the canonical ID; an explicitly legacy upstream identity
+    // keeps its old ID so an existing portal approval remains usable during migration.
+    const legacyIdentity = appId.startsWith("com.t3tools.");
     this.shortcutId = this.managedByHyprland
       ? HYPRLAND_CAPTURE_ACTION
-      : `t3-snap-shot-${NodeCrypto.createHash("sha256").update(trigger).digest("hex").slice(0, 16)}`;
+      : `${legacyIdentity ? "t3" : "dispatch"}-snap-shot-${shortcutHash}`;
     // Every session must bind, even when the desktop remembers this shortcut's approval.
     const bound = await this.request("BindShortcuts", "oa(sa{sv})s", [
       this.session,

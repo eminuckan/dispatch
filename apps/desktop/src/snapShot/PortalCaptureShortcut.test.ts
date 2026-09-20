@@ -114,7 +114,7 @@ function start(bus = new FakeBus(), shortcut = chord, managedByHyprland = false)
   const capture = vi.fn();
   const changed = vi.fn();
   const client = new PortalCaptureShortcut(
-    "com.t3tools.T3Code",
+    "com.eminuckan.Dispatch",
     shortcut,
     capture,
     changed,
@@ -218,6 +218,7 @@ it("binds only the requested shortcut with a stable ID across sessions", async (
   const { bus, client, capture } = start();
   await client.ready;
   expect(bus.boundId).toBe(first.bus.boundId);
+  expect(bus.boundId).toMatch(/^dispatch-snap-shot-[0-9a-f]{16}$/);
   const binds = bus.calls.filter((call) => call.member === "BindShortcuts");
   expect(binds).toHaveLength(1);
   expect(binds[0]!.body[1]).toEqual([
@@ -232,6 +233,21 @@ it("binds only the requested shortcut with a stable ID across sessions", async (
   bus.activate();
   expect(capture).toHaveBeenCalledOnce();
   expect(bus.calls[0]?.member).toBe("Register");
+});
+
+it("keeps the legacy deterministic ID only for an explicitly legacy portal identity", async () => {
+  const bus = new FakeBus();
+  const capture = vi.fn();
+  const client = new PortalCaptureShortcut(
+    "com.t3tools.T3Code",
+    chord,
+    capture,
+    () => {},
+    bus as unknown as MessageBus,
+  );
+  clients.push(client);
+  await client.ready;
+  expect(bus.boundId).toMatch(/^t3-snap-shot-[0-9a-f]{16}$/);
 });
 
 it("ignores other shortcuts, sessions, and forged activations", async () => {
