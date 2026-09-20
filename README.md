@@ -1,5 +1,7 @@
 # Dispatch
 
+Dispatch is an independent open-source project derived from [T3 Code](https://github.com/pingdotgg/t3code). It has since evolved into its own product while preserving the upstream MIT license, attribution, and project history.
+
 Dispatch is an open-source control surface for coding agents. It runs the agent tooling on your machine and gives you one place to manage threads, terminals, projects, remote environments, model routing, and agent teams across the web and desktop clients.
 
 Dispatch works with existing provider setups for Codex, Claude Code, Cursor, Grok Build, OpenCode, and Google Antigravity. Install and authenticate the providers you use on the machine where Dispatch will run them.
@@ -46,7 +48,7 @@ Or run the Electron desktop client:
 vp run dev:desktop
 ```
 
-For local desktop artifacts, use the platform packaging commands documented in [Development](./docs/operations/development.md#desktop-artifacts). Those artifacts are local builds; this README will point at Dispatch releases once the fork has its own release channel.
+For local desktop artifacts, use the platform packaging commands documented in [Development](./docs/operations/development.md#desktop-artifacts). Those artifacts are local builds; this README will point at Dispatch releases once Dispatch has its own release channel.
 
 The source tree still contains compatibility identifiers inherited from upstream, including the `t3` launcher, `.t3` data paths, and `T3CODE_*` environment variables. Treat those spellings as runtime identifiers rather than the product name.
 
@@ -78,6 +80,6 @@ For development, start with the [development runbook](./docs/operations/developm
 
 ## Upstream & license
 
-Dispatch is an independent fork of [T3 Code](https://github.com/pingdotgg/t3code), originally created by T3 Tools. Thanks to the T3 Code contributors for the open-source foundation this fork builds on.
+Dispatch originated from the open-source [T3 Code](https://github.com/pingdotgg/t3code) codebase, originally created by T3 Tools, and is now developed as an independent project. Thanks to the T3 Code contributors for the foundation Dispatch builds on.
 
 Dispatch retains the upstream MIT license and copyright notices. See [LICENSE](./LICENSE) for the license text and attribution.
