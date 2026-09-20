@@ -130,7 +130,7 @@ const withTempDirectory = <A, E, R>(
     (root) => Effect.promise(() => NodeFSP.rm(root, { recursive: true, force: true })),
   );
 
-describe("t3 app", () => {
+describe("dispatch app", () => {
   it.effect("rejects SSH before it tries to reach a desktop app", () =>
     withTempDirectory("t3-app-ssh-test-", (root) =>
       Effect.gen(function* () {
@@ -142,7 +142,7 @@ describe("t3 app", () => {
         expect(error).toMatchObject({
           _tag: "DesktopAppSshUnsupportedError",
           message:
-            "`t3 app` only controls a desktop app on the same machine. It cannot run over SSH.",
+            "`dispatch app` only controls a desktop app on the same machine. It cannot run over SSH.",
         });
         expect(yield* pathExists(baseDir)).toBe(false);
       }),
@@ -161,7 +161,7 @@ describe("t3 app", () => {
         expect(error).toMatchObject({
           _tag: "DesktopAppPlatformUnsupportedError",
           platform: "freebsd",
-          message: "`t3 app` is not supported on freebsd.",
+          message: "`dispatch app` is not supported on freebsd.",
         });
         expect(yield* pathExists(baseDir)).toBe(false);
       }),
@@ -178,7 +178,7 @@ describe("t3 app", () => {
           _tag: "DesktopAppUnreachableError",
           candidateAddresses: [expect.any(String)],
           workspaceRoot: yield* HostProcessWorkingDirectory,
-          message: expect.stringContaining("Could not reach the T3 Code desktop app."),
+          message: expect.stringContaining("Could not reach the Dispatch desktop app."),
           cause: { code: "ENOENT" },
         });
         expect(yield* pathExists(baseDir)).toBe(false);
@@ -211,7 +211,7 @@ describe("t3 app", () => {
     withTempDirectory("t3-app-preferred-test-", (root) =>
       Effect.gen(function* () {
         vi.mocked(NodeOS.homedir).mockReturnValue(root);
-        const baseDir = NodePath.join(root, ".t3");
+        const baseDir = NodePath.join(root, ".dispatch");
         const desktop = yield* fakeDesktop({ baseDir });
         const development = yield* fakeDesktop({ baseDir, stateSubdirectory: "dev" });
 
@@ -227,7 +227,7 @@ describe("t3 app", () => {
     withTempDirectory("t3-app-dev-test-", (root) =>
       Effect.gen(function* () {
         vi.mocked(NodeOS.homedir).mockReturnValue(root);
-        const baseDir = NodePath.join(root, ".t3");
+        const baseDir = NodePath.join(root, ".dispatch");
         const development = yield* fakeDesktop({ baseDir, stateSubdirectory: "dev" });
 
         yield* runCli(["app"]);
@@ -239,11 +239,27 @@ describe("t3 app", () => {
     ),
   );
 
+  it.effect("adopts an existing legacy ~/.t3 desktop state in place", () =>
+    withTempDirectory("dispatch-app-legacy-test-", (root) =>
+      Effect.gen(function* () {
+        vi.mocked(NodeOS.homedir).mockReturnValue(root);
+        const legacyBaseDir = NodePath.join(root, ".t3");
+        yield* Effect.promise(() => NodeFSP.mkdir(legacyBaseDir, { recursive: true }));
+        const legacyDesktop = yield* fakeDesktop({ baseDir: legacyBaseDir });
+
+        yield* runCli(["app"]);
+
+        expect(legacyDesktop.received).toHaveLength(1);
+        expect(yield* pathExists(NodePath.join(root, ".dispatch"))).toBe(false);
+      }).pipe(Effect.scoped),
+    ),
+  );
+
   it.effect("never searches a dev state directory for an explicit T3 home", () =>
     withTempDirectory("t3-app-explicit-test-", (root) =>
       Effect.gen(function* () {
         vi.mocked(NodeOS.homedir).mockReturnValue(root);
-        const baseDir = NodePath.join(root, ".t3");
+        const baseDir = NodePath.join(root, ".dispatch");
         const development = yield* fakeDesktop({ baseDir, stateSubdirectory: "dev" });
 
         const flagError = yield* runCli(["app", "--base-dir", baseDir]).pipe(Effect.flip);
@@ -261,7 +277,7 @@ describe("t3 app", () => {
       withTempDirectory("t3-app-response-test-", (root) =>
         Effect.gen(function* () {
           vi.mocked(NodeOS.homedir).mockReturnValue(root);
-          const baseDir = NodePath.join(root, ".t3");
+          const baseDir = NodePath.join(root, ".dispatch");
           const desktop = yield* fakeDesktop({
             baseDir,
             reply: (request) =>

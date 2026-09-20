@@ -23,9 +23,20 @@ function fixture(overrides = {}) {
 
 it("rejects other clients before looking at the active window", async () => {
   const { service, snapshots } = fixture();
-  await expect(service.capture(":1.99")).rejects.toThrow("Only T3 Code");
+  await expect(service.capture(":1.99")).rejects.toThrow("Only Dispatch");
   expect(snapshots()).toBe(0);
   expect(await service.capture(":1.23")).toBe("pixels");
+});
+
+it("authorizes current Dispatch and legacy T3 desktop identities", () => {
+  expect(CLIENT_NAMES).toEqual([
+    "com.eminuckan.dispatch.SnapShot",
+    "com.eminuckan.dispatch.dev.SnapShot",
+    "com.eminuckan.Dispatch.SnapShot",
+    "com.eminuckan.Dispatch.Development.SnapShot",
+    "com.t3tools.T3Code.SnapShot",
+    "com.t3tools.T3Code.Development.SnapShot",
+  ]);
 });
 
 it.each(CLIENT_NAMES)("accepts the current owner of %s", async (client) => {
@@ -38,7 +49,7 @@ it("rechecks the name owner on each capture", async () => {
   const { service } = fixture({ getNameOwner: async () => owner });
   expect(await service.capture(owner)).toBe("pixels");
   owner = ":1.24";
-  await expect(service.capture(":1.23")).rejects.toThrow("Only T3 Code");
+  await expect(service.capture(":1.23")).rejects.toThrow("Only Dispatch");
 });
 
 it("rejects locked and non-Wayland sessions without taking a screenshot", async () => {
@@ -94,7 +105,7 @@ it("rejects concurrent requests and clears busy after a failed capture", async (
   await expect(service.capture(":1.23")).rejects.toThrow("already in progress");
   finish(new Error("gone"));
   await expect(first).rejects.toThrow("gone");
-  await expect(service.capture(":1.99")).rejects.toThrow("Only T3 Code");
+  await expect(service.capture(":1.99")).rejects.toThrow("Only Dispatch");
 });
 
 it("prepares focus/effects only after pixels and identity have been captured", async () => {

@@ -7,7 +7,7 @@ import {
 } from "./captureConfigEdit.ts";
 import { readKdlNodes } from "./captureConfigKdl.ts";
 
-const app = "com.t3tools.T3Code";
+const app = "com.eminuckan.dispatch";
 const binding = captureConfigBinding("niri", app, "Ctrl+Shift+2");
 
 describe("Niri capture config edits", () => {
@@ -54,6 +54,22 @@ describe("Niri capture config edits", () => {
     expect(result.after).toBe(before);
     expect(result.shortcut).toBe("Ctrl+Alt+Y");
   });
+  it.each(["com.t3tools.T3Code.SnapShot", "com.eminuckan.Dispatch.SnapShot"])(
+    "migrates the legacy Niri binding for %s without changing its shortcut",
+    (destination) => {
+      const legacy = `Ctrl+Alt+Y repeat=false { spawn "gdbus" "call" "--session" "--dest" "${destination}" "--object-path" "/com/t3tools/SnapShot" "--method" "com.t3tools.SnapShot.Capture"; }`;
+      const before = `binds {
+    ${legacy}
+}
+`;
+      const migrated = editCaptureConfig(before, "niri", app, "install");
+      expect(migrated.shortcut).toBe("Ctrl+Alt+Y");
+      expect(migrated.after).not.toContain("com.t3tools.SnapShot.Capture");
+      expect(migrated.after).toContain("com.eminuckan.dispatch.SnapShot.Capture");
+      expect(migrated.after).toContain('"--dest" "com.eminuckan.dispatch.SnapShot"');
+      expect(editCaptureConfig(before, "niri", app, "remove").after).toBe("binds {\n}\n");
+    },
+  );
   it("replaces and removes only this app's capture binding", () => {
     const other = captureConfigBinding("niri", "com.t3tools.Other", "Ctrl+Alt+4");
     const before = `binds {\n    ${binding}\n    ${other}\n}\n`;

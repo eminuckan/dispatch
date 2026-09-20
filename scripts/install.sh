@@ -1,29 +1,48 @@
 #!/bin/sh
-# Installs the T3 Code CLI from a GitHub Release archive. Needs only sh, tar,
+# Installs the Dispatch CLI from a GitHub Release archive. Needs only sh, tar,
 # sha256sum or shasum, and curl or wget; no Node, npm, or compiler.
 #
-#   curl -fsSL https://t3.codes/install.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/eminuckan/dispatch/main/scripts/install.sh | sh
 #
 # Environment:
-#   T3CODE_CHANNEL           release train to follow: stable, nightly, or preview
+#   DISPATCH_CHANNEL         release train to follow: stable, nightly, or preview
 #                            (default: stable; preview is a maintainers' test train)
-#   T3CODE_VERSION           exact version to install (overrides T3CODE_CHANNEL)
-#   T3CODE_HOME              T3 home directory (default: ~/.t3)
-#   T3CODE_INSTALL_BIN_DIR   where the `t3` symlink goes (default: ~/.local/bin)
-#   T3CODE_RELEASE_BASE_URL  mirror for releases/download (default: GitHub)
+#   DISPATCH_VERSION         exact version to install (overrides DISPATCH_CHANNEL)
+#   DISPATCH_HOME            Dispatch home directory (fresh default: ~/.dispatch;
+#                            reuses an existing ~/.t3 when no home is configured)
+#   DISPATCH_INSTALL_BIN_DIR where `dispatch` and legacy `t3` shims go (default: ~/.local/bin)
+#   DISPATCH_RELEASE_BASE_URL mirror for releases/download (default: GitHub)
 #
-# The archive is unpacked into $T3CODE_HOME/runtime/versions/<version>, the
-# same layout `t3 service install` uses, so the service reuses this download
+# Legacy T3CODE_CHANNEL, T3CODE_VERSION, T3CODE_HOME, T3CODE_INSTALL_BIN_DIR,
+# and T3CODE_RELEASE_BASE_URL are still accepted as fallbacks.
+#
+# The archive is unpacked into $DISPATCH_HOME/runtime/versions/<version>, the
+# same layout `dispatch service install` uses, so the service reuses this download
 # instead of fetching the release again.
 set -eu
 
-repo="pingdotgg/t3code"
-base_url="${T3CODE_RELEASE_BASE_URL:-https://github.com/${repo}/releases/download}"
-t3_home="${T3CODE_HOME:-$HOME/.t3}"
-bin_dir="${T3CODE_INSTALL_BIN_DIR:-$HOME/.local/bin}"
+repo="eminuckan/dispatch"
+base_url="${DISPATCH_RELEASE_BASE_URL:-${T3CODE_RELEASE_BASE_URL:-https://github.com/${repo}/releases/download}}"
+trimmed_env_value() {
+  printf '%s' "$1" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//'
+}
+dispatch_home_override="$(trimmed_env_value "${DISPATCH_HOME:-}")"
+legacy_home_override="$(trimmed_env_value "${T3CODE_HOME:-}")"
+if [ -n "$dispatch_home_override" ]; then
+  dispatch_home="$dispatch_home_override"
+elif [ -n "$legacy_home_override" ]; then
+  dispatch_home="$legacy_home_override"
+elif [ -e "$HOME/.dispatch" ]; then
+  dispatch_home="$HOME/.dispatch"
+elif [ -e "$HOME/.t3" ]; then
+  dispatch_home="$HOME/.t3"
+else
+  dispatch_home="$HOME/.dispatch"
+fi
+bin_dir="${DISPATCH_INSTALL_BIN_DIR:-${T3CODE_INSTALL_BIN_DIR:-$HOME/.local/bin}}"
 
 fail() {
-  printf '\nt3 install: %s\n' "$1" >&2
+  printf '\ndispatch install: %s\n' "$1" >&2
   exit 1
 }
 
@@ -42,7 +61,7 @@ step() {
 if "$interactive"; then
   printf '\n%s' "$bold" >&2
   printf '  %s\n' '██████████ ████████ ' >&2
-  printf '  %s\n' '    ███       ▄██▀       T3 Code' >&2
+  printf '  %s\n' '    ███       ▄██▀       Dispatch' >&2
   printf '  %s%s     %sCLI installer%s\n' '    ███       ████▄ ' "$reset" "$muted" "$reset$bold" >&2
   printf '  %s\n' '    ███    ▄     ███' >&2
   printf '  %s\n' '    ███    ███████▀ ' >&2
@@ -142,8 +161,8 @@ else
   fail "sha256sum or shasum is required"
 fi
 
-channel="${T3CODE_CHANNEL:-stable}"
-version="${T3CODE_VERSION:-}"
+channel="${DISPATCH_CHANNEL:-${T3CODE_CHANNEL:-stable}}"
+version="${DISPATCH_VERSION:-${T3CODE_VERSION:-}}"
 if [ -z "$version" ]; then
   # Tags are v<semver>; the channel is the prerelease identifier, or none for
   # stable. Only tags of the requested train are considered, so a stable
@@ -151,22 +170,22 @@ if [ -z "$version" ]; then
   case "$channel" in
     stable) tag_pattern='v\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)' ;;
     nightly | preview) tag_pattern="v\([0-9][^\"]*-${channel}\.[0-9]*\.[0-9]*\)" ;;
-    *) fail "T3CODE_CHANNEL must be stable, nightly, or preview" ;;
+    *) fail "DISPATCH_CHANNEL must be stable, nightly, or preview" ;;
   esac
   tmp_index="$(mktemp)"
   fetch "https://api.github.com/repos/${repo}/releases?per_page=100" "$tmp_index"
   version="$(sed -n "s/.*\"tag_name\": *\"${tag_pattern}\".*/\1/p" "$tmp_index" | head -n 1)"
   rm -f "$tmp_index"
-  [ -n "$version" ] || fail "could not find a ${channel} release; set T3CODE_VERSION"
+  [ -n "$version" ] || fail "could not find a ${channel} release; set DISPATCH_VERSION"
 fi
 case "$version" in
   *-preview.*)
     printf '%s\n' \
-      "t3 ${version} is a preview build." \
+      "Dispatch ${version} is a preview build." \
       "  Preview builds are cut by maintainers from unreleased branches to exercise the release" \
       "  pipeline. They can be broken, receive no fixes, and are never offered as updates." \
-      "  Set T3CODE_CHANNEL=stable (the default) for a supported build." >&2
-    if [ "$channel" != "preview" ] && [ -z "${T3CODE_VERSION:-}" ]; then
+      "  Set DISPATCH_CHANNEL=stable (the default) for a supported build." >&2
+    if [ "$channel" != "preview" ] && [ -z "${DISPATCH_VERSION:-${T3CODE_VERSION:-}}" ]; then
       fail "refusing a preview build that was not explicitly requested"
     fi
     ;;
@@ -174,7 +193,7 @@ esac
 
 stem="t3-${version}-${platform}-${arch}"
 archive="${stem}.tar.gz"
-versions_dir="${t3_home}/runtime/versions"
+versions_dir="${dispatch_home}/runtime/versions"
 target_dir="${versions_dir}/${version}"
 
 if [ -f "${target_dir}/.install-complete" ] && [ "$(cat "${target_dir}/.install-complete")" = "$version" ]; then
@@ -188,7 +207,7 @@ else
   trap 'printf "\n" >&2; exit 143' TERM
 
   if "$interactive"; then printf '\r\033[2K' >&2; fi
-  printf '  %sInstalling%s T3 Code %s%s%s\n\n' "$muted" "$reset" "$bold" "$version" "$reset" >&2
+  printf '  %sInstalling%s Dispatch %s%s%s\n\n' "$muted" "$reset" "$bold" "$version" "$reset" >&2
   step "Downloading..."
   fetch_status=0
   fetch "${base_url}/v${version}/SHA256SUMS" "${staging}/SHA256SUMS" || fetch_status=$?
@@ -205,7 +224,7 @@ else
   actual="$(checksum "${staging}/${archive}")"
   [ "$actual" = "$expected" ] || fail "checksum mismatch for ${archive}"
 
-  step "Extracting T3 Code..."
+  step "Extracting Dispatch..."
   tar -xzf "${staging}/${archive}" -C "$staging" --strip-components=1
   rm -f "${staging}/${archive}" "${staging}/SHA256SUMS"
   "${staging}/t3" --version >/dev/null || fail "the downloaded executable does not run"
@@ -216,12 +235,13 @@ else
   trap - EXIT
 fi
 
-step "Setting up the t3 command..."
+step "Setting up the dispatch command..."
 mkdir -p "$bin_dir"
+ln -sfn "${target_dir}/t3" "${bin_dir}/dispatch"
 ln -sfn "${target_dir}/t3" "${bin_dir}/t3"
 if "$interactive"; then printf '\r\033[2K' >&2; fi
-printf '  %sInstalled T3 Code %s%s\n\n' "$green" "$version" "$reset" >&2
+printf '  %sInstalled Dispatch %s%s\n\n' "$green" "$version" "$reset" >&2
 case ":${PATH}:" in
-  *":${bin_dir}:"*) printf '  Run %st3%s to get started.\n\n' "$bold" "$reset" ;;
-  *) printf '  Add %s to your PATH, then run %st3%s.\n\n' "$bin_dir" "$bold" "$reset" ;;
+  *":${bin_dir}:"*) printf '  Run %sdispatch%s to get started.\n\n' "$bold" "$reset" ;;
+  *) printf '  Add %s to your PATH, then run %sdispatch%s.\n\n' "$bin_dir" "$bold" "$reset" ;;
 esac

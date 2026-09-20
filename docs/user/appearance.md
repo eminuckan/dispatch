@@ -30,38 +30,42 @@ without replaying its transitions.
 
 ## Custom themes
 
-On web and desktop, choose **Create theme** to adjust a palette, or import a T3 Code or VS Code
+On web and desktop, choose **Create theme** to adjust a palette, or import a Dispatch or VS Code
 theme. The theme editor's color picker lets you select an area of the app to find the color to
 change. Export your theme as JSON to share it.
 
 ## Environment themes
 
 Environment themes and defaults come from the server serving your web app or the desktop app's
-main local environment. app.t3.codes and additional connections do not use them.
+main local environment. Additional remote connections do not use them.
 
 Select a published theme in **Settings → Appearance** to follow its palette as the server updates
 it. **Duplicate** makes an independent copy you can edit. A saved custom theme with the same ID
-takes precedence. If the server stops publishing the selected theme, T3 Code falls back to its
+takes precedence. If the server stops publishing the selected theme, Dispatch falls back to its
 standard theme.
 
 Run this on the server to set a default and switch connected clients to it:
 
 ```bash
-t3 theme set nightfall
+dispatch theme set nightfall
 ```
 
+A source checkout does not install the `dispatch` launcher globally. From the repository root after
+`vp run build:desktop`, use `node apps/server/dist/bin.mjs theme set nightfall` instead.
+
 Clients that are offline apply it when they reconnect. Each client applies the setting once;
-choosing another theme afterward sticks until the next `t3 theme set`. Run the command again to
+choosing another theme afterward sticks until the next `dispatch theme set`. Run the command again to
 reapply it, even if the name is unchanged.
 
-`t3 theme clear` removes the default without changing anyone's current theme. `t3 theme show` lists
+`dispatch theme clear` removes the default without changing anyone's current theme. `dispatch theme show` lists
 the default and published themes.
 
 ### Publish a theme
 
-Save a theme exported from T3 Code into `~/.t3/userdata/themes/` on the server, or the `themes`
-directory under your custom state directory. The filename supplies the theme ID: `nightfall.json`
-can be selected with `t3 theme set nightfall`. Keep the filename stable when updating its colors.
+Save a theme exported from Dispatch into `~/.dispatch/userdata/themes/` on a fresh server install, or
+the `themes` directory under its active custom/adopted state home. Upgraded installs can continue to
+use an existing `~/.t3` or `~/.t3-jev` home in place. The filename supplies the theme ID: `nightfall.json`
+can be selected with `dispatch theme set nightfall`. Keep the filename stable when updating its colors.
 Do not use `system`, `light`, `dark`, or a built-in theme's ID.
 
 For an integration that generates a palette, this shorter format also works:
@@ -79,7 +83,7 @@ For an integration that generates a palette, this shorter format also works:
 }
 ```
 
-Set `appearance` to `light` or `dark` and supply hex colors for `canvas` and `accent`. T3 Code
+Set `appearance` to `light` or `dark` and supply hex colors for `canvas` and `accent`. Dispatch
 generates the rest. The optional `colors` overrides use the names in the theme editor's advanced
 view.
 

@@ -347,6 +347,10 @@
       "types": "./src/cliRelease.ts",
       "import": "./src/cliRelease.ts"
     },
+    "./dispatchEnv": {
+      "types": "./src/dispatchEnv.ts",
+      "import": "./src/dispatchEnv.ts"
+    },
     "./gitPatchPath": {
       "types": "./src/gitPatchPath.ts",
       "import": "./src/gitPatchPath.ts"

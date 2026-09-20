@@ -626,11 +626,22 @@ export class Launcher {
   }
 }
 
+export function resolveServiceLauncherBaseDir(
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): string {
+  const dispatchHome = env.DISPATCH_HOME?.trim();
+  if (dispatchHome) return dispatchHome;
+
+  const legacyHome = env.T3CODE_HOME?.trim();
+  if (legacyHome) return legacyHome;
+
+  throw new Error(
+    "DISPATCH_HOME is required by the Dispatch service launcher; T3CODE_HOME is accepted as a legacy fallback.",
+  );
+}
+
 export async function main(): Promise<void> {
-  const baseDir = process.env.T3CODE_HOME?.trim();
-  if (baseDir === undefined || baseDir === "") {
-    throw new Error("T3CODE_HOME is required by the T3 Code service launcher.");
-  }
+  const baseDir = resolveServiceLauncherBaseDir();
   const statePath = NodePath.join(baseDir, "runtime", SERVICE_STATE_FILE);
   const state = await readServiceState(statePath);
   await new Launcher(baseDir, state).run();

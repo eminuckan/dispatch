@@ -7,7 +7,7 @@ The relay is the hosted control plane for T3 Connect. It helps clients discover 
 remote environments, manages the cloud-side records needed for those connections, and delivers
 optional mobile notifications and Live Activities.
 
-The relay is intentionally not in the hot path for normal T3 Code traffic. After a client connects,
+The relay is intentionally not in the hot path for normal Dispatch traffic. After a client connects,
 regular API and WebSocket traffic goes directly between that client and the selected environment.
 See the [T3 Connect architecture note](../../docs/internals/t3-connect.md) for the larger system
 design.
@@ -16,7 +16,7 @@ design.
 
 The relay currently owns:
 
-- Linking T3 Code environments to a cloud account.
+- Linking Dispatch environments to a cloud account.
 - Provisioning and tracking managed environment endpoints.
 - Issuing short-lived credentials used to connect clients to linked environments.
 - Listing linked environments and registered mobile devices for an account.
@@ -113,7 +113,8 @@ domain override.
 The stack's `PublishClientConfig` action ([`src/clientConfig.ts`](./src/clientConfig.ts)) writes the
 deployed relay URL and tracing configuration into the repository-root `.env`, so subsequent source
 builds point at the relay that was just deployed without copying values manually. It runs only when
-one of those outputs changed, and `T3CODE_RELAY_CLIENT_CONFIG_ENV` redirects it to another file.
+one of those outputs changed, and `DISPATCH_RELAY_CLIENT_CONFIG_ENV` redirects it to another file.
+The legacy `T3CODE_RELAY_CLIENT_CONFIG_ENV` name is still accepted when operating an older setup.
 
 ### Deployment CI
 

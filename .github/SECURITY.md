@@ -1,8 +1,8 @@
 # Security policy
 
-Report security vulnerabilities affecting T3 Code or T3 Tools-operated infrastructure to
-[security@ping.gg](mailto:security@ping.gg). Please do not disclose them publicly until we have had
-a reasonable opportunity to investigate and remediate them.
+Report security vulnerabilities affecting Dispatch through GitHub's private vulnerability reporting
+flow for the `eminuckan/dispatch` repository. Please do not open a public issue or disclose the
+details publicly until the report has had a reasonable opportunity to be investigated and remediated.
 
-See the [full security policy](https://t3.codes/security-policy) for reporting details, scope,
-and safe harbor terms for good-faith research.
+The upstream T3 Code security policy applies only to T3 Code and T3 Tools-operated infrastructure;
+it is not Dispatch's reporting channel.

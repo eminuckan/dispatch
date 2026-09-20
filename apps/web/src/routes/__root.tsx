@@ -21,7 +21,6 @@ import { CommandPalette } from "../components/CommandPalette";
 import { CustomSnoozeDialogHost } from "../components/CustomSnoozeDialog";
 import { ConfirmDialogHost } from "../components/ConfirmDialogHost";
 import { FirstRunGate } from "../components/onboarding/FirstRunGate";
-import { ConnectOnboardingDialog } from "../components/cloud/ConnectOnboardingDialog";
 import { RelayClientInstallDialog } from "../components/cloud/RelayClientInstallDialog";
 import { SshPasswordPromptDialog } from "../components/desktop/SshPasswordPromptDialog";
 import { SnapShotCoordinator } from "../components/desktop/SnapShotCoordinator";
@@ -220,7 +219,6 @@ function RootRouteView() {
           {primaryEnvironmentAuthenticated ? <AuthenticatedTracingBootstrap /> : null}
           {primaryEnvironmentAuthenticated ? <DesktopAppActivationCoordinator /> : null}
           <RelayClientInstallDialog />
-          <ConnectOnboardingDialog />
           <SshPasswordPromptDialog />
           <SnapShotCoordinator />
           <ThreadNotificationCoordinator />

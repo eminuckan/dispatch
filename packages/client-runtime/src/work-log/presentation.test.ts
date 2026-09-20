@@ -295,8 +295,8 @@ describe("resolveWorkEntryToolPresentation", () => {
       "Stopping recording the preview browser",
       "Stopped recording the preview browser",
     ],
-    ["t3_thread_read", "Reading a T3 thread", "Read a T3 thread"],
-    ["t3_thread_send", "Sending to a T3 thread", "Sent to a T3 thread"],
+    ["t3_thread_read", "Reading a Dispatch thread", "Read a Dispatch thread"],
+    ["t3_thread_send", "Sending to a Dispatch thread", "Sent to a Dispatch thread"],
     [
       "t3_worktree_handoff",
       "Handing off thread to a git worktree",
@@ -313,13 +313,13 @@ describe("resolveWorkEntryToolPresentation", () => {
     ).toBe(completed);
   });
 
-  it("keeps T3 branding for non-browser tools and falls back to the original tool label", () => {
+  it("uses Dispatch branding for non-browser tools and falls back to the original tool label", () => {
     expect(
       resolveWorkEntryToolPresentation({
         label: "mcp__t3_code__task_status",
         toolTitle: "Check the child task",
       }),
-    ).toEqual({ displayName: "Getting delegated task status", icon: "t3-code" });
+    ).toEqual({ displayName: "Getting delegated task status", icon: "dispatch" });
   });
 
   it("does not brand unknown tools or another server's matching tool name", () => {

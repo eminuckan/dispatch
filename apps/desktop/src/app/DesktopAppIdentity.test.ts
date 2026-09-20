@@ -21,9 +21,9 @@ const defaultEnvironmentInput = {
   platform: "darwin",
   processArch: "arm64",
   appVersion: "1.2.3",
-  appPath: "/Applications/T3 Code.app/Contents/Resources/app.asar",
+  appPath: "/Applications/Dispatch.app/Contents/Resources/app.asar",
   isPackaged: true,
-  resourcesPath: "/Applications/T3 Code.app/Contents/Resources",
+  resourcesPath: "/Applications/Dispatch.app/Contents/Resources",
   runningUnderArm64Translation: false,
 } satisfies DesktopEnvironment.MakeDesktopEnvironmentInput;
 
@@ -157,8 +157,8 @@ describe("DesktopAppIdentity", () => {
     ),
   );
 
-  it.effect("preserves failures while inspecting the legacy userData path", () => {
-    const legacyPath = "/Users/alice/Library/Application Support/T3 Jev (Alpha)";
+  it.effect("preserves failures while inspecting the current userData path", () => {
+    const legacyPath = "/Users/alice/Library/Application Support/dispatch";
     const cause = PlatformError.systemError({
       _tag: "PermissionDenied",
       module: "FileSystem",

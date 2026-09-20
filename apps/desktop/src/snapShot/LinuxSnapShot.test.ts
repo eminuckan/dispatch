@@ -39,9 +39,10 @@ import {
   readPortalPng,
   resizeLinuxCapture,
 } from "./LinuxSnapShot.ts";
+import { GNOME_CAPTURE_DBUS_NAME, LEGACY_GNOME_CAPTURE_DBUS_NAME } from "./gnomeCaptureBundle.ts";
 
 const png = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 0]);
-const appId = "com.t3tools.T3Code";
+const appId = "com.eminuckan.dispatch";
 const metadata = {
   title: "Editor",
   appName: "Text Editor",
@@ -55,6 +56,8 @@ class FakeBus extends NodeEvents.EventEmitter {
   portalVersion = 3;
   targets: number | undefined = 8;
   extensionVersion: number | undefined;
+  legacyExtensionVersion: number | undefined;
+  canonicalExtensionState: number | undefined;
   kdeVersion: number | undefined = 5;
   kdeError: Error | undefined;
   status = 0;
@@ -114,9 +117,21 @@ class FakeBus extends NodeEvents.EventEmitter {
                 : { AvailableTargets: new Variant("u", this.targets) }),
             },
           ]);
-        if (this.extensionVersion === undefined)
+        const extensionVersion =
+          message.destination === GNOME_CAPTURE_DBUS_NAME
+            ? this.extensionVersion
+            : message.destination === LEGACY_GNOME_CAPTURE_DBUS_NAME
+              ? this.legacyExtensionVersion
+              : undefined;
+        if (extensionVersion === undefined)
           throw new DBusError("org.freedesktop.DBus.Error.ServiceUnknown", "Absent");
-        return reply([{ Version: new Variant("u", this.extensionVersion) }]);
+        return reply([{ Version: new Variant("u", extensionVersion) }]);
+      case "GetExtensionInfo":
+        return reply([
+          this.canonicalExtensionState === undefined
+            ? {}
+            : { state: new Variant("d", this.canonicalExtensionState) },
+        ]);
       case "GetNameOwner":
         return reply([":1.2"]);
       case "AddMatch":
@@ -245,6 +260,65 @@ it.each([
     expect(bus.disconnect).toHaveBeenCalledOnce();
   },
 );
+
+it("prefers the Dispatch GNOME extension and falls back to the legacy T3 service", async () => {
+  bus.portalVersion = 2;
+  bus.extensionVersion = 2;
+  bus.legacyExtensionVersion = 1;
+  expect((await getLinuxCaptureSupport(appId)).linuxBackend).toBe("gnome-extension");
+  expect(
+    bus.calls.some(
+      (call) => call.member === "GetAll" && call.destination === LEGACY_GNOME_CAPTURE_DBUS_NAME,
+    ),
+  ).toBe(false);
+
+  bus = new FakeBus();
+  connect.mockImplementation(() => bus as unknown as MessageBus);
+  bus.portalVersion = 2;
+  bus.extensionVersion = undefined;
+  bus.legacyExtensionVersion = 2;
+  expect((await getLinuxCaptureSupport(appId)).linuxBackend).toBe("gnome-extension");
+  expect(
+    bus.calls.some(
+      (call) => call.member === "GetAll" && call.destination === LEGACY_GNOME_CAPTURE_DBUS_NAME,
+    ),
+  ).toBe(true);
+
+  bus = new FakeBus();
+  connect.mockImplementation(() => bus as unknown as MessageBus);
+  bus.portalVersion = 2;
+  bus.extensionVersion = undefined;
+  bus.legacyExtensionVersion = 1;
+  expect(await captureLinuxWindow(appId)).toEqual({ png, window: metadata });
+  expect(bus.calls.find((call) => call.member === "Capture")?.destination).toBe(
+    LEGACY_GNOME_CAPTURE_DBUS_NAME,
+  );
+  expect(bus.requestName).toHaveBeenCalledWith("com.t3tools.T3Code.SnapShot", expect.any(Number));
+
+  bus = new FakeBus();
+  connect.mockImplementation(() => bus as unknown as MessageBus);
+  bus.portalVersion = 2;
+  bus.legacyExtensionVersion = 1;
+  await captureLinuxWindow("com.eminuckan.dispatch.dev");
+  expect(bus.requestName).toHaveBeenCalledWith(
+    "com.t3tools.T3Code.Development.SnapShot",
+    expect.any(Number),
+  );
+});
+
+it("does not fall back to the legacy service after the canonical extension is known", async () => {
+  bus.portalVersion = 2;
+  bus.extensionVersion = undefined;
+  bus.legacyExtensionVersion = 2;
+  bus.canonicalExtensionState = 2;
+
+  expect((await getLinuxCaptureSupport(appId)).linuxBackend).toBe("picker");
+  expect(
+    bus.calls.some(
+      (call) => call.member === "GetAll" && call.destination === LEGACY_GNOME_CAPTURE_DBUS_NAME,
+    ),
+  ).toBe(false);
+});
 
 it.each([1, 2])(
   "reports feedback separately from capture support for extension v%s",

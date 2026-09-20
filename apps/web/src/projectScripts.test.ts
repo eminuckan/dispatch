@@ -137,6 +137,8 @@ describe("projectScripts helpers", () => {
     });
 
     expect(env).toMatchObject({
+      DISPATCH_PROJECT_ROOT: "/repo",
+      DISPATCH_WORKTREE_PATH: "/repo/worktree-a",
       T3CODE_PROJECT_ROOT: "/repo",
       T3CODE_WORKTREE_PATH: "/repo/worktree-a",
     });
@@ -151,9 +153,29 @@ describe("projectScripts helpers", () => {
       },
     });
 
+    expect(env.DISPATCH_PROJECT_ROOT).toBe("/custom-root");
     expect(env.T3CODE_PROJECT_ROOT).toBe("/custom-root");
     expect(env.CUSTOM_FLAG).toBe("1");
+    expect(env.DISPATCH_WORKTREE_PATH).toBeUndefined();
     expect(env.T3CODE_WORKTREE_PATH).toBeUndefined();
+  });
+
+  it("prefers canonical Dispatch runtime env overrides and mirrors them to legacy aliases", () => {
+    const env = projectScriptRuntimeEnv({
+      project: { cwd: "/repo" },
+      worktreePath: "/repo/worktree-a",
+      extraEnv: {
+        DISPATCH_PROJECT_ROOT: "/dispatch-root",
+        T3CODE_PROJECT_ROOT: "/legacy-root",
+        DISPATCH_WORKTREE_PATH: "/dispatch-worktree",
+        T3CODE_WORKTREE_PATH: "/legacy-worktree",
+      },
+    });
+
+    expect(env.DISPATCH_PROJECT_ROOT).toBe("/dispatch-root");
+    expect(env.T3CODE_PROJECT_ROOT).toBe("/dispatch-root");
+    expect(env.DISPATCH_WORKTREE_PATH).toBe("/dispatch-worktree");
+    expect(env.T3CODE_WORKTREE_PATH).toBe("/dispatch-worktree");
   });
 
   it("prefers the worktree path for script cwd resolution", () => {

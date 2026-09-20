@@ -73,12 +73,12 @@ describe("PublishClientConfig", () => {
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-relay-client-config-" });
+      const dir = yield* fs.makeTempDirectoryScoped({ prefix: "dispatch-relay-client-config-" });
       const target = path.join(dir, "client.env");
       yield* fs.writeFileString(target, "KEEP=yes\n");
       const configured = Effect.provide(
         ConfigProvider.layer(
-          ConfigProvider.fromUnknown({ T3CODE_RELAY_CLIENT_CONFIG_ENV: target }),
+          ConfigProvider.fromUnknown({ DISPATCH_RELAY_CLIENT_CONFIG_ENV: target }),
         ),
       );
 
@@ -91,9 +91,9 @@ describe("PublishClientConfig", () => {
         .pipe(configured);
       const first = yield* fs.readFileString(target);
       expect(first).toContain("KEEP=yes\n");
-      expect(first).toContain("T3CODE_RELAY_URL=https://relay.example.com\n");
-      expect(first).toContain("T3CODE_RELAY_CLIENT_OTLP_TRACES_TOKEN=client-v1\n");
-      expect(first).toContain("T3CODE_MOBILE_OTLP_TRACES_TOKEN=mobile-v1\n");
+      expect(first).toContain("DISPATCH_RELAY_URL=https://relay.example.com\n");
+      expect(first).toContain("DISPATCH_RELAY_CLIENT_OTLP_TRACES_TOKEN=client-v1\n");
+      expect(first).toContain("DISPATCH_MOBILE_OTLP_TRACES_TOKEN=mobile-v1\n");
 
       // Same input: the action is skipped, so a change made by hand survives.
       yield* fs.writeFileString(target, `${first}MANUAL=1\n`);
@@ -115,7 +115,7 @@ describe("PublishClientConfig", () => {
         )
         .pipe(configured);
       const third = yield* fs.readFileString(target);
-      expect(third).toContain("T3CODE_RELAY_CLIENT_OTLP_TRACES_TOKEN=client-v2\n");
+      expect(third).toContain("DISPATCH_RELAY_CLIENT_OTLP_TRACES_TOKEN=client-v2\n");
       expect(third).not.toContain("client-v1");
       expect(third).toContain("KEEP=yes\n");
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
@@ -125,7 +125,7 @@ describe("PublishClientConfig", () => {
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-relay-client-config-" });
+      const dir = yield* fs.makeTempDirectoryScoped({ prefix: "dispatch-relay-client-config-" });
       const target = path.join(dir, "client.env");
       const exit = yield* stack
         .deploy(
@@ -151,7 +151,7 @@ describe("PublishClientConfig", () => {
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-relay-client-config-" });
+      const dir = yield* fs.makeTempDirectoryScoped({ prefix: "dispatch-relay-client-config-" });
       const target = path.join(dir, "client.env");
       const exit = yield* stack
         .deploy(
@@ -165,7 +165,7 @@ describe("PublishClientConfig", () => {
         .pipe(
           Effect.provide(
             ConfigProvider.layer(
-              ConfigProvider.fromUnknown({ T3CODE_RELAY_CLIENT_CONFIG_ENV: target }),
+              ConfigProvider.fromUnknown({ DISPATCH_RELAY_CLIENT_CONFIG_ENV: target }),
             ),
           ),
           Effect.exit,

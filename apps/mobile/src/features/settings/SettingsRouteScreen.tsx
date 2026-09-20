@@ -1,5 +1,4 @@
 import { ScreenScrollView as ScrollView } from "../../components/ScreenScrollView";
-import { useAuth, useUser } from "@clerk/expo";
 import { useNavigation } from "@react-navigation/native";
 import { Platform, View } from "react-native";
 import { deriveProjectGroupLabel } from "@t3tools/client-runtime/state/project-grouping";
@@ -52,15 +51,7 @@ export function SettingsRouteScreen() {
 
 function ConfiguredSettingsRouteScreen() {
   const insets = useSafeAreaInsets();
-  const navigation = useNavigation();
-  const { isLoaded, isSignedIn } = useAuth({ treatPendingAsSignedOut: false });
-  const { user } = useUser();
   const { savedConnectionsById } = useSavedRemoteConnections();
-  const accountLabel = !isLoaded
-    ? "Checking"
-    : !isSignedIn
-      ? "Sign in"
-      : (user?.primaryEmailAddress?.emailAddress ?? "Signed in");
 
   return (
     <View collapsable={false} className="flex-1 bg-sheet">
@@ -72,13 +63,6 @@ function ConfiguredSettingsRouteScreen() {
         contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
       >
         <SettingsSection title="Connections">
-          <SettingsRow
-            icon="person.crop.circle"
-            label="T3 Account"
-            value={accountLabel}
-            disabled={!isLoaded}
-            onPress={() => navigation.navigate("SettingsSheet", { screen: "SettingsAuth" })}
-          />
           <SettingsRow
             icon="desktopcomputer"
             label="Environments"
@@ -196,7 +180,7 @@ function SettingsIndexSections() {
 
       <SettingsSection title="App">
         <SettingsRow icon="chart.bar.xaxis" label="Usage" target="SettingsUsage" />
-        <SettingsRow icon="info.circle" label="About T3 Code" target="SettingsAbout" />
+        <SettingsRow icon="info.circle" label="About Dispatch" target="SettingsAbout" />
       </SettingsSection>
     </>
   );

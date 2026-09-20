@@ -1,5 +1,3 @@
-import { DEFAULT_HOSTED_APP_URL } from "@t3tools/shared/connectAuth";
-
 import { getPairingTokenFromUrl, setPairingTokenOnUrl } from "./pairingUrl";
 
 export interface HostedPairingRequest {
@@ -10,8 +8,21 @@ export interface HostedPairingRequest {
 
 export type HostedAppChannel = "latest" | "nightly";
 
-function configuredHostedAppUrl(): string {
-  return import.meta.env.VITE_HOSTED_APP_URL?.trim() || DEFAULT_HOSTED_APP_URL;
+function configuredHostedAppUrl(): string | null {
+  const explicit = import.meta.env.VITE_HOSTED_APP_URL?.trim();
+  if (explicit) {
+    return explicit;
+  }
+
+  if (
+    configuredHostedAppChannel() !== null &&
+    typeof window !== "undefined" &&
+    window.location !== undefined
+  ) {
+    return window.location.origin;
+  }
+
+  return null;
 }
 
 function configuredBackendUrl(): string {
@@ -46,7 +57,8 @@ export function isHostedStaticApp(url?: URL): boolean {
     return false;
   }
 
-  const hostedOrigin = originFromUrl(configuredHostedAppUrl());
+  const hostedAppUrl = configuredHostedAppUrl();
+  const hostedOrigin = hostedAppUrl === null ? null : originFromUrl(hostedAppUrl);
   return hostedOrigin !== null && (url ?? new URL(window.location.href)).origin === hostedOrigin;
 }
 
@@ -74,8 +86,13 @@ export function buildHostedPairingUrl(input: {
   readonly host: string;
   readonly token: string;
   readonly label?: string | null;
-}): string {
-  const url = new URL("/pair", configuredHostedAppUrl());
+}): string | null {
+  const hostedAppUrl = configuredHostedAppUrl();
+  if (hostedAppUrl === null) {
+    return null;
+  }
+
+  const url = new URL("/pair", hostedAppUrl);
   url.searchParams.set("host", input.host);
 
   const label = input.label?.trim();
@@ -88,8 +105,13 @@ export function buildHostedPairingUrl(input: {
 
 export function buildHostedChannelSelectionUrl(input: {
   readonly channel: HostedAppChannel;
-}): string {
-  const url = new URL("/__t3code/channel", configuredHostedAppUrl());
+}): string | null {
+  const hostedAppUrl = configuredHostedAppUrl();
+  if (hostedAppUrl === null) {
+    return null;
+  }
+
+  const url = new URL("/__dispatch/channel", hostedAppUrl);
   url.searchParams.set("channel", input.channel);
   return url.toString();
 }

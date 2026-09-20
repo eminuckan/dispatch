@@ -19,7 +19,7 @@ const tools = {
     vi.fn<() => Promise<{ modmask: number; key: string; dispatcher: string; arg: string }[]>>(),
   reloadHyprland: vi.fn<() => Promise<void>>(),
 };
-const appId = "com.t3tools.T3Code";
+const appId = "com.eminuckan.dispatch";
 const install = { operation: "install", chooseFile: false } as const;
 const target = () => ({ desktop: "niri" as const, path, appId });
 beforeEach(async () => {
@@ -147,6 +147,23 @@ it("does not apply invalid Niri configs", async () => {
   await expect(setup.apply(preview.id, "niri")).rejects.toThrow("Invalid config");
   expect(await NodeFSP.readFile(path, "utf8")).toBe(preview.before);
   expect(await NodeFSP.readdir(directory)).toEqual(["config.kdl"]);
+});
+it("migrates an existing T3 Niri binding to the canonical Dispatch endpoint", async () => {
+  const legacy =
+    'Ctrl+Alt+Y repeat=false { spawn "gdbus" "call" "--session" "--dest" "com.t3tools.T3Code.SnapShot" "--object-path" "/com/t3tools/SnapShot" "--method" "com.t3tools.SnapShot.Capture"; }';
+  await NodeFSP.writeFile(
+    path,
+    `binds {
+    ${legacy}
+}
+`,
+  );
+  const preview = await setup.preview(target(), install);
+  expect(preview.shortcut).toBe("Ctrl+Alt+Y");
+  expect(preview.after).toContain("com.eminuckan.dispatch.SnapShot.Capture");
+  expect(preview.after).not.toContain("com.t3tools.SnapShot.Capture");
+  await setup.apply(preview.id, "niri");
+  expect(await NodeFSP.readFile(path, "utf8")).toBe(preview.after);
 });
 it("leaves already configured files unchanged, without creating a backup", async () => {
   await NodeFSP.writeFile(path, `binds { ${captureConfigBinding("niri", appId, "Ctrl+Alt+Y")} }`);

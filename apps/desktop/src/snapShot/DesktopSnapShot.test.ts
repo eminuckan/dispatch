@@ -3259,6 +3259,8 @@ it.effect("uses an external Niri shortcut without registering an Electron accele
       assert.isFalse(state.shortcutRegistered);
       assert.include(state.shortcutBinding, "gdbus");
       assert.match(state.shortcutBinding ?? "", /^Ctrl\+Shift\+2 repeat=false \{/);
+      assert.include(state.shortcutBinding, '"--dest" "com.eminuckan.dispatch.SnapShot"');
+      assert.include(state.shortcutBinding, "com.eminuckan.dispatch.SnapShot.Capture");
       assert.include(state.shortcutMessage, "Niri config");
       assert.isTrue(state.shortcutActionRegistered);
       assert.lengthOf(registerShortcutMock.mock.calls, 0);

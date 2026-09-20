@@ -48,22 +48,40 @@ const normalizeCommitHash = (value: string): Option.Option<string> => {
 export const resolveUserDataPath = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const fileSystem = yield* FileSystem.FileSystem;
-  const legacyPath = environment.path.join(
+  const currentPath = environment.path.join(
     environment.appDataDirectory,
-    environment.legacyUserDataDirName,
+    environment.userDataDirName,
   );
-  const legacyPathExists = yield* fileSystem.exists(legacyPath).pipe(
+  const currentPathExists = yield* fileSystem.exists(currentPath).pipe(
     Effect.mapError(
       (cause) =>
         new DesktopUserDataPathResolutionError({
-          legacyPath,
+          legacyPath: currentPath,
           cause,
         }),
     ),
   );
-  return legacyPathExists
-    ? legacyPath
-    : environment.path.join(environment.appDataDirectory, environment.userDataDirName);
+  if (currentPathExists) {
+    return currentPath;
+  }
+
+  for (const legacyUserDataDirName of environment.legacyUserDataDirNames) {
+    const legacyPath = environment.path.join(environment.appDataDirectory, legacyUserDataDirName);
+    const legacyPathExists = yield* fileSystem.exists(legacyPath).pipe(
+      Effect.mapError(
+        (cause) =>
+          new DesktopUserDataPathResolutionError({
+            legacyPath,
+            cause,
+          }),
+      ),
+    );
+    if (legacyPathExists) {
+      return legacyPath;
+    }
+  }
+
+  return currentPath;
 }).pipe(Effect.withSpan("desktop.appIdentity.resolveUserDataPath"));
 
 /** @public Service construction is part of the canonical Effect module API. */

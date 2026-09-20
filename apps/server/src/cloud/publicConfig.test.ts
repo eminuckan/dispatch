@@ -7,6 +7,7 @@ import {
   hostedAppUrlConfig,
   makeCloudCliOAuthConfig,
   makeRelayUrlConfig,
+  resolveHasCloudPublicConfig,
   resolveRelayClientTracingConfig,
 } from "./publicConfig.ts";
 
@@ -23,13 +24,26 @@ it.effect("uses the statically injected relay URL when no runtime override exist
   }),
 );
 
-it.effect("prefers a runtime relay URL override over the statically injected value", () =>
+it.effect("prefers the Dispatch relay URL over legacy and statically injected values", () =>
   Effect.gen(function* () {
     const relayUrl = yield* makeRelayUrlConfig("https://embedded.example.test").pipe(
-      provideEnv({ T3CODE_RELAY_URL: "https://runtime.example.test///" }),
+      provideEnv({
+        DISPATCH_RELAY_URL: "https://dispatch.example.test///",
+        T3CODE_RELAY_URL: "https://legacy.example.test",
+      }),
     );
 
-    assert.equal(relayUrl, "https://runtime.example.test");
+    assert.equal(relayUrl, "https://dispatch.example.test");
+  }),
+);
+
+it.effect("accepts the legacy relay URL when the Dispatch name is absent", () =>
+  Effect.gen(function* () {
+    const relayUrl = yield* makeRelayUrlConfig("").pipe(
+      provideEnv({ T3CODE_RELAY_URL: "https://legacy.example.test///" }),
+    );
+
+    assert.equal(relayUrl, "https://legacy.example.test");
   }),
 );
 
@@ -52,9 +66,12 @@ it.effect("normalizes the hosted app URL to an absolute origin", () =>
   Effect.gen(function* () {
     assert.equal(
       yield* hostedAppUrlConfig.pipe(
-        provideEnv({ T3CODE_HOSTED_APP_URL: "https://nightly.app.t3.codes" }),
+        provideEnv({
+          DISPATCH_HOSTED_APP_URL: "https://dispatch.example.test",
+          T3CODE_HOSTED_APP_URL: "https://legacy.example.test",
+        }),
       ),
-      "https://nightly.app.t3.codes",
+      "https://dispatch.example.test",
     );
     assert.equal(
       yield* hostedAppUrlConfig.pipe(
@@ -63,6 +80,10 @@ it.effect("normalizes the hosted app URL to an absolute origin", () =>
       "http://localhost:5733",
     );
   }),
+);
+
+it.effect("requires an explicit hosted app URL instead of defaulting to upstream", () =>
+  hostedAppUrlConfig.pipe(provideEnv({}), Effect.flip),
 );
 
 it.effect("rejects malformed or insecure hosted app URLs", () =>
@@ -100,20 +121,39 @@ it.effect("derives direct Clerk OAuth endpoints from statically injected public 
   }),
 );
 
-it.effect("prefers runtime Clerk OAuth config overrides over statically injected values", () =>
+it.effect("prefers Dispatch Clerk OAuth config over legacy and statically injected values", () =>
   Effect.gen(function* () {
     const config = yield* makeCloudCliOAuthConfig({
       clerkPublishableKeyFallback: "pk_test_ZW1iZWRkZWQuZXhhbXBsZS50ZXN0JA==",
       clerkCliOAuthClientIdFallback: "oauth_client_embedded",
     }).pipe(
       provideEnv({
-        T3CODE_CLERK_PUBLISHABLE_KEY: "pk_test_cnVudGltZS5leGFtcGxlLnRlc3Qk",
-        T3CODE_CLERK_CLI_OAUTH_CLIENT_ID: "oauth_client_runtime",
+        DISPATCH_CLERK_PUBLISHABLE_KEY: "pk_test_ZGlzcGF0Y2guZXhhbXBsZS50ZXN0JA==",
+        T3CODE_CLERK_PUBLISHABLE_KEY: "pk_test_bGVnYWN5LmV4YW1wbGUudGVzdCQ=",
+        DISPATCH_CLERK_CLI_OAUTH_CLIENT_ID: "oauth_client_dispatch",
+        T3CODE_CLERK_CLI_OAUTH_CLIENT_ID: "oauth_client_legacy",
       }),
     );
 
-    assert.equal(config.tokenEndpoint, "https://runtime.example.test/oauth/token");
-    assert.equal(config.clientId, "oauth_client_runtime");
+    assert.equal(config.tokenEndpoint, "https://dispatch.example.test/oauth/token");
+    assert.equal(config.clientId, "oauth_client_dispatch");
+  }),
+);
+
+it.effect("accepts legacy Clerk OAuth config when Dispatch names are absent", () =>
+  Effect.gen(function* () {
+    const config = yield* makeCloudCliOAuthConfig({
+      clerkPublishableKeyFallback: "",
+      clerkCliOAuthClientIdFallback: "",
+    }).pipe(
+      provideEnv({
+        T3CODE_CLERK_PUBLISHABLE_KEY: "pk_test_bGVnYWN5LmV4YW1wbGUudGVzdCQ=",
+        T3CODE_CLERK_CLI_OAUTH_CLIENT_ID: "oauth_client_legacy",
+      }),
+    );
+
+    assert.equal(config.tokenEndpoint, "https://legacy.example.test/oauth/token");
+    assert.equal(config.clientId, "oauth_client_legacy");
   }),
 );
 
@@ -156,16 +196,34 @@ it("resolves relay client tracing from runtime config with build-time fallback",
   assert.deepEqual(
     resolveRelayClientTracingConfig(
       {
-        T3CODE_RELAY_CLIENT_OTLP_TRACES_URL: "https://runtime.example.test/v1/traces",
-        T3CODE_RELAY_CLIENT_OTLP_TRACES_DATASET: "runtime-dataset",
-        T3CODE_RELAY_CLIENT_OTLP_TRACES_TOKEN: "runtime-token",
+        DISPATCH_RELAY_CLIENT_OTLP_TRACES_URL: "https://dispatch.example.test/v1/traces",
+        T3CODE_RELAY_CLIENT_OTLP_TRACES_URL: "https://legacy.example.test/v1/traces",
+        DISPATCH_RELAY_CLIENT_OTLP_TRACES_DATASET: "dispatch-dataset",
+        T3CODE_RELAY_CLIENT_OTLP_TRACES_DATASET: "legacy-dataset",
+        DISPATCH_RELAY_CLIENT_OTLP_TRACES_TOKEN: "dispatch-token",
+        T3CODE_RELAY_CLIENT_OTLP_TRACES_TOKEN: "legacy-token",
       },
       fallback,
     ),
     {
-      tracesUrl: "https://runtime.example.test/v1/traces",
-      tracesDataset: "runtime-dataset",
-      tracesToken: "runtime-token",
+      tracesUrl: "https://dispatch.example.test/v1/traces",
+      tracesDataset: "dispatch-dataset",
+      tracesToken: "dispatch-token",
+    },
+  );
+  assert.deepEqual(
+    resolveRelayClientTracingConfig(
+      {
+        T3CODE_RELAY_CLIENT_OTLP_TRACES_URL: "https://legacy.example.test/v1/traces",
+        T3CODE_RELAY_CLIENT_OTLP_TRACES_DATASET: "legacy-dataset",
+        T3CODE_RELAY_CLIENT_OTLP_TRACES_TOKEN: "legacy-token",
+      },
+      fallback,
+    ),
+    {
+      tracesUrl: "https://legacy.example.test/v1/traces",
+      tracesDataset: "legacy-dataset",
+      tracesToken: "legacy-token",
     },
   );
   assert.equal(
@@ -178,5 +236,48 @@ it("resolves relay client tracing from runtime config with build-time fallback",
       fallback,
     ),
     null,
+  );
+});
+
+it("resolves cloud public-config presence with Dispatch precedence and legacy fallback", () => {
+  const noFallback = {
+    relayUrl: "",
+    clerkPublishableKey: "",
+    clerkCliOAuthClientId: "",
+  };
+
+  assert.isTrue(
+    resolveHasCloudPublicConfig(
+      {
+        DISPATCH_RELAY_URL: "https://dispatch.example.test",
+        T3CODE_RELAY_URL: "http://legacy-invalid.example.test",
+        DISPATCH_CLERK_PUBLISHABLE_KEY: "pk_dispatch",
+        T3CODE_CLERK_PUBLISHABLE_KEY: "",
+        DISPATCH_CLERK_CLI_OAUTH_CLIENT_ID: "oauth_dispatch",
+        T3CODE_CLERK_CLI_OAUTH_CLIENT_ID: "",
+      },
+      noFallback,
+    ),
+  );
+  assert.isTrue(
+    resolveHasCloudPublicConfig(
+      {
+        T3CODE_RELAY_URL: "https://legacy.example.test",
+        T3CODE_CLERK_PUBLISHABLE_KEY: "pk_legacy",
+        T3CODE_CLERK_CLI_OAUTH_CLIENT_ID: "oauth_legacy",
+      },
+      noFallback,
+    ),
+  );
+  assert.isFalse(
+    resolveHasCloudPublicConfig(
+      {
+        DISPATCH_RELAY_URL: "http://dispatch-invalid.example.test",
+        T3CODE_RELAY_URL: "https://legacy.example.test",
+        DISPATCH_CLERK_PUBLISHABLE_KEY: "pk_dispatch",
+        DISPATCH_CLERK_CLI_OAUTH_CLIENT_ID: "oauth_dispatch",
+      },
+      noFallback,
+    ),
   );
 });

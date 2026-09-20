@@ -4,6 +4,7 @@ import { formatCliCommand } from "./invocation.ts";
 
 it("formats package runner commands from their cache entry paths", () => {
   for (const [entryPath, expected] of [
+    ["/home/theo/.npm/_npx/dispatch/node_modules/dispatch/dist/bin.mjs", "npx dispatch serve"],
     ["/home/theo/.npm/_npx/abc123/node_modules/t3/dist/bin.mjs", "npx t3 serve"],
     [
       "C:\\Users\\theo\\AppData\\Local\\npm-cache\\_npx\\abc\\node_modules\\t3\\dist\\bin.mjs",
@@ -29,16 +30,35 @@ it("formats package runner commands from their cache entry paths", () => {
   }
 });
 
-it("treats stable installs as direct invocations", () => {
+it("defaults direct guidance to dispatch while preserving observed legacy t3 installs", () => {
+  assert.equal(
+    formatCliCommand({
+      subcommand: "serve",
+      entryPath: "/home/theo/Code/work/dispatch/apps/server/dist/bin.mjs",
+      version: "0.0.31",
+    }),
+    "dispatch serve",
+  );
+  assert.equal(
+    formatCliCommand({ subcommand: "serve", entryPath: "", version: "0.0.31" }),
+    "dispatch serve",
+  );
+  assert.equal(
+    formatCliCommand({
+      subcommand: "serve",
+      entryPath: "",
+      version: "0.0.31",
+      invokedAs: "t3",
+    }),
+    "t3 serve",
+  );
   for (const entryPath of [
     "/usr/local/lib/node_modules/t3/dist/bin.mjs",
-    "/home/theo/Code/work/t3code/apps/server/dist/bin.mjs",
     "/home/theo/.t3/runtime/0.0.31/node_modules/t3/dist/bin.mjs",
-    "",
   ]) {
     assert.equal(
       formatCliCommand({ subcommand: "serve", entryPath, version: "0.0.31" }),
-      "t3 serve",
+      "dispatch serve",
     );
   }
 });
@@ -83,6 +103,7 @@ it("formats serve suggestions to match the launching command", () => {
       subcommand: "serve",
       entryPath: "/usr/local/lib/node_modules/t3/dist/bin.mjs",
       version: "0.0.31-nightly.20260729",
+      invokedAs: "t3",
     }),
     "t3 serve",
   );

@@ -17,9 +17,9 @@ const environmentLayer = DesktopEnvironment.layer({
   platform: "darwin",
   processArch: "arm64",
   appVersion: "1.2.3",
-  appPath: "/Applications/T3 Code.app/Contents/Resources/app.asar",
+  appPath: "/Applications/Dispatch.app/Contents/Resources/app.asar",
   isPackaged: true,
-  resourcesPath: "/Applications/T3 Code.app/Contents/Resources",
+  resourcesPath: "/Applications/Dispatch.app/Contents/Resources",
   runningUnderArm64Translation: false,
 }).pipe(
   Layer.provide(
@@ -50,7 +50,7 @@ describe("DesktopAssets", () => {
         ),
       );
       const fileSystemLayer = FileSystem.layerNoop({
-        exists: (path) => Effect.succeed(String(path).includes("/assets/dev/")),
+        exists: (path) => Effect.succeed(String(path).includes("/assets/dispatch/")),
       });
       const assets = yield* DesktopAssets.DesktopAssets.pipe(
         Effect.provide(
@@ -62,8 +62,8 @@ describe("DesktopAssets", () => {
 
       const icons = yield* assets.iconPaths;
 
-      assert.match(Option.getOrThrow(icons.ico), /assets\/dev\/blueprint-windows\.ico$/);
-      assert.match(Option.getOrThrow(icons.png), /assets\/dev\/blueprint-universal-1024\.png$/);
+      assert.match(Option.getOrThrow(icons.ico), /assets\/dispatch\/icon\.ico$/);
+      assert.match(Option.getOrThrow(icons.png), /assets\/dispatch\/icon-1024\.png$/);
       assert.isTrue(Option.isNone(icons.icns));
     }),
   );

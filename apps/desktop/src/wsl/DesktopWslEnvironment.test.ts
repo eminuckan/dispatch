@@ -158,6 +158,62 @@ describe("WSL runtime cache", () => {
     expect(script).not.toContain(runtimeId);
   });
 
+  it.each([
+    ["install", buildWslRuntimeInstallScript("/runtime.tar.gz", "1.2.3-x64", "b".repeat(64))],
+    ["prune", buildWslRuntimePruneScript("1.2.3-x64")],
+    ["invalidate", buildWslRuntimeInvalidateScript("1.2.3-x64")],
+  ] as const)(
+    "uses Dispatch runtime roots with in-place legacy adoption in the %s script",
+    (_, script) => {
+      expect(script).toContain('runtime_parent="$HOME/.dispatch/wsl-runtime"');
+      expect(script).toContain('[ ! -d "$runtime_parent" ] && [ -d "$HOME/.t3/wsl-runtime" ]');
+      expect(script).toContain('runtime_parent="$HOME/.t3/wsl-runtime"');
+    },
+  );
+
+  it("selects fresh canonical, legacy-only, and canonical-precedence runtime roots", () => {
+    if (NodeChildProcess.spawnSync("sh", ["-c", "exit 0"]).status !== 0) return;
+    const installScript = buildWslRuntimeInstallScript(
+      "/runtime.tar.gz",
+      "1.2.3-x64",
+      "b".repeat(64),
+    );
+    const runtimeRootAssignment = installScript.indexOf('runtime_root="$runtime_parent/1.2.3-x64"');
+    expect(runtimeRootAssignment).toBeGreaterThan(0);
+    const selectRuntimeParent = installScript.slice(0, runtimeRootAssignment);
+    const result = NodeChildProcess.spawnSync("sh", ["-s"], {
+      input: [
+        "set -eu",
+        "work=$(mktemp -d)",
+        "trap 'rm -rf \"$work\"' EXIT",
+        'mkdir -p "$work/fresh"',
+        "(",
+        '  HOME="$work/fresh"; export HOME',
+        selectRuntimeParent,
+        `  printf 'fresh:%s\\n' "$runtime_parent"`,
+        ")",
+        'mkdir -p "$work/legacy/.t3/wsl-runtime"',
+        "(",
+        '  HOME="$work/legacy"; export HOME',
+        selectRuntimeParent,
+        `  printf 'legacy:%s\\n' "$runtime_parent"`,
+        ")",
+        'mkdir -p "$work/both/.t3/wsl-runtime" "$work/both/.dispatch/wsl-runtime"',
+        "(",
+        '  HOME="$work/both"; export HOME',
+        selectRuntimeParent,
+        `  printf 'both:%s\\n' "$runtime_parent"`,
+        ")",
+      ].join("\n"),
+      encoding: "utf8",
+    });
+
+    expect(result.status, result.stderr ?? "").toBe(0);
+    expect(readField(result.stdout ?? "", "fresh")).toMatch(/\/fresh\/\.dispatch\/wsl-runtime$/);
+    expect(readField(result.stdout ?? "", "legacy")).toMatch(/\/legacy\/\.t3\/wsl-runtime$/);
+    expect(readField(result.stdout ?? "", "both")).toMatch(/\/both\/\.dispatch\/wsl-runtime$/);
+  });
+
   it("installs through a temporary directory and only reuses valid completed caches", () => {
     const script = buildWslRuntimeInstallScript(
       "/mnt/c/Program Files/Dispatch/wsl-runtime.tar.gz",
@@ -165,7 +221,7 @@ describe("WSL runtime cache", () => {
       "b".repeat(64),
     );
 
-    expect(script).toContain('runtime_parent="$HOME/.t3/wsl-runtime"');
+    expect(script).toContain('runtime_parent="$HOME/.dispatch/wsl-runtime"');
     expect(script).toContain('  [ -f "$ready_marker" ] &&');
     expect(script).toContain('    runtime_entry_runs "$runtime_root" &&');
     expect(script).toContain("if runtime_is_ready; then");
@@ -383,7 +439,7 @@ describe("WSL runtime cache", () => {
 
     // Readiness is a presence check, so a tree whose pty.node is present but
     // unloadable stays ready forever unless the probe can revoke the marker.
-    expect(script).toContain('rm -f "$HOME/.t3/wsl-runtime/1.2.3_x64/.t3code-wsl-runtime-ready"');
+    expect(script).toContain('rm -f "$runtime_parent/1.2.3_x64/.t3code-wsl-runtime-ready"');
     // Deleting the tree here would pull it out from under any backend still
     // running from it; the next install moves an unready root aside instead.
     expect(script).not.toContain("rm -rf");
@@ -439,13 +495,75 @@ describe.skipIf(posixShellRunner === null)("WSL runtime install script (executed
       archivePath,
       archiveSha,
       runtimeId,
-      runtimeParent: `${work}/home/.t3/wsl-runtime`,
-      runtimeRoot: `${work}/home/.t3/wsl-runtime/${runtimeId}`,
-      serverEntry: `${work}/home/.t3/wsl-runtime/${runtimeId}/t3`,
+      runtimeParent: `${work}/home/.dispatch/wsl-runtime`,
+      runtimeRoot: `${work}/home/.dispatch/wsl-runtime/${runtimeId}`,
+      serverEntry: `${work}/home/.dispatch/wsl-runtime/${runtimeId}/t3`,
       installScript,
       install: (archive?: string, sha?: string) => runShell(installScript(archive, sha)),
     };
   };
+
+  it("writes a fresh runtime cache under the Dispatch home", () => {
+    const fixture = createFixture();
+
+    const installed = fixture.install();
+
+    expect(installed.status, installed.stderr).toBe(0);
+    expect(parseWslRuntimeRoot(installed.stdout)).toBe(fixture.runtimeRoot);
+    const legacy = runShell(`set -eu\ntest ! -e ${sh(`${fixture.work}/home/.t3/wsl-runtime`)}`);
+    expect(legacy.status, legacy.stderr).toBe(0);
+  });
+
+  it("adopts an existing legacy runtime cache root in place", () => {
+    const fixture = createFixture();
+    const legacyParent = `${fixture.work}/home/.t3/wsl-runtime`;
+    const legacyRoot = `${legacyParent}/${fixture.runtimeId}`;
+    const setup = runShell(
+      `set -eu\nmkdir -p ${sh(legacyParent)}\nprintf legacy > ${sh(`${legacyParent}/sentinel`)}`,
+    );
+    expect(setup.status, setup.stderr).toBe(0);
+
+    const installed = fixture.install();
+
+    expect(installed.status, installed.stderr).toBe(0);
+    expect(parseWslRuntimeRoot(installed.stdout)).toBe(legacyRoot);
+    const unchanged = runShell(
+      [
+        "set -eu",
+        `test -f ${sh(`${legacyParent}/sentinel`)}`,
+        `test -x ${sh(`${legacyRoot}/t3`)}`,
+        `test ! -e ${sh(fixture.runtimeParent)}`,
+      ].join("\n"),
+    );
+    expect(unchanged.status, unchanged.stderr).toBe(0);
+  });
+
+  it("prefers the Dispatch runtime cache root when canonical and legacy both exist", () => {
+    const fixture = createFixture();
+    const legacyParent = `${fixture.work}/home/.t3/wsl-runtime`;
+    const setup = runShell(
+      [
+        "set -eu",
+        `mkdir -p ${sh(fixture.runtimeParent)} ${sh(legacyParent)}`,
+        `printf legacy > ${sh(`${legacyParent}/sentinel`)}`,
+      ].join("\n"),
+    );
+    expect(setup.status, setup.stderr).toBe(0);
+
+    const installed = fixture.install();
+
+    expect(installed.status, installed.stderr).toBe(0);
+    expect(parseWslRuntimeRoot(installed.stdout)).toBe(fixture.runtimeRoot);
+    const unchanged = runShell(
+      [
+        "set -eu",
+        `test -x ${sh(fixture.serverEntry)}`,
+        `test -f ${sh(`${legacyParent}/sentinel`)}`,
+        `test ! -e ${sh(`${legacyParent}/${fixture.runtimeId}`)}`,
+      ].join("\n"),
+    );
+    expect(unchanged.status, unchanged.stderr).toBe(0);
+  });
 
   const probeFixture = (fixture: ReturnType<typeof createFixture>) =>
     runShell(

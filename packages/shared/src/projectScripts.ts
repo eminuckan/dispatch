@@ -59,13 +59,34 @@ export function projectScriptRuntimeEnv(
   input: ProjectScriptRuntimeEnvInput,
 ): Record<string, string> {
   const env: Record<string, string> = {
+    DISPATCH_PROJECT_ROOT: input.project.cwd,
     T3CODE_PROJECT_ROOT: input.project.cwd,
   };
   if (input.worktreePath) {
+    env.DISPATCH_WORKTREE_PATH = input.worktreePath;
     env.T3CODE_WORKTREE_PATH = input.worktreePath;
   }
   if (input.extraEnv) {
-    return { ...env, ...input.extraEnv };
+    Object.assign(env, input.extraEnv);
+
+    const projectRoot =
+      input.extraEnv.DISPATCH_PROJECT_ROOT?.trim() ||
+      input.extraEnv.T3CODE_PROJECT_ROOT?.trim() ||
+      input.project.cwd;
+    env.DISPATCH_PROJECT_ROOT = projectRoot;
+    env.T3CODE_PROJECT_ROOT = projectRoot;
+
+    const worktreePath =
+      input.extraEnv.DISPATCH_WORKTREE_PATH?.trim() ||
+      input.extraEnv.T3CODE_WORKTREE_PATH?.trim() ||
+      input.worktreePath;
+    if (worktreePath) {
+      env.DISPATCH_WORKTREE_PATH = worktreePath;
+      env.T3CODE_WORKTREE_PATH = worktreePath;
+    } else {
+      delete env.DISPATCH_WORKTREE_PATH;
+      delete env.T3CODE_WORKTREE_PATH;
+    }
   }
   return env;
 }

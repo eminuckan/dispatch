@@ -1,4 +1,4 @@
-const REPO = "pingdotgg/t3code";
+const REPO = "eminuckan/dispatch";
 
 export const RELEASES_URL = `https://github.com/${REPO}/releases`;
 export const NIGHTLY_RELEASES_URL = `${RELEASES_URL}?q=nightly&expanded=true`;
@@ -24,7 +24,7 @@ export interface Release {
 }
 
 function cacheKey(channel: ReleaseChannel) {
-  return `t3code-${channel}-release`;
+  return `dispatch-${channel}-release`;
 }
 
 async function fetchStable(): Promise<Release> {

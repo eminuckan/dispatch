@@ -118,9 +118,12 @@ describe("ssh tunnel scripts", () => {
     assert.include(script, "T3_NODE_SCRIPT_PATH=''");
     assert.include(
       script,
-      "T3_RELEASE_BASE_URL='https://github.com/pingdotgg/t3code/releases/download'",
+      "T3_RELEASE_BASE_URL='https://github.com/eminuckan/dispatch/releases/download'",
     );
-    assert.include(script, 'T3_RUNTIME_DIR="$HOME/.t3/runtime/versions/$T3_ARCHIVE_VERSION"');
+    assert.include(script, 'T3_RUNTIME_HOME="$HOME/.dispatch/runtime"');
+    assert.include(script, '[ -d "$HOME/.t3/runtime" ]');
+    assert.include(script, 'T3_RUNTIME_HOME="$HOME/.t3/runtime"');
+    assert.include(script, 'T3_RUNTIME_DIR="$T3_VERSIONS_DIR/$T3_ARCHIVE_VERSION"');
     assert.include(script, 'T3_ARCHIVE="t3-$T3_ARCHIVE_VERSION-$T3_PLATFORM-$T3_ARCH.tar.gz"');
     assert.include(script, "SHA256SUMS");
     assert.include(script, 'exec "$T3_RUNTIME_DIR/t3" "$@"');
@@ -130,10 +133,7 @@ describe("ssh tunnel scripts", () => {
     assert.notInclude(script, 'exec t3 "$@"');
     // Concurrent launches serialize on a per-version mkdir lock and recheck
     // the completion marker after acquiring it.
-    assert.include(
-      script,
-      'T3_LOCK="$HOME/.t3/runtime/versions/.$T3_ARCHIVE_VERSION.install.lock"',
-    );
+    assert.include(script, 'T3_LOCK="$T3_VERSIONS_DIR/.$T3_ARCHIVE_VERSION.install.lock"');
     // mkdir is the exclusive create; the pid follows atomically. A dead owner
     // is reclaimed at once, a never-published owner after a short grace.
     assert.include(script, 'while ! mkdir "$T3_LOCK" 2>/dev/null; do');
@@ -267,6 +267,12 @@ describe("ssh tunnel scripts", () => {
     assert.include(launch, "wait_ready");
     assert.include(launch, '"$RUNNER_FILE" serve --host 127.0.0.1');
     assert.include(launch, '--base-dir "$DEFAULT_SERVER_HOME"');
+    assert.include(launch, 'DEFAULT_SERVER_HOME="$HOME/.dispatch"');
+    assert.include(launch, '[ -d "$HOME/.t3" ]');
+    assert.include(launch, 'STATE_ROOT="$HOME/.dispatch/ssh-launch"');
+    assert.include(launch, '[ -d "$HOME/.t3/ssh-launch" ]');
+    assert.include(launch, 'STATE_DIR="$STATE_ROOT/$STATE_KEY"');
+    assert.include(launch, "env DISPATCH_NO_BROWSER=1 T3CODE_NO_BROWSER=1");
     assert.notInclude(launch, "server-home");
     assert.include(launch, "Remote T3 server did not become ready");
     assert.include(launch, 'wait_ready "60000"');
@@ -281,6 +287,10 @@ describe("ssh tunnel scripts", () => {
       buildRemotePairingScript(target, ARCHIVE),
       'PAIRING_BASE_DIR="$DEFAULT_SERVER_HOME"',
     );
+    assert.include(
+      buildRemotePairingScript(target, ARCHIVE),
+      'STATE_ROOT="$HOME/.dispatch/ssh-launch"',
+    );
     assert.notInclude(buildRemotePairingScript(target, ARCHIVE), "server-home");
     assert.include(
       buildRemotePairingScript(target, ARCHIVE),
@@ -291,6 +301,7 @@ describe("ssh tunnel scripts", () => {
       'if [ "$REMOTE_MANAGED" != "external" ] && [ -n "$REMOTE_PID" ]',
     );
     assert.include(buildRemoteStopScript(target), 'kill "$REMOTE_PID" 2>/dev/null || true');
+    assert.include(buildRemoteStopScript(target), 'STATE_ROOT="$HOME/.dispatch/ssh-launch"');
     assert.include(buildRemoteStopScript(target), 'rm -f "$PID_FILE" "$PORT_FILE" "$MANAGED_FILE"');
     assert.include(
       launch,
@@ -734,6 +745,38 @@ describe("archive runner script", () => {
       return { stdout, stderr, exitCode };
     });
 
+  const runShellScript = (home: string, script: string, args: ReadonlyArray<string> = []) =>
+    Effect.gen(function* () {
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const child = yield* spawner.spawn(
+        ChildProcess.make("sh", [script, ...args], {
+          env: { PATH: process.env.PATH ?? "", HOME: home },
+          extendEnv: false,
+        }),
+      );
+      const [stdout, stderr, exitCode] = yield* Effect.all(
+        [
+          child.stdout.pipe(
+            Stream.decodeText(),
+            Stream.runFold(
+              () => "",
+              (acc, chunk) => acc + chunk,
+            ),
+          ),
+          child.stderr.pipe(
+            Stream.decodeText(),
+            Stream.runFold(
+              () => "",
+              (acc, chunk) => acc + chunk,
+            ),
+          ),
+          child.exitCode.pipe(Effect.map(Number)),
+        ],
+        { concurrency: "unbounded" },
+      );
+      return { stdout, stderr, exitCode };
+    });
+
   // A fake "executable" that answers --version, packed the way the release
   // workflow packs the real archive: one top-level directory named after the
   // stem, checksummed in SHA256SUMS.
@@ -758,6 +801,52 @@ describe("archive runner script", () => {
   });
 
   it.effect.skipIf(windowsHost)(
+    "uses canonical launch paths for fresh homes, adopts legacy paths, and gives canonical precedence",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-ssh-launch-paths-" });
+        const launch = buildRemoteLaunchScript(NODE_SCRIPT);
+        const start = launch.indexOf('STATE_KEY="$1"');
+        const end = launch.indexOf('PORT_FILE="$STATE_DIR/port"');
+        assert.isAtLeast(start, 0);
+        assert.isAbove(end, start);
+        const selectionScript = `${root}/select-paths.sh`;
+        yield* fs.writeFileString(
+          selectionScript,
+          [
+            "set -eu",
+            launch.slice(start, end),
+            `printf 'serverHome:%s\\nstateDir:%s\\n' "$DEFAULT_SERVER_HOME" "$STATE_DIR"`,
+          ].join("\n"),
+        );
+
+        const freshHome = `${root}/fresh`;
+        yield* fs.makeDirectory(freshHome, { recursive: true });
+        const fresh = yield* runShellScript(freshHome, selectionScript, ["host"]);
+        assert.equal(fresh.exitCode, 0, fresh.stderr);
+        assert.include(fresh.stdout, `serverHome:${freshHome}/.dispatch\n`);
+        assert.include(fresh.stdout, `stateDir:${freshHome}/.dispatch/ssh-launch/host\n`);
+
+        const legacyHome = `${root}/legacy`;
+        yield* fs.makeDirectory(`${legacyHome}/.t3/ssh-launch`, { recursive: true });
+        const legacy = yield* runShellScript(legacyHome, selectionScript, ["host"]);
+        assert.equal(legacy.exitCode, 0, legacy.stderr);
+        assert.include(legacy.stdout, `serverHome:${legacyHome}/.t3\n`);
+        assert.include(legacy.stdout, `stateDir:${legacyHome}/.t3/ssh-launch/host\n`);
+        assert.isFalse(yield* fs.exists(`${legacyHome}/.dispatch`));
+
+        const bothHome = `${root}/both`;
+        yield* fs.makeDirectory(`${bothHome}/.t3/ssh-launch`, { recursive: true });
+        yield* fs.makeDirectory(`${bothHome}/.dispatch/ssh-launch`, { recursive: true });
+        const both = yield* runShellScript(bothHome, selectionScript, ["host"]);
+        assert.equal(both.exitCode, 0, both.stderr);
+        assert.include(both.stdout, `serverHome:${bothHome}/.dispatch\n`);
+        assert.include(both.stdout, `stateDir:${bothHome}/.dispatch/ssh-launch/host\n`);
+      }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect.skipIf(windowsHost)(
     "installs once when several launches race, and reclaims stale locks",
     () =>
       Effect.gen(function* () {
@@ -780,7 +869,7 @@ describe("archive runner script", () => {
           assert.equal(result.exitCode, 0, result.stderr);
           assert.include(result.stdout, `t3 v${archiveVersion}`);
         }
-        const versionsDir = `${home}/.t3/runtime/versions`;
+        const versionsDir = `${home}/.dispatch/runtime/versions`;
         assert.deepEqual(yield* fs.readDirectory(versionsDir), [archiveVersion]);
         assert.equal(
           (yield* fs.readFileString(`${versionsDir}/${archiveVersion}/.install-complete`)).trim(),
@@ -803,5 +892,51 @@ describe("archive runner script", () => {
         assert.isFalse(yield* fs.exists(lock));
       }).pipe(Effect.provide(NodeServices.layer)),
     60_000,
+  );
+
+  it.effect.skipIf(windowsHost)("adopts a legacy runtime in place when canonical is absent", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-archive-runner-legacy-" });
+      const releaseBaseUrl = yield* makeMirror(root);
+      const runner = `${root}/run-t3.sh`;
+      yield* fs.writeFileString(
+        runner,
+        buildRemoteT3RunnerScript({ archiveVersion, releaseBaseUrl }),
+      );
+      const home = `${root}/home`;
+      const legacyVersions = `${home}/.t3/runtime/versions`;
+      yield* fs.makeDirectory(legacyVersions, { recursive: true });
+
+      const result = yield* runRunner(home, runner);
+
+      assert.equal(result.exitCode, 0, result.stderr);
+      assert.isTrue(yield* fs.exists(`${legacyVersions}/${archiveVersion}/.install-complete`));
+      assert.isFalse(yield* fs.exists(`${home}/.dispatch/runtime`));
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect.skipIf(windowsHost)("prefers the canonical runtime when both roots exist", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-archive-runner-canonical-" });
+      const releaseBaseUrl = yield* makeMirror(root);
+      const runner = `${root}/run-t3.sh`;
+      yield* fs.writeFileString(
+        runner,
+        buildRemoteT3RunnerScript({ archiveVersion, releaseBaseUrl }),
+      );
+      const home = `${root}/home`;
+      const canonicalVersions = `${home}/.dispatch/runtime/versions`;
+      const legacyVersions = `${home}/.t3/runtime/versions`;
+      yield* fs.makeDirectory(canonicalVersions, { recursive: true });
+      yield* fs.makeDirectory(legacyVersions, { recursive: true });
+
+      const result = yield* runRunner(home, runner);
+
+      assert.equal(result.exitCode, 0, result.stderr);
+      assert.isTrue(yield* fs.exists(`${canonicalVersions}/${archiveVersion}/.install-complete`));
+      assert.deepEqual(yield* fs.readDirectory(legacyVersions), []);
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 });

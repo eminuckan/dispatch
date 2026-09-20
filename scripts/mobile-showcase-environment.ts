@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off globalTimers:off globalDate:off - This host-side fixture creates an isolated local T3 environment.
+// @effect-diagnostics nodeBuiltinImport:off globalTimers:off globalDate:off - This host-side fixture creates an isolated local Dispatch environment.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
@@ -7,7 +7,7 @@ import * as NodeUtil from "node:util";
 
 const execFile = NodeUtil.promisify(NodeChildProcess.execFile);
 
-export const SHOWCASE_PROJECT_ID = "t3code";
+export const SHOWCASE_PROJECT_ID = "dispatch";
 export const SHOWCASE_THREAD_ID = "remote-command-center";
 export const SHOWCASE_TERMINAL_ID = "term-1";
 
@@ -45,7 +45,7 @@ const PROJECT_SCRIPTS = JSON.stringify([
 ]);
 
 const SHOWCASE_TERMINAL_PROMPT =
-  "\u001b[1;32m→\u001b[0m \u001b[1;36mt3code\u001b[0m \u001b[1;34mgit:(\u001b[1;31mfeat/remote-command-center\u001b[1;34m)\u001b[0m \u001b[1;33m✗\u001b[0m ";
+  "\u001b[1;32m→\u001b[0m \u001b[1;36mdispatch\u001b[0m \u001b[1;34mgit:(\u001b[1;31mfeat/remote-command-center\u001b[1;34m)\u001b[0m \u001b[1;33m✗\u001b[0m ";
 
 // A dev-server startup mirroring the web settings' terminal font preview:
 // zsh-style prompt, brand line, addresses, the thread's 612-test summary,
@@ -58,7 +58,7 @@ export const SHOWCASE_TERMINAL_BUFFER = [
   "",
   "  \u001b[32m→\u001b[0m  \u001b[2mLocal:\u001b[0m    \u001b[4;36mhttp://127.0.0.1:5173/\u001b[0m",
   "  \u001b[32m→\u001b[0m  \u001b[2mNetwork:\u001b[0m  \u001b[4;36mhttp://192.168.1.24:5173/\u001b[0m",
-  "  \u001b[32m→\u001b[0m  \u001b[2mProject:\u001b[0m  \u001b[1mt3code\u001b[0m \u001b[2m— ~/Code/t3code\u001b[0m",
+  "  \u001b[32m→\u001b[0m  \u001b[2mProject:\u001b[0m  \u001b[1mdispatch\u001b[0m \u001b[2m— ~/Code/dispatch\u001b[0m",
   "",
   "  \u001b[32m✓ 612 passed\u001b[0m   \u001b[33m△ 2 warnings\u001b[0m   \u001b[31m✗ 0 failed\u001b[0m",
   "",
@@ -93,9 +93,9 @@ export function RemoteHandoffCard(props: { machine: string; latencyMs: number })
 `;
 
 const PROJECT_FAVICONS = {
-  t3code: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
-  <rect width="128" height="128" rx="10" fill="#000"/>
-  <path d="M33.4509 93V47.56H15.5309V37H64.3309V47.56H46.4109V93H33.4509ZM86.7253 93.96C82.832 93.96 78.9653 93.4533 75.1253 92.44C71.2853 91.3733 68.032 89.88 65.3653 87.96L70.4053 78.04C72.5386 79.5867 75.0186 80.8133 77.8453 81.72C80.672 82.6267 83.5253 83.08 86.4053 83.08C89.6586 83.08 92.2186 82.44 94.0853 81.16C95.952 79.88 96.8853 78.12 96.8853 75.88C96.8853 73.7467 96.0586 72.0667 94.4053 70.84C92.752 69.6133 90.0853 69 86.4053 69H80.4853V60.44L96.0853 42.76L97.5253 47.4H68.1653V37H107.365V45.4L91.8453 63.08L85.2853 59.32H89.0453C95.9253 59.32 101.125 60.8667 104.645 63.96C108.165 67.0533 109.925 71.0267 109.925 75.88C109.925 79.0267 109.099 81.9867 107.445 84.76C105.792 87.48 103.259 89.6933 99.8453 91.4C96.432 93.1067 92.0586 93.96 86.7253 93.96Z" fill="#fff"/>
+  dispatch: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="-0.6810546875 -0.7513671875 81.291796875 81.432421875">
+  <path d="m40.97 1.19h-27.1c-7 0-12.44 5.49-12.44 12.2v45.49c0 0.67 0.54 1.11 1.19 1.11h0.76c6.56 0 13 8.27 13 15.06 0 0.82-0.05 1.6-0.12 2.29-0.05 0.82 0.33 1.4 1.26 1.4h23.45c20.78 0 37.7-17.02 37.7-38.11 0-22.27-16.08-39.44-37.7-39.44z M47.83 31.59c-2.63-1.54-5.41-2.97-8.22-4.2-5.24-2-9.23-0.42-11.45 5.16-1.28 3.02-2.79 6.07-3.6 9.29-0.91 3.78 0.88 7.22 4.65 9.35 2.61 1.5 5.3 2.9 8.09 3.94 4.96 1.87 8.69 0.64 11.07-3.85 1.55-2.83 3.09-5.82 4.08-8.91 1.47-4.86 0.02-8.12-4.62-10.78z" fill="#000" fill-rule="evenodd"/>
+  <path d="m4.19 62.07c-1.98-0.19-2.93 1.32-2.93 3.51v2.66c0 6 4.06 9.85 9.29 10.25 2.4 0.12 3.91-1.33 3.86-3.78-0.14-5.3-5.46-12.25-10.22-12.64z" fill="#FF671B"/>
 </svg>`,
   react: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
   <rect width="64" height="64" rx="15" fill="#20232a"/>
@@ -114,11 +114,11 @@ const PROJECT_FAVICONS = {
 
 export const SHOWCASE_PROJECTS = [
   {
-    id: "t3code",
-    title: "T3 Code",
-    directory: "t3code",
-    repositoryUrl: "https://github.com/pingdotgg/t3code.git",
-    favicon: PROJECT_FAVICONS.t3code,
+    id: "dispatch",
+    title: "Dispatch",
+    directory: "dispatch",
+    repositoryUrl: "https://github.com/eminuckan/dispatch.git",
+    favicon: PROJECT_FAVICONS.dispatch,
   },
   {
     id: "react",
@@ -140,7 +140,7 @@ export const SHOWCASE_ENVIRONMENTS = [
   {
     id: "moonbase-terminal",
     label: "Moonbase Terminal",
-    projectIds: ["t3code"],
+    projectIds: ["dispatch"],
   },
   {
     id: "suspense-station",
@@ -157,18 +157,18 @@ export const SHOWCASE_ENVIRONMENTS = [
 export const SHOWCASE_THREADS = [
   {
     id: SHOWCASE_THREAD_ID,
-    projectId: "t3code",
+    projectId: "dispatch",
     title: "Make remote coding feel local ✦",
     branch: "feat/remote-command-center",
     minutesAgo: 3,
     request:
-      "Give T3 Code a remote-first command center. Make three machines feel one tap away, keep agent work in sync, and make every handoff feel instant.",
+      "Give Dispatch a remote-first command center. Make three machines feel one tap away, keep agent work in sync, and make every handoff feel instant.",
     response:
-      "T3 Code now treats every machine like it is right here in the room. ✦\n\n- Moonbase, Suspense Station, and Kernel Cabin stay live together\n- Terminal state follows you without losing a single line\n- Agent work remains perfectly in sync across devices\n- Handoffs land before your train of thought can wander\n\nI also ran the changed workspace: **612 tests passed**.",
+      "Dispatch now treats every machine like it is right here in the room. ✦\n\n- Moonbase, Suspense Station, and Kernel Cabin stay live together\n- Terminal state follows you without losing a single line\n- Agent work remains perfectly in sync across devices\n- Handoffs land before your train of thought can wander\n\nI also ran the changed workspace: **612 tests passed**.",
   },
   {
     id: "pocket-command-center",
-    projectId: "t3code",
+    projectId: "dispatch",
     title: "Put the command center in your pocket",
     branch: "feat/pocket-command-center",
     minutesAgo: 21,
@@ -229,7 +229,7 @@ export const SHOWCASE_THREADS = [
   // a store screenshot has to show that history exists, not just imply it.
   {
     id: "handoff-haptics",
-    projectId: "t3code",
+    projectId: "dispatch",
     title: "Tune the handoff haptics",
     branch: "feat/handoff-haptics",
     minutesAgo: 5 * 60,
@@ -290,22 +290,22 @@ async function initializeRepository(input: {
   await runGit(input.workspaceRoot, ["commit", "-m", input.commitMessage]);
 }
 
-async function seedT3CodeWorkspace(workspaceRoot: string): Promise<void> {
+async function seedDispatchWorkspace(workspaceRoot: string): Promise<void> {
   await NodeFSP.mkdir(NodePath.join(workspaceRoot, "apps/mobile/src/features/home"), {
     recursive: true,
   });
   await NodeFSP.writeFile(
     NodePath.join(workspaceRoot, "package.json"),
-    `${JSON.stringify({ name: "t3code", private: true, scripts: { test: "vp test" } }, null, 2)}\n`,
+    `${JSON.stringify({ name: "dispatch", private: true, scripts: { test: "vp test" } }, null, 2)}\n`,
   );
-  await NodeFSP.writeFile(NodePath.join(workspaceRoot, "favicon.svg"), PROJECT_FAVICONS.t3code);
+  await NodeFSP.writeFile(NodePath.join(workspaceRoot, "favicon.svg"), PROJECT_FAVICONS.dispatch);
   await NodeFSP.writeFile(
     NodePath.join(workspaceRoot, "apps/mobile/src/features/home/environmentPresence.ts"),
     BASE_ENVIRONMENT_PRESENCE,
   );
   await initializeRepository({
     workspaceRoot,
-    repositoryUrl: "https://github.com/pingdotgg/t3code.git",
+    repositoryUrl: "https://github.com/eminuckan/dispatch.git",
     commitMessage: "Show connected environments",
   });
   await runGit(workspaceRoot, ["checkout", "-b", "feat/remote-command-center"]);
@@ -329,7 +329,7 @@ async function seedCompanionWorkspace(input: {
   await NodeFSP.writeFile(NodePath.join(input.workspaceRoot, "favicon.svg"), input.favicon);
   await NodeFSP.writeFile(
     NodePath.join(input.workspaceRoot, "README.md"),
-    `# ${input.title}\n\nSeeded by the T3 Code mobile screenshot harness.\n`,
+    `# ${input.title}\n\nSeeded by the Dispatch mobile screenshot harness.\n`,
   );
   await initializeRepository({
     workspaceRoot: input.workspaceRoot,
@@ -651,7 +651,7 @@ export async function seedShowcaseEnvironment(input: {
   if (!workspaceRoot) throw new Error("The primary showcase workspace is not configured.");
   const dbPath = NodePath.join(input.baseDir, "userdata", "state.sqlite");
   if (primaryProject.id === SHOWCASE_PROJECT_ID) {
-    await seedT3CodeWorkspace(workspaceRoot);
+    await seedDispatchWorkspace(workspaceRoot);
   }
   await Promise.all(
     projects

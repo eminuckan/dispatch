@@ -4957,7 +4957,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         ...(mcpSession
           ? {
               mcpServers: {
-                "t3-code": {
+                dispatch: {
                   type: "http",
                   url: mcpSession.endpoint,
                   headers: {

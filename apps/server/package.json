@@ -4,10 +4,11 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/pingdotgg/t3code",
+    "url": "https://github.com/eminuckan/dispatch",
     "directory": "apps/server"
   },
   "bin": {
+    "dispatch": "./dist/bin.mjs",
     "t3": "./dist/bin.mjs"
   },
   "files": [

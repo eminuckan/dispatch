@@ -1,110 +1,91 @@
-# Install T3 Code
+# Install Dispatch
 
-T3 Code runs coding agents on your computer and lets you control them from its
-desktop, web, or mobile app. Set up the machine where the agents will work first.
+Dispatch runs coding agents on your computer and lets you control them from its web and desktop clients. The Dispatch fork does not currently publish its own installer or packaged release endpoint, so the supported setup for this repository is a source checkout.
+
+Do not use upstream installers, release artifacts, or package-manager entries to install Dispatch. Those install the upstream project rather than this fork.
 
 ## Requirements
 
-You need an installed, authenticated provider before starting a thread. You can
-launch T3 Code and configure providers afterwards.
+Install these on the machine where the agents will run:
 
-## Command line
+- Git.
+- Node.js 24.
+- Vite+ and its `vp` command.
+- At least one authenticated coding-agent provider.
+
+Install `vp` on macOS or Linux:
 
 ```bash
-curl -fsSL https://t3.codes/install.sh | sh
+curl -fsSL https://vite.plus | bash
 ```
 
-On Windows, in PowerShell:
+On Windows PowerShell:
 
 ```powershell
-irm https://t3.codes/install.ps1 | iex
+irm https://vite.plus/ps1 | iex
 ```
 
-This puts `t3` in `~/.local/bin`. If your shell reports `command not found`
-afterwards, that directory is not on your `PATH` yet; the installer prints the
-line to add. Set `T3CODE_CHANNEL=nightly` to install the nightly train, or
-`T3CODE_VERSION` to pin an exact version.
-
-| Task                                             | Command                                                   |
-| ------------------------------------------------ | --------------------------------------------------------- |
-| Start the server and open the web app            | `t3`                                                      |
-| Start the server without a browser               | `t3 serve`                                                |
-| Keep it running in the background (macOS, Linux) | `t3 service install` ([details](./background-service.md)) |
-| Move to the newest release                       | `t3 update`                                               |
-| Remove it again                                  | `t3 uninstall`                                            |
-
-Run `t3 --help` for the full reference.
-
-To try T3 Code once without installing it, run `npx t3@latest` instead (needs
-Node.js for `npx`).
-
-### Intel Macs
-
-There is no `t3` executable for Intel Macs (the desktop app is available). To
-run a server there, build it from source with Node.js 24 and `vp`
-([Install vp](https://github.com/pingdotgg/t3code#install-vp)):
+## Clone and run Dispatch
 
 ```bash
-git clone https://github.com/pingdotgg/t3code
-cd t3code && vp i && vp run build:desktop
+git clone https://github.com/eminuckan/dispatch.git
+cd dispatch
+vp i
+```
+
+For the local server and web client:
+
+```bash
+vp run dev
+```
+
+For the Electron desktop client:
+
+```bash
+vp run dev:desktop
+```
+
+The development runner prints the local address or pairing URL to open. Keep the checkout and its generated `.t3` development state separate from any live upstream installation.
+
+## Build from source
+
+Build the desktop and server bundles with:
+
+```bash
+vp run build:desktop
+```
+
+You can run the built server directly:
+
+```bash
 node apps/server/dist/bin.mjs
 ```
 
-`t3 update` and the background service do not apply to a server run this way;
-update it with `git pull` and a rebuild.
+Local desktop artifacts are available through the platform packaging commands in the [development runbook](../operations/development.md#desktop-artifacts). They are local builds and do not create or configure a Dispatch release channel.
 
-## Desktop app
+The current source tree retains several upstream compatibility identifiers. In particular, the legacy CLI alias `t3`, `.t3` data directories, `T3CODE_*` environment variables, service identifiers, and some wire values may still appear in commands or paths. Those identifiers are compatibility details; the canonical CLI and product name are Dispatch.
 
-Download a release from [GitHub Releases](https://github.com/pingdotgg/t3code/releases),
-or use a package manager:
+## Windows Subsystem for Linux
 
-| Platform           | Install                         |
-| ------------------ | ------------------------------- |
-| Windows            | `winget install T3Tools.T3Code` |
-| macOS              | `brew install --cask t3-code`   |
-| Arch Linux         | `yay -S t3code-bin`             |
-| Arch Linux nightly | `yay -S t3code-nightly-bin`     |
+Choose a WSL distro in **Settings → Connections** to run agents and projects there. Install provider CLIs inside that distro. Dispatch can provision its server runtime into WSL when the desktop build contains the required runtime payload.
 
-### Windows Subsystem for Linux
+## Open a project from a terminal
 
-Choose a WSL distro in **Settings → Connections** to run agents and projects
-there. Install the provider CLIs inside that distro. T3 Code installs its own
-server runtime there automatically; the first launch after an app update can
-take longer.
-
-### Open a project from a terminal
-
-With the desktop app already running on the same machine:
+Packaged Dispatch builds use the `dispatch` launcher and may also expose `t3` as a legacy compatibility alias. When the launcher comes from a Dispatch build and the desktop app is already running on the same machine, this command opens the current directory:
 
 ```bash
-t3 app
+dispatch app
 ```
 
-This opens a new thread for the current directory, adding the project if needed.
-Pass a path, such as `t3 app ../my-project`, to open another directory. It requires
-the desktop app, so a standalone server or an SSH session is not enough. If the
-command cannot reach the app, start or update the desktop app and try again.
+Pass a path, such as `dispatch app ../my-project`, to open another directory. A source checkout by itself does not install the launcher globally.
 
 ## Mobile app
 
-Install T3 Code from the
-[App Store](https://apps.apple.com/us/app/t3-code-remote-claude-more/id6787819824) or
-[Google Play](https://play.google.com/store/apps/details?id=com.t3tools.t3code).
-The phone connects to a server on another machine. Follow
-[remote access](./remote-access.md) to link it through T3 Connect or a pairing URL.
-
-If the app crashes during launch, open Settings → Diagnostics on the next launch
-that succeeds. It lists startup crashes from the last 7 days with the error and
-component stack that store crash reports leave out. Copy the report and paste it
-into a GitHub issue. Error messages can quote values from the app, so read it over
-before sharing.
+The repository contains a mobile client, but this fork does not currently advertise a Dispatch App Store or Google Play release. Use the source-built web or desktop client for normal setup until Dispatch publishes its own mobile distribution.
 
 ## Providers
 
-Open **Settings → Providers** in the web or desktop app, select the environment,
-and enable the provider you want. Installation, login, and configuration belong
-to that environment's machine, even when you connect from a phone or another
-computer.
+Open **Settings → Providers** in the web or desktop app, select the environment, and enable the provider you want. Installation, login, and configuration belong to that environment's machine, even when you connect from another computer.
 
 | Provider    | Install and authenticate                                                                     |
 | ----------- | -------------------------------------------------------------------------------------------- |
@@ -113,28 +94,15 @@ computer.
 | Cursor      | Install [Cursor CLI](https://cursor.com/cli), then run `agent login`.                        |
 | Grok Build  | Install [Grok Build CLI](https://x.ai/cli), then run `grok login`.                           |
 | OpenCode    | Install [OpenCode](https://opencode.ai), then run `opencode auth login`.                     |
-| Antigravity | Install and sign in with Google from T3 Code's provider settings.                            |
+| Antigravity | Install and sign in with Google from Dispatch's provider settings.                           |
 
-Provider CLIs must be on the server's `PATH`. If T3 Code cannot find one, set its
-**Binary path** in provider settings, especially when using a version manager.
-Cursor's executable is `cursor-agent`, although its login command is
-`agent login`. Antigravity can use its managed runtime without a `PATH` entry.
+Provider CLIs must be on the server's `PATH`. If Dispatch cannot find one, set its **Binary path** in provider settings, especially when using a version manager. Cursor's executable is `cursor-agent`, although its login command is `agent login`. Antigravity can use its managed runtime without a `PATH` entry.
 
-When a provider CLI is behind its latest release, its provider card shows the
-available version. **Update now** appears only when T3 Code can tell which
-installer owns the CLI (its own update command, Homebrew, or a global npm, pnpm,
-bun, or Vite+ install) and runs that installer. Otherwise update the CLI the same
-way you installed it. Homebrew installs compare against the version Homebrew
-offers, which can trail the npm release by a few hours.
+When a provider CLI is behind its latest release, its provider card can show the available version and, when Dispatch recognizes the provider's installer, offer **Update now**. Otherwise update the provider CLI the same way you installed it.
 
-Add another provider instance for a separate account or configuration. Each
-instance can have its own environment variables, such as API keys or a custom
-base URL. Mark secret values as sensitive; after saving, T3 Code does not display
-their original values.
+Add another provider instance for a separate account or configuration. Each instance can have its own environment variables, such as API keys or a custom base URL. Mark secret values as sensitive; after saving, Dispatch does not display their original values.
 
-For provider-specific setup and accounts, see [Codex](./providers-codex.md),
-[Claude](./providers-claude.md), [OpenCode](./providers-opencode.md), and
-[Antigravity](./providers-antigravity.md).
+For provider-specific setup and accounts, see [Codex](./providers-codex.md), [Claude](./providers-claude.md), [OpenCode](./providers-opencode.md), and [Antigravity](./providers-antigravity.md).
 
 ## Next steps
 
@@ -142,4 +110,4 @@ For provider-specific setup and accounts, see [Codex](./providers-codex.md),
 - [Permission modes](./permission-modes.md): choose when agents ask before acting.
 - [Remote access](./remote-access.md): connect from another device.
 - [Running in the background](./background-service.md): keep a Linux or macOS host available.
-- [Updating T3 Code](./updating.md): update the app and connected servers.
+- [Updating Dispatch](./updating.md): update a source checkout and rebuild it.

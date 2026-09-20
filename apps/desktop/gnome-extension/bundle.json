@@ -1,5 +1,10 @@
 {
-  "uuid": "snap-shot@t3.codes",
+  "uuid": "snap-shot@dispatch",
+  "legacyUuid": "snap-shot@t3.codes",
+  "dbusName": "org.gnome.Shell.Extensions.DispatchSnapShot",
+  "dbusPath": "/org/gnome/Shell/Extensions/DispatchSnapShot",
+  "legacyDbusName": "org.gnome.Shell.Extensions.T3SnapShot",
+  "legacyDbusPath": "/org/gnome/Shell/Extensions/T3SnapShot",
   "files": [
     "metadata.json",
     "extension.js",

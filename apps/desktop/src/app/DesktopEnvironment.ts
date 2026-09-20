@@ -62,7 +62,7 @@ export class DesktopEnvironment extends Context.Service<
     // extracts on demand (see DesktopWslServerTree).
     readonly serverRoot: string;
     readonly backendEntryPath: string;
-    // Built web client the packaged renderer is served from over t3code://app.
+    // Built web client the packaged renderer is served from over dispatch://app.
     readonly clientAssetsDir: string;
     readonly backendCwd: string;
     readonly preloadPath: string;
@@ -85,7 +85,7 @@ export class DesktopEnvironment extends Context.Service<
     readonly linuxApplicationsDir: string;
     readonly appImagePath: Option.Option<string>;
     readonly userDataDirName: string;
-    readonly legacyUserDataDirName: string;
+    readonly legacyUserDataDirNames: readonly string[];
     readonly defaultDesktopSettings: DesktopAppSettings.DesktopSettings;
     readonly runtimeInfo: DesktopRuntimeInfo;
     readonly resolvePickFolderDefaultPath: (rawOptions: unknown) => Option.Option<string>;
@@ -186,8 +186,10 @@ const make = Effect.fn("desktop.environment.make")(function* (
     joinPath: path.join,
     t3Home: config.t3Home,
   });
-  const userDataDirName = isDevelopment ? "t3-jev-dev" : "t3-jev";
-  const legacyUserDataDirName = isDevelopment ? "T3 Jev (Dev)" : "T3 Jev (Alpha)";
+  const userDataDirName = isDevelopment ? "dispatch-dev" : "dispatch";
+  const legacyUserDataDirNames = isDevelopment
+    ? ["t3-jev-dev", "T3 Jev (Dev)", "t3code-dev", "T3 Code (Dev)"]
+    : ["t3-jev", "T3 Jev (Alpha)", "t3code", "T3 Code (Alpha)"];
   const linuxApplicationsDir = path.join(
     Option.getOrElse(config.xdgDataHome, () => path.join(homeDirectory, ".local", "share")),
     "applications",
@@ -237,14 +239,14 @@ const make = Effect.fn("desktop.environment.make")(function* (
     branding,
     displayName,
     appUserModelId: Option.getOrElse(config.appUserModelIdOverride, () =>
-      isDevelopment ? "com.eminuckan.t3jev.dev" : "com.eminuckan.t3jev",
+      isDevelopment ? "com.eminuckan.dispatch.dev" : "com.eminuckan.dispatch",
     ),
     linuxDesktopEntryName: resolveLinuxDesktopEntryName(isDevelopment),
-    linuxWmClass: isDevelopment ? "t3code-dev" : "t3code",
+    linuxWmClass: isDevelopment ? "dispatch-dev" : "dispatch",
     linuxApplicationsDir,
     appImagePath: config.appImagePath,
     userDataDirName,
-    legacyUserDataDirName,
+    legacyUserDataDirNames,
     defaultDesktopSettings: DesktopAppSettings.resolveDefaultDesktopSettings(input.appVersion),
     runtimeInfo: resolveDesktopRuntimeInfo({
       platform: input.platform,

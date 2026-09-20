@@ -8,8 +8,42 @@ import { nativeImage } from "electron";
 // process can answer "which desktop is this" and read a PNG without loading it.
 
 export const HYPRLAND_CAPTURE_ACTION = "capture-window";
-export const NIRI_CAPTURE_PATH = "/com/t3tools/SnapShot";
-export const NIRI_CAPTURE_INTERFACE = "com.t3tools.SnapShot";
+export const NIRI_CAPTURE_PATH = "/com/eminuckan/dispatch/SnapShot";
+export const NIRI_CAPTURE_INTERFACE = "com.eminuckan.dispatch.SnapShot";
+export const LEGACY_NIRI_CAPTURE_PATH = "/com/t3tools/SnapShot";
+export const LEGACY_NIRI_CAPTURE_INTERFACE = "com.t3tools.SnapShot";
+
+const DISPATCH_PRODUCTION_APP_IDS = new Set([
+  "com.eminuckan.dispatch",
+  "com.eminuckan.Dispatch",
+  "com.t3tools.T3Code",
+]);
+const DISPATCH_DEVELOPMENT_APP_IDS = new Set([
+  "com.eminuckan.dispatch.dev",
+  "com.eminuckan.Dispatch.Development",
+  "com.t3tools.T3Code.Development",
+]);
+
+export function niriCaptureBusNames(appId: string): readonly string[] {
+  const names = DISPATCH_PRODUCTION_APP_IDS.has(appId)
+    ? [
+        "com.eminuckan.dispatch.SnapShot",
+        "com.eminuckan.Dispatch.SnapShot",
+        "com.t3tools.T3Code.SnapShot",
+      ]
+    : DISPATCH_DEVELOPMENT_APP_IDS.has(appId)
+      ? [
+          "com.eminuckan.dispatch.dev.SnapShot",
+          "com.eminuckan.Dispatch.Development.SnapShot",
+          "com.t3tools.T3Code.Development.SnapShot",
+        ]
+      : [`${appId}.SnapShot`];
+  return [...new Set(names)];
+}
+
+function niriBinding(destination: string, path: string, iface: string): string {
+  return `Ctrl+Shift+2 repeat=false { spawn "gdbus" "call" "--session" "--dest" "${destination}" "--object-path" "${path}" "--method" "${iface}.Capture"; }`;
+}
 
 function isDesktopSession(env: NodeJS.ProcessEnv, desktop: string): boolean {
   return (
@@ -32,7 +66,17 @@ export function isHyprlandCaptureSession(env = process.env): boolean {
 }
 
 export function niriCaptureBinding(appId: string): string {
-  return `Ctrl+Shift+2 repeat=false { spawn "gdbus" "call" "--session" "--dest" "${appId}.SnapShot" "--object-path" "${NIRI_CAPTURE_PATH}" "--method" "${NIRI_CAPTURE_INTERFACE}.Capture"; }`;
+  return niriBinding(niriCaptureBusNames(appId)[0]!, NIRI_CAPTURE_PATH, NIRI_CAPTURE_INTERFACE);
+}
+
+/** Current writer first, then exact forms emitted by pre-Dispatch Niri bindings. */
+export function niriCaptureBindingCandidates(appId: string): readonly string[] {
+  return [
+    niriCaptureBinding(appId),
+    ...niriCaptureBusNames(appId).map((destination) =>
+      niriBinding(destination, LEGACY_NIRI_CAPTURE_PATH, LEGACY_NIRI_CAPTURE_INTERFACE),
+    ),
+  ];
 }
 
 const KEY_NAMES: Readonly<Record<string, string>> = {

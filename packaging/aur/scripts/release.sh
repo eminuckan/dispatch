@@ -2,7 +2,7 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
-repo='pingdotgg/t3code'
+repo='eminuckan/dispatch'
 tag="${RELEASE_TAG:?RELEASE_TAG is required}"
 pkgrel="${PKGREL:-1}"
 
@@ -17,7 +17,7 @@ fi
 
 version="${tag#v}"
 pkgver="${version//-/_}"
-asset_name="T3-Code-${version}-x86_64.AppImage"
+asset_name="Dispatch-${version}-x64.AppImage"
 release_json="$(gh api "repos/$repo/releases/tags/$tag")"
 asset_digest="$(jq -r --arg name "$asset_name" \
   '.assets[] | select(.name == $name) | .digest' <<<"$release_json")"
@@ -40,7 +40,7 @@ sed -Ei \
   -e "s/^pkgver=.*/pkgver=$pkgver/" \
   -e "s/^pkgrel=.*/pkgrel=$pkgrel/" \
   -e "/# AppImage$/s/'[0-9a-f]{64}'/'$appimage_sha256'/" \
-  -e "/# upstream license$/s/'[0-9a-f]{64}'/'$license_sha256'/" \
+  -e "/# license$/s/'[0-9a-f]{64}'/'$license_sha256'/" \
   PKGBUILD
 
 run_as_builder() {
@@ -78,8 +78,8 @@ git clone "ssh://aur@aur.archlinux.org/$pkgname.git" "$aur_dir"
 cp PKGBUILD .SRCINFO "$aur_dir/"
 cd "$aur_dir"
 git rm --ignore-unmatch LICENSE .upstream-commit t3code-icon.png
-git config user.name 't3code-ci'
-git config user.email 't3code-ci@users.noreply.github.com'
+git config user.name 'Dispatch CI'
+git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
 git add -A
 
 if git diff --cached --quiet; then

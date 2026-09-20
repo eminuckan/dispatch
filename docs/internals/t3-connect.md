@@ -1,9 +1,22 @@
 # T3 Connect
 
-T3 Connect uses Clerk for cloud identity. The relay manages environment links,
+T3 Connect is a legacy/upstream-compatible cloud path, not Dispatch's product
+account model. Current compatibility code uses Clerk for cloud identity. Dispatch
+builds are cloud-disabled by default and the core environment auth layer does not
+depend on Clerk.
+
+The relay manages environment links,
 credentials for reaching environments, and managed tunnel allocations. After
 bootstrap, clients send application traffic through the environment's tunnel
 hostname; the relay Worker does not proxy their HTTP or WebSocket sessions.
+
+Dispatch's target remote model has no user login/logout. Before Clerk can be
+removed from this compatibility path, the relay needs an accountless principal
+(for example, a key-backed Dispatch trust group or environment-centric capability
+model) to replace the current `userId` boundary for environment discovery, tunnel
+allocation, device registration, and push delivery. Do not delete Clerk verification
+from the relay without replacing those authorization and revocation semantics.
+The planned replacement is described in [Accountless relay identity](./dispatch-relay-identity.md).
 
 Clerk, deployment, and native authentication setup live in the
 [Connect setup runbook](../operations/connect-setup.md).
@@ -67,7 +80,7 @@ teardown retains enough state to retry. See the
 
 ## OAuth traps
 
-Interactive clients and the headless CLI use the same Clerk application but
+The legacy compatibility path's interactive clients and headless CLI use the same Clerk application but
 different credentials. The relay accepts both session-template JWTs and CLI
 OAuth tokens; requiring a JWT template for the CLI would reject valid logins.
 The CLI is a public OAuth client using PKCE and stores no client secret.

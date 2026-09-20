@@ -1,9 +1,11 @@
 export const BRAND_ASSET_PATHS = {
-  developmentIconComposerProject: "assets/dev/app-icon.icon",
+  dispatchIconSvg: "assets/dispatch/icon.svg",
+  dispatchMarkSvg: "assets/dispatch/mark.svg",
+  dispatchIconComposerProject: "assets/dispatch/app-icon.icon",
+
   developmentIosIconPng: "assets/dispatch/icon-1024.png",
   developmentUniversalIconPng: "assets/dispatch/icon-1024.png",
 
-  productionIconComposerProject: "assets/prod/app-icon.icon",
   productionIosIconPng: "assets/dispatch/icon-1024.png",
   productionMacIconPng: "assets/dispatch/icon-1024.png",
   productionLinuxIconPng: "assets/dispatch/icon-1024.png",
@@ -13,7 +15,6 @@ export const BRAND_ASSET_PATHS = {
   productionWebFavicon32Png: "assets/dispatch/icon-32.png",
   productionWebAppleTouchIconPng: "assets/dispatch/icon-180.png",
 
-  nightlyIconComposerProject: "assets/nightly/app-icon.icon",
   nightlyIosIconPng: "assets/dispatch/icon-1024.png",
   nightlyMacIconPng: "assets/dispatch/icon-1024.png",
   nightlyLinuxIconPng: "assets/dispatch/icon-1024.png",

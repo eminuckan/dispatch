@@ -1,8 +1,4 @@
-import {
-  connectLoopbackRedirectUri,
-  CONNECT_OAUTH_SCOPES,
-  DEFAULT_HOSTED_APP_URL,
-} from "@t3tools/shared/connectAuth";
+import { connectLoopbackRedirectUri, CONNECT_OAUTH_SCOPES } from "@t3tools/shared/connectAuth";
 import { clerkFrontendApiUrlFromPublishableKey } from "@t3tools/shared/relayAuth";
 import { normalizeSecureRelayUrl } from "@t3tools/shared/relayUrl";
 import * as Config from "effect/Config";
@@ -85,10 +81,18 @@ export function resolveRelayClientTracingConfig(
   env: Readonly<Record<string, string | undefined>> = process.env,
   fallback = buildTimeRelayClientTracing,
 ) {
-  const tracesUrl = env.T3CODE_RELAY_CLIENT_OTLP_TRACES_URL?.trim() || fallback.tracesUrl;
+  const tracesUrl =
+    env.DISPATCH_RELAY_CLIENT_OTLP_TRACES_URL?.trim() ||
+    env.T3CODE_RELAY_CLIENT_OTLP_TRACES_URL?.trim() ||
+    fallback.tracesUrl;
   const tracesDataset =
-    env.T3CODE_RELAY_CLIENT_OTLP_TRACES_DATASET?.trim() || fallback.tracesDataset;
-  const tracesToken = env.T3CODE_RELAY_CLIENT_OTLP_TRACES_TOKEN?.trim() || fallback.tracesToken;
+    env.DISPATCH_RELAY_CLIENT_OTLP_TRACES_DATASET?.trim() ||
+    env.T3CODE_RELAY_CLIENT_OTLP_TRACES_DATASET?.trim() ||
+    fallback.tracesDataset;
+  const tracesToken =
+    env.DISPATCH_RELAY_CLIENT_OTLP_TRACES_TOKEN?.trim() ||
+    env.T3CODE_RELAY_CLIENT_OTLP_TRACES_TOKEN?.trim() ||
+    fallback.tracesToken;
   const normalizedTracesUrl = normalizeSecureUrl(tracesUrl);
   return normalizedTracesUrl && tracesDataset && tracesToken
     ? { tracesUrl: normalizedTracesUrl, tracesDataset, tracesToken }
@@ -96,7 +100,7 @@ export function resolveRelayClientTracingConfig(
 }
 
 export function makeRelayUrlConfig(fallback = buildTimeRelayUrl) {
-  const runtimeConfig = Config.NonEmptyString("T3CODE_RELAY_URL");
+  const runtimeConfig = dispatchFirstConfig("DISPATCH_RELAY_URL", "T3CODE_RELAY_URL");
   return (fallback ? runtimeConfig.pipe(Config.withDefault(fallback)) : runtimeConfig).pipe(
     Config.mapEffect(validateRelayUrl),
   );
@@ -110,8 +114,9 @@ export const relayUrlConfig = makeRelayUrlConfig();
  * matching hosted deployment.
  */
 export const hostedAppUrlConfig = makePublicValueConfig(
+  "DISPATCH_HOSTED_APP_URL",
   "T3CODE_HOSTED_APP_URL",
-  DEFAULT_HOSTED_APP_URL,
+  "",
 ).pipe(Config.mapEffect(validateHostedAppUrl));
 
 function validateHostedAppUrl(value: string) {
@@ -142,8 +147,14 @@ function validateHostedAppUrl(value: string) {
   }
 }
 
-function makePublicValueConfig(name: string, fallback: string) {
-  const runtimeConfig = Config.NonEmptyString(name);
+function dispatchFirstConfig(canonicalName: string, legacyName: string) {
+  return Config.NonEmptyString(canonicalName).pipe(
+    Config.orElse(() => Config.NonEmptyString(legacyName)),
+  );
+}
+
+function makePublicValueConfig(canonicalName: string, legacyName: string, fallback: string) {
+  const runtimeConfig = dispatchFirstConfig(canonicalName, legacyName);
   return (fallback ? runtimeConfig.pipe(Config.withDefault(fallback)) : runtimeConfig).pipe(
     Config.map((value) => value.trim()),
   );
@@ -174,10 +185,12 @@ export function makeCloudCliOAuthConfig({
 } = {}) {
   return Config.all({
     clerkPublishableKey: makePublicValueConfig(
+      "DISPATCH_CLERK_PUBLISHABLE_KEY",
       "T3CODE_CLERK_PUBLISHABLE_KEY",
       clerkPublishableKeyFallback,
     ),
     clientId: makePublicValueConfig(
+      "DISPATCH_CLERK_CLI_OAUTH_CLIENT_ID",
       "T3CODE_CLERK_CLI_OAUTH_CLIENT_ID",
       clerkCliOAuthClientIdFallback,
     ),
@@ -211,8 +224,31 @@ export function makeCloudCliOAuthConfig({
 
 export const cloudCliOAuthConfig = makeCloudCliOAuthConfig();
 
-export const hasCloudPublicConfig = Boolean(
-  (normalizeSecureRelayUrl(process.env.T3CODE_RELAY_URL ?? "") ?? buildTimeRelayUrl) &&
-  (process.env.T3CODE_CLERK_PUBLISHABLE_KEY?.trim() || buildTimeClerkPublishableKey) &&
-  (process.env.T3CODE_CLERK_CLI_OAUTH_CLIENT_ID?.trim() || buildTimeClerkCliOAuthClientId),
-);
+export function resolveHasCloudPublicConfig(
+  env: Readonly<Record<string, string | undefined>> = process.env,
+  fallback: {
+    readonly relayUrl?: string;
+    readonly clerkPublishableKey?: string;
+    readonly clerkCliOAuthClientId?: string;
+  } = {
+    relayUrl: buildTimeRelayUrl,
+    clerkPublishableKey: buildTimeClerkPublishableKey,
+    clerkCliOAuthClientId: buildTimeClerkCliOAuthClientId,
+  },
+) {
+  const relayUrl =
+    normalizeSecureRelayUrl(env.DISPATCH_RELAY_URL?.trim() || env.T3CODE_RELAY_URL?.trim() || "") ??
+    fallback.relayUrl;
+  const clerkPublishableKey =
+    env.DISPATCH_CLERK_PUBLISHABLE_KEY?.trim() ||
+    env.T3CODE_CLERK_PUBLISHABLE_KEY?.trim() ||
+    fallback.clerkPublishableKey;
+  const clerkCliOAuthClientId =
+    env.DISPATCH_CLERK_CLI_OAUTH_CLIENT_ID?.trim() ||
+    env.T3CODE_CLERK_CLI_OAUTH_CLIENT_ID?.trim() ||
+    fallback.clerkCliOAuthClientId;
+
+  return Boolean(relayUrl && clerkPublishableKey && clerkCliOAuthClientId);
+}
+
+export const hasCloudPublicConfig = resolveHasCloudPublicConfig();

@@ -1,11 +1,16 @@
 import { tokenizeCliArgs } from "@t3tools/shared/cliArgs";
 
+const DISPATCH_CODEX_LAUNCH_ARGS_ENV = "DISPATCH_CODEX_LAUNCH_ARGS";
 const T3CODE_CODEX_LAUNCH_ARGS_ENV = "T3CODE_CODEX_LAUNCH_ARGS";
 
 export const resolveCodexLaunchArgs = (
   launchArgs?: string,
   environment: NodeJS.ProcessEnv = process.env,
-) => environment[T3CODE_CODEX_LAUNCH_ARGS_ENV]?.trim() || launchArgs?.trim() || "";
+) =>
+  environment[DISPATCH_CODEX_LAUNCH_ARGS_ENV]?.trim() ||
+  environment[T3CODE_CODEX_LAUNCH_ARGS_ENV]?.trim() ||
+  launchArgs?.trim() ||
+  "";
 
 const codexLaunchArgv = (launchArgs?: string): ReadonlyArray<string> => tokenizeCliArgs(launchArgs);
 

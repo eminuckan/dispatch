@@ -56,7 +56,7 @@ export class CaptureFeedback {
     } catch (error) {
       // Optional decoration must not prevent attaching a successfully captured image.
       this._clearActors();
-      console.warn(`T3 capture effects unavailable: ${error.message}`);
+      console.warn(`Dispatch capture effects unavailable: ${error.message}`);
     }
     return Boolean(this._actor);
   }
@@ -85,7 +85,7 @@ export class CaptureFeedback {
         session.pid,
         title,
       );
-    // A command-palette capture temporarily unmaps T3. Wait for its new surface, not a sleep.
+    // A command-palette capture temporarily unmaps Dispatch. Wait for its new surface, not a sleep.
     const target =
       find() ??
       (await new Promise((resolve) => {
@@ -110,7 +110,7 @@ export class CaptureFeedback {
         check();
       }));
     if (this._owned(sender) !== session || !target)
-      throw new Error("T3 Code's window is not available for activation.");
+      throw new Error("Dispatch's window is not available for activation.");
     session.target = target;
     Main.activateWindow(target, global.get_current_time());
   }

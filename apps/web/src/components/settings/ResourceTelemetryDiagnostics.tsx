@@ -137,7 +137,7 @@ function categoryLabel(category: ResourceTelemetryProcessCategory): string {
     case "resource-monitor":
       return "Monitor";
     case "unknown-t3":
-      return "T3 process";
+      return "Dispatch process";
   }
 }
 

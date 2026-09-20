@@ -343,7 +343,7 @@ const requestAllCodexModels = Effect.fn("requestAllCodexModels")(function* (
 export function buildCodexInitializeParams(): CodexSchema.V1InitializeParams {
   return {
     clientInfo: {
-      name: "t3code_desktop",
+      name: "dispatch_desktop",
       title: "Dispatch Desktop",
       version: packageJson.version,
     },

@@ -16,7 +16,11 @@ import * as Path from "effect/Path";
 import { HttpClient } from "effect/unstable/http";
 import * as Schema from "effect/Schema";
 
-import { CLI_RELEASE_BASE_URL_ENV } from "@t3tools/shared/cliRelease";
+import {
+  CLI_RELEASE_BASE_URL_ENV,
+  CLI_RELEASE_BASE_URL_LEGACY_ENV,
+  resolveCliReleaseBaseUrlEnv,
+} from "@t3tools/shared/cliRelease";
 
 import * as ProcessRunner from "../processRunner.ts";
 import {
@@ -57,23 +61,28 @@ function quoteSystemdValue(value: string): string {
 }
 
 /**
- * Reads `T3CODE_HOME` back out of a rendered unit or plist. Only values this
- * file writes are expected, so a quoted systemd value is unquoted and
- * unescaped the same way `quoteSystemdValue` produced it.
+ * Reads the managed service home back out of a rendered unit or plist.
+ * `DISPATCH_HOME` is canonical; `T3CODE_HOME` remains a migration fallback.
+ * Only values this file writes are expected, so a quoted systemd value is
+ * unquoted and unescaped the same way `quoteSystemdValue` produced it.
  */
 export function bootServiceBaseDirOf(contents: string): string | undefined {
-  const systemd = /^Environment=T3CODE_HOME=(.*)$/m.exec(contents)?.[1];
-  if (systemd !== undefined) {
-    const raw = systemd.trim();
-    const unquoted =
-      raw.startsWith('"') && raw.endsWith('"')
-        ? raw.slice(1, -1).replaceAll('\\"', '"').replaceAll("\\\\", "\\")
-        : raw;
-    return unquoted.replaceAll("%%", "%");
-  }
-  const plist = /<key>T3CODE_HOME<\/key>\s*<string>([^<]*)<\/string>/.exec(contents)?.[1];
-  if (plist !== undefined) {
-    return plist.replaceAll("&lt;", "<").replaceAll("&gt;", ">").replaceAll("&amp;", "&");
+  for (const name of ["DISPATCH_HOME", "T3CODE_HOME"] as const) {
+    const systemd = new RegExp(`^Environment=${name}=(.*)$`, "m").exec(contents)?.[1];
+    if (systemd !== undefined) {
+      const raw = systemd.trim();
+      const unquoted =
+        raw.startsWith('"') && raw.endsWith('"')
+          ? raw.slice(1, -1).replaceAll('\\"', '"').replaceAll("\\\\", "\\")
+          : raw;
+      return unquoted.replaceAll("%%", "%");
+    }
+    const plist = new RegExp(`<key>${name}<\\/key>\\s*<string>([^<]*)<\\/string>`).exec(
+      contents,
+    )?.[1];
+    if (plist !== undefined) {
+      return plist.replaceAll("&lt;", "<").replaceAll("&gt;", ">").replaceAll("&amp;", "&");
+    }
   }
   return undefined;
 }
@@ -96,13 +105,14 @@ export function renderBootServiceUnit(plan: BootServicePlan): string {
   // The user manager has no reliable network-online target; server networking retries itself.
   return [
     "[Unit]",
-    "Description=T3 Code server",
+    "Description=Dispatch server",
     "StartLimitIntervalSec=300",
     "StartLimitBurst=5",
     "",
     "[Service]",
     "Type=simple",
     "WorkingDirectory=%h",
+    `Environment=DISPATCH_HOME=${quoteSystemdValue(plan.baseDir)}`,
     `Environment=T3CODE_HOME=${quoteSystemdValue(plan.baseDir)}`,
     `Environment=${BOOT_SERVICE_UNIT_ENV}=${BOOT_SERVICE_UNIT_FILE}`,
     `ExecStart=${plan.program.map(quoteSystemdValue).join(" ")}`,
@@ -435,7 +445,7 @@ export class BootServiceInstallError extends Schema.TaggedError<BootServiceInsta
   { cause: Schema.Defect() },
 ) {
   override get message(): string {
-    return "Could not set up the T3 Code background service.";
+    return "Could not set up the Dispatch background service.";
   }
 }
 
@@ -453,17 +463,17 @@ type BootServiceProblem = typeof BootServiceProblem.Type;
 export function formatBootServiceProblem(problem: BootServiceProblem): string {
   switch (problem) {
     case "user-manager-unavailable":
-      return "Cannot reach the systemd user manager. Run `systemctl --user status` in a login session for the service user. Install your distribution's systemd user-session support if it is missing; do not run T3 with sudo.";
+      return "Cannot reach the systemd user manager. Run `systemctl --user status` in a login session for the service user. Install your distribution's systemd user-session support if it is missing; do not run Dispatch with sudo.";
     case "linger-unavailable":
       return 'Cannot check whether this user can run services after logout. Run `loginctl show-user "$(id -un)" --property=Linger` and check that systemd-logind is available.';
     case "linger-disabled":
-      return 'Lingering is disabled. T3 Code will stop when your last login session ends and will not start at boot. Run `sudo loginctl enable-linger "$(id -un)"` on this machine, then retry the service command as your normal user.';
+      return 'Lingering is disabled. Dispatch will stop when your last login session ends and will not start at boot. Run `sudo loginctl enable-linger "$(id -un)"` on this machine, then retry the service command as your normal user.';
     case "service-disabled":
-      return "The service is not enabled to start automatically. Run `t3 service install` to repair it.";
+      return "The service is not enabled to start automatically. Run `dispatch service install` to repair it.";
     case "service-stopped":
-      return "The service is not running. Check the service log and `systemctl --user status t3code.service`, then run `t3 service install`.";
+      return "The service is not running. Check the service log and `systemctl --user status t3code.service`, then run `dispatch service install`.";
     case "restart-pending":
-      return "A newer version is installed but the service is still running the previous one. Run `t3 service restart` to switch.";
+      return "A newer version is installed but the service is still running the previous one. Run `dispatch service restart` to switch.";
   }
 }
 
@@ -513,7 +523,7 @@ export interface BootServiceStatus {
   /**
    * The T3 home the installed unit serves. The unit name is fixed per user,
    * so a caller working against another base dir must not treat this service
-   * as its own; `t3 update --base-dir` learned that by restarting the live
+   * as its own; `dispatch update --base-dir` learned that by restarting the live
    * server of the machine it ran on.
    */
   readonly installedBaseDir?: string;
@@ -529,8 +539,8 @@ export class BootService extends Context.Service<
       readonly allowDowngrade?: boolean;
       /**
        * Write the unit for this version but leave the service on whatever it
-       * is running now. `t3 update` uses this when the user declines the
-       * restart, so a later `t3 service restart` lands on the new version.
+       * is running now. `dispatch update` uses this when the user declines the
+       * restart, so a later `dispatch service restart` lands on the new version.
        */
       readonly start?: boolean;
     }) => Effect.Effect<BootServicePlan, BootServiceError>;
@@ -561,9 +571,14 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
   const arch = yield* HostProcessArchitecture;
   const uid = yield* HostProcessUserId;
   const httpClient = yield* HttpClient.HttpClient;
-  const releaseBaseUrl = Option.getOrUndefined(
-    yield* Config.String(CLI_RELEASE_BASE_URL_ENV).pipe(Config.option),
-  );
+  const releaseBaseUrl = resolveCliReleaseBaseUrlEnv({
+    [CLI_RELEASE_BASE_URL_ENV]: Option.getOrUndefined(
+      yield* Config.String(CLI_RELEASE_BASE_URL_ENV).pipe(Config.option),
+    ),
+    [CLI_RELEASE_BASE_URL_LEGACY_ENV]: Option.getOrUndefined(
+      yield* Config.String(CLI_RELEASE_BASE_URL_LEGACY_ENV).pipe(Config.option),
+    ),
+  });
   const homeDir = yield* Config.String("HOME").pipe(Config.withDefault(""));
   const installerPath = yield* Config.String("PATH").pipe(Config.withDefault(""));
   const fs = yield* FileSystem.FileSystem;

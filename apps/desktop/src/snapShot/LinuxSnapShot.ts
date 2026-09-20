@@ -15,6 +15,13 @@ import {
   type MessageLike,
 } from "dbus-next";
 import * as Schema from "effect/Schema";
+import {
+  GNOME_CAPTURE_DBUS_NAME,
+  GNOME_CAPTURE_DBUS_PATH,
+  GNOME_CAPTURE_UUID,
+  LEGACY_GNOME_CAPTURE_DBUS_NAME,
+  LEGACY_GNOME_CAPTURE_DBUS_PATH,
+} from "./gnomeCaptureBundle.ts";
 import { isKdeCaptureSession, type KdeCapturePaths } from "./KdeSnapShot.ts";
 import { isGnomeCaptureSession, readPortalPng, resizeLinuxCapture } from "./linuxCaptureSession.ts";
 export { readPortalPng, resizeLinuxCapture } from "./linuxCaptureSession.ts";
@@ -24,8 +31,20 @@ const PORTAL = "org.freedesktop.portal.Desktop";
 const PORTAL_PATH = "/org/freedesktop/portal/desktop";
 const SCREENSHOT = "org.freedesktop.portal.Screenshot";
 const REQUEST = "org.freedesktop.portal.Request";
-const EXTENSION = "org.gnome.Shell.Extensions.T3SnapShot";
-const EXTENSION_PATH = "/org/gnome/Shell/Extensions/T3SnapShot";
+const EXTENSIONS = [
+  { name: GNOME_CAPTURE_DBUS_NAME, path: GNOME_CAPTURE_DBUS_PATH },
+  { name: LEGACY_GNOME_CAPTURE_DBUS_NAME, path: LEGACY_GNOME_CAPTURE_DBUS_PATH },
+] as const;
+
+function extensionClientName(appId: string, endpoint: (typeof EXTENSIONS)[number]): string {
+  if (endpoint !== EXTENSIONS[1]) return `${appId}.SnapShot`;
+  return appId === "com.eminuckan.dispatch.dev" || appId === "com.eminuckan.Dispatch.Development"
+    ? "com.t3tools.T3Code.Development.SnapShot"
+    : "com.t3tools.T3Code.SnapShot";
+}
+const GNOME_SHELL = "org.gnome.Shell";
+const GNOME_SHELL_PATH = "/org/gnome/Shell";
+const GNOME_EXTENSIONS = "org.gnome.Shell.Extensions";
 const DBUS = "org.freedesktop.DBus";
 const DBUS_PATH = "/org/freedesktop/DBus";
 const UInt = Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 0xffff_ffff }));
@@ -53,6 +72,9 @@ export type LinuxWindowMetadata = typeof WindowMetadata.Type & {
 };
 const decodeProperties = Schema.decodeUnknownSync(PortalProperties);
 const decodeExtension = Schema.decodeUnknownSync(Schema.Struct({ Version: UIntVariant }));
+const decodeGnomeExtensionInfo = Schema.decodeUnknownSync(
+  Schema.Struct({ state: Schema.optional(Schema.Struct({ value: Schema.Number })) }),
+);
 const decodeKde = Schema.decodeUnknownSync(Schema.Struct({ Version: UIntVariant }));
 const decodeString = Schema.decodeUnknownSync(Schema.String);
 const decodeBoolean = Schema.decodeUnknownSync(Schema.Boolean);
@@ -103,6 +125,7 @@ export class LinuxCaptureConnection {
   private readonly disconnected: Promise<never>;
   private uniqueName = "";
   private extensionVersion = 0;
+  private extensionEndpoint: (typeof EXTENSIONS)[number] | undefined;
   private closed = false;
   private feedbackTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -160,6 +183,22 @@ export class LinuxCaptureConnection {
     return reply.body[0] as unknown;
   }
 
+  private async canonicalExtensionKnown(): Promise<boolean> {
+    const reply = await this.call({
+      destination: GNOME_SHELL,
+      path: GNOME_SHELL_PATH,
+      interface: GNOME_EXTENSIONS,
+      member: "GetExtensionInfo",
+      signature: "s",
+      body: [GNOME_CAPTURE_UUID],
+    }).catch((error: unknown) => {
+      if (!unavailable(error)) throw error;
+      return undefined;
+    });
+    if (reply === undefined) return false;
+    return decodeGnomeExtensionInfo(reply.body[0]).state !== undefined;
+  }
+
   async backend(appId: string): Promise<LinuxCaptureBackend> {
     if (isKdeCaptureSession()) {
       const kde = await this.properties(
@@ -198,18 +237,33 @@ export class LinuxCaptureConnection {
       }
     }
     if (!isGnomeCaptureSession(process.env)) return "picker";
-    const extension = await this.properties(EXTENSION, EXTENSION_PATH, EXTENSION).catch(
-      (error: unknown) => {
+    const probeExtension = async (endpoint: (typeof EXTENSIONS)[number]) =>
+      this.properties(endpoint.name, endpoint.path, endpoint.name).catch((error: unknown) => {
         if (!unavailable(error)) throw error;
         return undefined;
-      },
-    );
-    if (extension !== undefined) {
-      const parsed = decodeExtension(extension);
-      this.extensionVersion = parsed.Version.value;
-      if (this.extensionVersion === 1 || this.extensionVersion === 2) return "gnome-extension";
+      });
+
+    const canonicalEndpoint = EXTENSIONS[0];
+    const canonical = await probeExtension(canonicalEndpoint);
+    if (canonical !== undefined) {
+      const version = decodeExtension(canonical).Version.value;
+      if (version === 1 || version === 2) {
+        this.extensionVersion = version;
+        this.extensionEndpoint = canonicalEndpoint;
+        return "gnome-extension";
+      }
+      return "picker";
     }
-    return "picker";
+    if (await this.canonicalExtensionKnown()) return "picker";
+
+    const legacyEndpoint = EXTENSIONS[1];
+    const legacy = await probeExtension(legacyEndpoint);
+    if (legacy === undefined) return "picker";
+    const legacyVersion = decodeExtension(legacy).Version.value;
+    if (legacyVersion !== 1 && legacyVersion !== 2) return "picker";
+    this.extensionVersion = legacyVersion;
+    this.extensionEndpoint = legacyEndpoint;
+    return "gnome-extension";
   }
 
   async capturePortal(): Promise<LinuxWindowSnapshot> {
@@ -222,7 +276,7 @@ export class LinuxCaptureConnection {
       body: [PORTAL],
     });
     const sender = decodeString(owner.body[0]);
-    const token = `t3_${NodeCrypto.randomUUID().replaceAll("-", "")}`;
+    const token = `dispatch_${NodeCrypto.randomUUID().replaceAll("-", "")}`;
     const namespace = `${PORTAL_PATH}/request/${this.uniqueName.slice(1).replaceAll(".", "_")}/`;
     let handle = namespace + token;
     let completed = false;
@@ -302,17 +356,18 @@ export class LinuxCaptureConnection {
   }
 
   async captureExtension(appId: string, options?: FeedbackOptions): Promise<LinuxWindowSnapshot> {
+    const endpoint = this.extensionEndpoint ?? EXTENSIONS[0];
     const result = await this.wait(
-      this.bus.requestName(`${appId}.SnapShot`, NameFlag.DO_NOT_QUEUE),
+      this.bus.requestName(extensionClientName(appId, endpoint), NameFlag.DO_NOT_QUEUE),
     );
     if (result !== RequestNameReply.PRIMARY_OWNER) {
       throw new Error("Another Dispatch instance is capturing a window. Try again.");
     }
     const withFeedback = this.feedbackAvailable && options !== undefined;
     const reply = await this.call({
-      destination: EXTENSION,
-      path: EXTENSION_PATH,
-      interface: EXTENSION,
+      destination: endpoint.name,
+      path: endpoint.path,
+      interface: endpoint.name,
       member: withFeedback ? "CaptureWithFeedback" : "Capture",
       ...(withFeedback ? { signature: "bb", body: [options.flash, options.animate] } : {}),
     });
@@ -353,10 +408,11 @@ export class LinuxCaptureConnection {
 
   private async feedbackCall(member: string, signature: string, body: unknown[]): Promise<void> {
     if (this.closed) return;
+    const endpoint = this.extensionEndpoint ?? EXTENSIONS[0];
     await this.call({
-      destination: EXTENSION,
-      path: EXTENSION_PATH,
-      interface: EXTENSION,
+      destination: endpoint.name,
+      path: endpoint.path,
+      interface: endpoint.name,
       member,
       signature,
       body,

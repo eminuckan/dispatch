@@ -283,10 +283,21 @@ const stageWebClient = Effect.fn("stageWebClient")(function* (source: string, ta
 });
 
 const MacSigningConfig = Config.all({
-  identity: Config.String("T3CODE_CLI_MAC_SIGN_IDENTITY").pipe(Config.option),
   appleApiKey: Config.String("APPLE_API_KEY").pipe(Config.option),
   appleApiKeyId: Config.String("APPLE_API_KEY_ID").pipe(Config.option),
   appleApiIssuer: Config.String("APPLE_API_ISSUER").pipe(Config.option),
+});
+
+export const resolveCliMacSignIdentity = Effect.fn("resolveCliMacSignIdentity")(function* () {
+  const env = yield* Config.all({
+    canonical: Config.String("DISPATCH_CLI_MAC_SIGN_IDENTITY").pipe(Config.option),
+    legacy: Config.String("T3CODE_CLI_MAC_SIGN_IDENTITY").pipe(Config.option),
+  });
+  return (
+    Option.getOrUndefined(env.canonical)?.trim() ||
+    Option.getOrUndefined(env.legacy)?.trim() ||
+    undefined
+  );
 });
 
 /**
@@ -304,7 +315,7 @@ const signMacArchiveContents = Effect.fn("signMacArchiveContents")(function* (in
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const signing = yield* MacSigningConfig;
-  const identity = Option.getOrUndefined(signing.identity)?.trim() || "-";
+  const identity = (yield* resolveCliMacSignIdentity()) ?? "-";
 
   const entitlements = path.join(input.repoRoot, "apps/server/resources/cli-entitlements.plist");
   const libraries = (yield* fs.readDirectory(input.contentDir, { recursive: true }))
@@ -331,7 +342,7 @@ const signMacArchiveContents = Effect.fn("signMacArchiveContents")(function* (in
     );
   }
   if (identity === "-") {
-    yield* Effect.log("[cli-archive] Signed ad hoc (no T3CODE_CLI_MAC_SIGN_IDENTITY).");
+    yield* Effect.log("[cli-archive] Signed ad hoc (no DISPATCH_CLI_MAC_SIGN_IDENTITY).");
     return;
   }
 

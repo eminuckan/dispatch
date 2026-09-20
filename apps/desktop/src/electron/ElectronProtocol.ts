@@ -13,8 +13,9 @@ import * as Scope from "effect/Scope";
 import * as Electron from "electron";
 
 export const DESKTOP_HOST = "app";
-const DESKTOP_PRODUCTION_SCHEME = "t3code";
-const DESKTOP_DEVELOPMENT_SCHEME = "t3code-dev";
+const DESKTOP_PRODUCTION_SCHEME = "dispatch";
+const DESKTOP_DEVELOPMENT_SCHEME = "dispatch-dev";
+export const LEGACY_DESKTOP_SCHEMES = ["t3code", "t3code-dev"] as const;
 
 export function getDesktopScheme(isDevelopment: boolean): string {
   return isDevelopment ? DESKTOP_DEVELOPMENT_SCHEME : DESKTOP_PRODUCTION_SCHEME;
@@ -137,6 +138,16 @@ function registerDesktopSchemePrivilegesSync(): void {
         stream: true,
       },
     },
+    ...LEGACY_DESKTOP_SCHEMES.map((scheme) => ({
+      scheme,
+      privileges: {
+        standard: true,
+        secure: true,
+        supportFetchAPI: true,
+        corsEnabled: true,
+        stream: true,
+      },
+    })),
   ]);
 }
 

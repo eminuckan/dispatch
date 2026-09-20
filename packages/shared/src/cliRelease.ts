@@ -5,10 +5,22 @@
  * platform key, so a rename here is a release-breaking change.
  */
 
-const CLI_RELEASE_REPOSITORY = "pingdotgg/t3code";
+const CLI_RELEASE_REPOSITORY = "eminuckan/dispatch";
 export const CLI_RELEASE_CHECKSUMS_FILE = "SHA256SUMS";
 /** Overrides the download origin for mirrors and air-gapped installs. */
-export const CLI_RELEASE_BASE_URL_ENV = "T3CODE_RELEASE_BASE_URL";
+export const CLI_RELEASE_BASE_URL_ENV = "DISPATCH_RELEASE_BASE_URL";
+/** Legacy release mirror override retained for existing T3 Code installations. */
+export const CLI_RELEASE_BASE_URL_LEGACY_ENV = "T3CODE_RELEASE_BASE_URL";
+
+export function resolveCliReleaseBaseUrlEnv(
+  env: Readonly<Record<string, string | undefined>>,
+): string | undefined {
+  const canonical = env[CLI_RELEASE_BASE_URL_ENV]?.trim();
+  if (canonical) return canonical;
+
+  const legacy = env[CLI_RELEASE_BASE_URL_LEGACY_ENV]?.trim();
+  return legacy || undefined;
+}
 
 /**
  * The archives a release attaches. Kept in step with the build_linux_cli

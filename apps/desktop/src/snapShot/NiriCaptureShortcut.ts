@@ -2,11 +2,14 @@
 import { Message, MessageType, NameFlag, RequestNameReply, sessionBus } from "dbus-next";
 
 import {
-  NIRI_CAPTURE_INTERFACE as INTERFACE,
-  NIRI_CAPTURE_PATH as PATH,
+  LEGACY_NIRI_CAPTURE_INTERFACE,
+  LEGACY_NIRI_CAPTURE_PATH,
+  NIRI_CAPTURE_INTERFACE,
+  NIRI_CAPTURE_PATH,
+  niriCaptureBusNames,
 } from "./linuxCaptureSession.ts";
 
-/** Niri owns the keybinding; this endpoint triggers capture without first focusing T3. */
+/** Niri owns the keybinding; this endpoint triggers capture without first focusing Dispatch. */
 export async function startNiriCaptureShortcut(
   appId: string,
   onCapture: () => void,
@@ -28,8 +31,12 @@ export async function startNiriCaptureShortcut(
   });
   void failure.catch(() => undefined);
   bus.addMethodHandler((message: Message) => {
-    if (message.path !== PATH || message.interface !== INTERFACE || message.member !== "Capture")
-      return false;
+    const canonical =
+      message.path === NIRI_CAPTURE_PATH && message.interface === NIRI_CAPTURE_INTERFACE;
+    const legacy =
+      message.path === LEGACY_NIRI_CAPTURE_PATH &&
+      message.interface === LEGACY_NIRI_CAPTURE_INTERFACE;
+    if ((!canonical && !legacy) || message.member !== "Capture") return false;
     if (message.signature || message.body.length) {
       // Preserve dbus-next's numeric reply serial; its newError factory has incorrect types.
       const reply = Message.newMethodReturn(message, "s", ["Capture takes no arguments."]);
@@ -44,8 +51,9 @@ export async function startNiriCaptureShortcut(
   });
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
+    const [canonicalName, ...legacyNames] = niriCaptureBusNames(appId);
     const result = await Promise.race([
-      bus.requestName(`${appId}.SnapShot`, NameFlag.DO_NOT_QUEUE),
+      bus.requestName(canonicalName!, NameFlag.DO_NOT_QUEUE),
       failure,
       new Promise<never>((_, reject) => {
         timer = setTimeout(
@@ -56,6 +64,9 @@ export async function startNiriCaptureShortcut(
     ]);
     if (result !== RequestNameReply.PRIMARY_OWNER)
       throw new Error("Another Dispatch instance already owns the capture shortcut.");
+    // Old Niri configs address the former prod/dev names. Queue for those aliases
+    // without replacing an older running app; D-Bus grants them after that owner exits.
+    await Promise.all(legacyNames.map((name) => bus.requestName(name, 0)));
     return close;
   } catch (error) {
     close();

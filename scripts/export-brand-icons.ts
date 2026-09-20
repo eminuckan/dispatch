@@ -204,36 +204,8 @@ export class IconExportAssetsStaleError extends Schema.TaggedError<IconExportAss
 
 const ICON_VARIANTS = [
   {
-    label: "development",
-    source: BRAND_ASSET_PATHS.developmentIconComposerProject,
-    outputs: {
-      ios: BRAND_ASSET_PATHS.developmentIosIconPng,
-      macos: BRAND_ASSET_PATHS.developmentDesktopIconPng,
-      universal: BRAND_ASSET_PATHS.developmentUniversalIconPng,
-      appleTouch: BRAND_ASSET_PATHS.developmentWebAppleTouchIconPng,
-      favicon16: BRAND_ASSET_PATHS.developmentWebFavicon16Png,
-      favicon32: BRAND_ASSET_PATHS.developmentWebFavicon32Png,
-      faviconIco: BRAND_ASSET_PATHS.developmentWebFaviconIco,
-      windowsIco: BRAND_ASSET_PATHS.developmentWindowsIconIco,
-    },
-  },
-  {
-    label: "preview",
-    source: BRAND_ASSET_PATHS.nightlyIconComposerProject,
-    outputs: {
-      ios: BRAND_ASSET_PATHS.nightlyIosIconPng,
-      macos: BRAND_ASSET_PATHS.nightlyMacIconPng,
-      universal: BRAND_ASSET_PATHS.nightlyLinuxIconPng,
-      appleTouch: BRAND_ASSET_PATHS.nightlyWebAppleTouchIconPng,
-      favicon16: BRAND_ASSET_PATHS.nightlyWebFavicon16Png,
-      favicon32: BRAND_ASSET_PATHS.nightlyWebFavicon32Png,
-      faviconIco: BRAND_ASSET_PATHS.nightlyWebFaviconIco,
-      windowsIco: BRAND_ASSET_PATHS.nightlyWindowsIconIco,
-    },
-  },
-  {
-    label: "production",
-    source: BRAND_ASSET_PATHS.productionIconComposerProject,
+    label: "dispatch",
+    source: BRAND_ASSET_PATHS.dispatchIconComposerProject,
     outputs: {
       ios: BRAND_ASSET_PATHS.productionIosIconPng,
       macos: BRAND_ASSET_PATHS.productionMacIconPng,
@@ -611,8 +583,8 @@ const logManualMacOsExportInstructions = Effect.fn("iconExport.logManualMacOsExp
   function* () {
     yield* Console.warn(
       [
-        "macOS icons require Icon Composer's GUI-only pre-Tahoe preset and were not changed.",
-        "Export each source with Platform: macOS pre-Tahoe, Appearance: Default, Size: 1024pt, Scale: 1×:",
+        "The macOS icon requires Icon Composer's GUI-only pre-Tahoe preset and was not changed.",
+        "Export the Dispatch source with Platform: macOS pre-Tahoe, Appearance: Default, Size: 1024pt, Scale: 1×:",
         ...ICON_VARIANTS.map((variant) => `- ${variant.source} -> ${variant.outputs.macos}`),
         "See assets/README.md for the complete workflow.",
         "",
@@ -647,7 +619,7 @@ const writeAtomically = Effect.fn("iconExport.writeAtomically")(function* (
   const temporaryPath = yield* fs
     .makeTempFileScoped({
       directory: targetDirectory,
-      prefix: ".t3-icon-export-",
+      prefix: ".dispatch-icon-export-",
       suffix: ".tmp",
     })
     .pipe(
@@ -721,7 +693,7 @@ export const exportBrandIcons = Effect.fn("exportBrandIcons")(function* (checkOn
   const tool = yield* resolveIconComposerTool();
   const temporaryDirectory = yield* fs
     .makeTempDirectoryScoped({
-      prefix: "t3-icon-export-",
+      prefix: "dispatch-icon-export-",
     })
     .pipe(
       Effect.mapError(
@@ -798,7 +770,7 @@ export const exportBrandIconsCommand = Command.make(
   ({ check }) => exportBrandIcons(check).pipe(Effect.scoped),
 ).pipe(
   Command.withDescription(
-    "Export development, preview, and production assets from Icon Composer projects.",
+    "Export Dispatch application assets from the canonical Icon Composer project.",
   ),
 );
 

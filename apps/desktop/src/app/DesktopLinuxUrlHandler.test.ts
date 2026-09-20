@@ -23,8 +23,8 @@ const makeEnvironment = (overrides: Record<string, unknown> = {}) =>
     isPackaged: true,
     isDevelopment: false,
     displayName: "Dispatch (Alpha)",
-    linuxDesktopEntryName: "com.t3tools.T3Code.desktop",
-    linuxWmClass: "t3code",
+    linuxDesktopEntryName: "com.eminuckan.Dispatch.desktop",
+    linuxWmClass: "dispatch",
     linuxApplicationsDir: "/home/alice/.local/share/applications",
     appImagePath: Option.some("/home/alice/Applications/T3-Code.AppImage"),
     path: { join: (...parts: ReadonlyArray<string>) => parts.join("/") },
@@ -164,17 +164,17 @@ describe("DesktopLinuxUrlHandler", () => {
       assert.equal(recorded.files.length, 1);
       assert.equal(
         recorded.files[0]?.path,
-        "/home/alice/.local/share/applications/com.t3tools.T3Code.desktop",
+        "/home/alice/.local/share/applications/com.eminuckan.Dispatch.desktop",
       );
       assert.include(
         recorded.files[0]?.content,
         'Exec="/home/alice/Applications/T3-Code.AppImage" %U',
       );
-      assert.include(recorded.files[0]?.content, "MimeType=x-scheme-handler/t3code;");
+      assert.include(recorded.files[0]?.content, "MimeType=x-scheme-handler/dispatch;");
       assert.deepEqual(recorded.commands, [
         {
           command: "xdg-mime",
-          args: ["default", "com.t3tools.T3Code.desktop", "x-scheme-handler/t3code"],
+          args: ["default", "com.eminuckan.Dispatch.desktop", "x-scheme-handler/dispatch"],
         },
       ]);
     });
@@ -201,7 +201,7 @@ describe("DesktopLinuxUrlHandler", () => {
         existingEntry: DesktopLinuxUrlHandler.renderUrlHandlerDesktopEntry({
           displayName: "Dispatch (Alpha)",
           execTarget: "/home/alice/Applications/T3-Code.AppImage",
-          scheme: "t3code",
+          scheme: "dispatch",
         }),
       });
 

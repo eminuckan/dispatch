@@ -1,6 +1,6 @@
 import * as Effect from "effect/Effect";
 
-import { HostProcessArguments } from "@t3tools/shared/hostProcess";
+import { HostProcessArguments, HostProcessInvokedAs } from "@t3tools/shared/hostProcess";
 
 import packageJson from "../../package.json" with { type: "json" };
 
@@ -16,7 +16,7 @@ export type CliRunner = "npx" | "pnpm dlx" | "bunx";
  *   bunx     ~/.bun/install/cache/... or $TMPDIR/bunx-<uid>-<spec>/...
  *
  * Global installs and repo checkouts match none of these and return null.
- * Detection is best-effort; callers must fail closed to a plain `t3` command.
+ * Detection is best-effort; callers fall back to the canonical `dispatch` command.
  */
 function detectCliRunner(entryPath: string): CliRunner | null {
   const path = entryPath.replaceAll("\\", "/");
@@ -36,41 +36,58 @@ function detectCliRunner(entryPath: string): CliRunner | null {
   return null;
 }
 
-/**
- * The `t3` package spec to suggest. The literal spec the user typed (e.g.
- * `t3@nightly`) is resolved away before our process starts, so re-derive it
- * from the running version: nightly builds re-suggest the nightly channel,
- * anything else suggests the bare package.
- */
-function suggestedPackageSpec(version: string): string {
+type CliCommandName = "dispatch" | "t3";
+
+function packageCommandName(entryPath: string): CliCommandName | undefined {
+  const path = entryPath.replaceAll("\\", "/");
+  if (path.includes("/node_modules/t3/") || /\/t3@[^/]+\/dist\/bin\.mjs$/u.test(path)) {
+    return "t3";
+  }
+  if (path.includes("/node_modules/dispatch/") || /\/dispatch@[^/]+\/dist\/bin\.mjs$/u.test(path)) {
+    return "dispatch";
+  }
+  return undefined;
+}
+
+function directCommandName(invokedAs: string | undefined): CliCommandName {
+  const command = invokedAs?.replaceAll("\\", "/").split("/").at(-1)?.toLowerCase() ?? "";
+  return /^(?:t3|t3\.exe|t3\.cmd)$/u.test(command) ? "t3" : "dispatch";
+}
+
+/** Rebuild the package spec because package runners resolve the original literal away. */
+function suggestedPackageSpec(version: string, commandName: CliCommandName): string {
   const channel = /^[^-+]+-(nightly|preview)\./.exec(version)?.[1];
-  return channel === undefined ? "t3" : `t3@${channel}`;
+  return channel === undefined ? commandName : `${commandName}@${channel}`;
 }
 
 /**
- * Render a `t3 <subcommand>` suggestion that matches how this process was
- * launched, so copy/pasting it actually works: `npx t3 connect` suggests
- * `npx t3 serve`, a global install suggests `t3 serve`, and a nightly build
- * keeps the `@nightly` tag.
+ * Render a CLI suggestion that preserves an observed legacy `t3` invocation
+ * while defaulting new/direct guidance to the canonical `dispatch` command.
  */
 export function formatCliCommand(input: {
   readonly subcommand: string;
   readonly entryPath: string;
   readonly version: string;
+  readonly invokedAs?: string;
 }): string {
   const runner = detectCliRunner(input.entryPath);
   if (runner === null) {
-    return `t3 ${input.subcommand}`;
+    const commandName = directCommandName(input.invokedAs);
+    return `${commandName} ${input.subcommand}`;
   }
-  return `${runner} ${suggestedPackageSpec(input.version)} ${input.subcommand}`;
+  const commandName = packageCommandName(input.entryPath) ?? directCommandName(input.invokedAs);
+  return `${runner} ${suggestedPackageSpec(input.version, commandName)} ${input.subcommand}`;
 }
 
 /** `formatCliCommand` against this process's real entry path and version. */
 export const resolveCliCommand = (subcommand: string) =>
-  Effect.map(HostProcessArguments, (processArguments) =>
-    formatCliCommand({
-      subcommand,
-      entryPath: processArguments[1] ?? "",
-      version: packageJson.version,
-    }),
+  Effect.all({ processArguments: HostProcessArguments, invokedAs: HostProcessInvokedAs }).pipe(
+    Effect.map(({ processArguments, invokedAs }) =>
+      formatCliCommand({
+        subcommand,
+        entryPath: processArguments[1] ?? "",
+        version: packageJson.version,
+        invokedAs,
+      }),
+    ),
   );

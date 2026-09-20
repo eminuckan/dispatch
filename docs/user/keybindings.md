@@ -52,8 +52,9 @@ behavior in Settings → Keyboard.
 
 ## Edit the configuration file
 
-Keybindings live on the environment's machine, in
-`~/.t3/userdata/keybindings.json` by default. You can edit this file directly.
+Keybindings live on the environment's machine under its active Dispatch state home. Fresh installs
+use `~/.dispatch/userdata/keybindings.json`; an upgraded install can keep using an adopted legacy
+`~/.t3` or `~/.t3-jev` home in place. You can edit the active file directly.
 It is a JSON array of rules:
 
 ```json
@@ -63,10 +64,10 @@ It is a JSON array of rules:
 ]
 ```
 
-T3 Code creates the file with its defaults and adds new defaults on later startups.
+Dispatch creates the file with its defaults and adds new defaults on later startups.
 New defaults do not replace commands you customized. If a new default overlaps one
 of your shortcuts, [rule order](#precedence) decides which runs.
-Invalid rules are ignored; if the file cannot be parsed, T3 Code uses defaults.
+Invalid rules are ignored; if the file cannot be parsed, Dispatch uses defaults.
 
 ## Rule shape
 

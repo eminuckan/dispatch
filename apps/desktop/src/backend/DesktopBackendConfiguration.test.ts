@@ -958,12 +958,16 @@ describe("DesktopBackendConfiguration", () => {
       const previousAnthropicKey = process.env.ANTHROPIC_API_KEY;
       const previousOtlpHeaders = process.env.T3CODE_OTLP_HEADERS;
       const previousOtlpProtocol = process.env.T3CODE_OTLP_PROTOCOL;
+      const previousDispatchHome = process.env.DISPATCH_HOME;
+      const previousT3CodeHome = process.env.T3CODE_HOME;
       try {
         process.env.WSLENV = "GOPATH/p:OPENAI_API_KEY/u:EMPTY::AZURE_DEVOPS_EXT_PAT/u";
         process.env.OPENAI_API_KEY = "openai-key";
         process.env.ANTHROPIC_API_KEY = "anthropic-key";
         process.env.T3CODE_OTLP_HEADERS = 'authorization="Bearer%20my-token"';
         process.env.T3CODE_OTLP_PROTOCOL = "http/protobuf";
+        process.env.DISPATCH_HOME = "C:\\Users\\alice\\.dispatch";
+        process.env.T3CODE_HOME = "C:\\Users\\alice\\.t3";
 
         yield* Effect.gen(function* () {
           const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
@@ -984,6 +988,8 @@ describe("DesktopBackendConfiguration", () => {
           assert.equal(config.env.OPENAI_API_KEY, "openai-key");
           assert.equal(config.env.ANTHROPIC_API_KEY, "anthropic-key");
           assert.equal(config.env.T3CODE_OTLP_PROTOCOL, "http/protobuf");
+          assert.isUndefined(config.env.DISPATCH_HOME);
+          assert.isUndefined(config.env.T3CODE_HOME);
           // The existing WSLENV is preserved byte-for-byte (note the empty
           // "::" segment survives — WSL ignores it, so we don't normalize
           // it away) and ANTHROPIC_API_KEY is appended. OPENAI_API_KEY is
@@ -1015,6 +1021,8 @@ describe("DesktopBackendConfiguration", () => {
         restoreEnv("ANTHROPIC_API_KEY", previousAnthropicKey);
         restoreEnv("T3CODE_OTLP_HEADERS", previousOtlpHeaders);
         restoreEnv("T3CODE_OTLP_PROTOCOL", previousOtlpProtocol);
+        restoreEnv("DISPATCH_HOME", previousDispatchHome);
+        restoreEnv("T3CODE_HOME", previousT3CodeHome);
       }
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );

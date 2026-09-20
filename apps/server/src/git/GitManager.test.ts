@@ -4618,7 +4618,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         pullRequestNumber: 93,
         headRepository: "octocat/codething-mvp",
         headBranch: "feature/missing-fork-branch",
-        localBranch: "t3code/pr-93/feature/missing-fork-branch",
+        localBranch: "dispatch/pr-93/feature/missing-fork-branch",
       });
       if (!(error.cause instanceof AggregateError)) {
         return yield* Effect.die(error.cause);
@@ -5497,7 +5497,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
           mode: "worktree",
         });
 
-        expect(result.branch).toBe("t3code/pr-91/main");
+        expect(result.branch).toBe("dispatch/pr-91/main");
         expect(result.worktreePath).not.toBeNull();
         expect((yield* runGit(repoDir, ["branch", "--show-current"])).stdout.trim()).toBe("main");
         expect((yield* runGit(repoDir, ["rev-parse", "main"])).stdout.trim()).toBe(mainBefore);
@@ -5506,7 +5506,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
             "branch",
             "--show-current",
           ])).stdout.trim(),
-        ).toBe("t3code/pr-91/main");
+        ).toBe("dispatch/pr-91/main");
       }),
   );
 
@@ -5558,7 +5558,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
           mode: "worktree",
         });
 
-        expect(result.branch).toBe("t3code/pr-92/main");
+        expect(result.branch).toBe("dispatch/pr-92/main");
         expect((yield* runGit(repoDir, ["rev-parse", "main"])).stdout.trim()).toBe(localMainBefore);
         expect(
           (yield* runGit(result.worktreePath as string, [

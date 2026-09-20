@@ -48,7 +48,7 @@ describe("grokAcpSpawnArgs", () => {
 });
 
 describe("buildGrokAcpSpawnInput", () => {
-  it("passes the Dispatch referrer through Grok OAuth env", () => {
+  it("preserves an explicitly configured Grok OAuth referrer", () => {
     const spawn = buildGrokAcpSpawnInput({ binaryPath: "/usr/local/bin/grok" }, "/tmp/project", {
       XAI_API_KEY: "secret",
       GROK_OAUTH2_REFERRER: "other-client",
@@ -60,9 +60,26 @@ describe("buildGrokAcpSpawnInput", () => {
       cwd: "/tmp/project",
       env: {
         XAI_API_KEY: "secret",
-        GROK_OAUTH2_REFERRER: "t3code",
+        GROK_OAUTH2_REFERRER: "other-client",
       },
     });
+  });
+
+  it("prefers the Dispatch referrer override and maps it to Grok OAuth", () => {
+    const spawn = buildGrokAcpSpawnInput(undefined, "/tmp/project", {
+      DISPATCH_GROK_OAUTH2_REFERRER: "dispatch",
+      GROK_OAUTH2_REFERRER: "other-client",
+    });
+
+    expect(spawn.env).toMatchObject({
+      DISPATCH_GROK_OAUTH2_REFERRER: "dispatch",
+      GROK_OAUTH2_REFERRER: "dispatch",
+    });
+  });
+
+  it("falls back to the legacy registered referrer when none is configured", () => {
+    const spawn = buildGrokAcpSpawnInput(undefined, "/tmp/project", {});
+    expect(spawn.env?.GROK_OAUTH2_REFERRER).toBe("t3code");
   });
 
   it("puts Supervised on the Grok argv so config always-approve cannot win", () => {

@@ -155,7 +155,10 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
     it.effect("forwards the reusable auth token to web dev and removes it for desktop", () =>
       Effect.gen(function* () {
         const input = {
-          baseEnv: { T3CODE_DEV_AUTH_TOKEN: "reusable-dev-auth-token-that-is-long-enough" },
+          baseEnv: {
+            DISPATCH_DEV_AUTH_TOKEN: "dispatch-reusable-dev-auth-token-that-is-long-enough",
+            T3CODE_DEV_AUTH_TOKEN: "legacy-reusable-dev-auth-token-that-is-long-enough",
+          },
           serverOffset: 0,
           webOffset: 0,
           t3Home: undefined,
@@ -169,7 +172,9 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
         const web = yield* createDevRunnerEnv({ ...input, mode: "dev" });
         const desktop = yield* createDevRunnerEnv({ ...input, mode: "dev:desktop" });
 
+        assert.equal(web.DISPATCH_DEV_AUTH_TOKEN, input.baseEnv.DISPATCH_DEV_AUTH_TOKEN);
         assert.equal(web.T3CODE_DEV_AUTH_TOKEN, input.baseEnv.T3CODE_DEV_AUTH_TOKEN);
+        assert.equal(desktop.DISPATCH_DEV_AUTH_TOKEN, undefined);
         assert.equal(desktop.T3CODE_DEV_AUTH_TOKEN, undefined);
       }),
     );
@@ -189,7 +194,9 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           devUrl: undefined,
         });
 
+        assert.equal(env.DISPATCH_HOME, undefined);
         assert.equal(env.T3CODE_HOME, undefined);
+        assert.equal(env.DISPATCH_NO_BROWSER, "1");
         assert.equal(env.T3CODE_NO_BROWSER, "1");
       }),
     );
@@ -210,6 +217,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           devUrl: undefined,
         });
 
+        assert.equal(env.DISPATCH_NO_BROWSER, "0");
         assert.equal(env.T3CODE_NO_BROWSER, "0");
       }),
     );
@@ -218,7 +226,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
       Effect.gen(function* () {
         const env = yield* createDevRunnerEnv({
           mode: "dev",
-          baseEnv: { T3CODE_NO_BROWSER: "0" },
+          baseEnv: { DISPATCH_NO_BROWSER: "0", T3CODE_NO_BROWSER: "0" },
           serverOffset: 0,
           webOffset: 0,
           t3Home: undefined,
@@ -230,6 +238,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           devUrl: undefined,
         });
 
+        assert.equal(env.DISPATCH_NO_BROWSER, "1");
         assert.equal(env.T3CODE_NO_BROWSER, "1");
       }),
     );
@@ -251,13 +260,19 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           devUrl: new URL("http://localhost:7331"),
         });
 
+        assert.equal(env.DISPATCH_HOME, path.resolve("/tmp/custom-t3"));
         assert.equal(env.T3CODE_HOME, path.resolve("/tmp/custom-t3"));
+        assert.equal(env.DISPATCH_PORT, "4222");
         assert.equal(env.T3CODE_PORT, "4222");
         assert.equal(env.VITE_HTTP_URL, "http://localhost:4222");
         assert.equal(env.VITE_WS_URL, "ws://localhost:4222");
+        assert.equal(env.DISPATCH_NO_BROWSER, "1");
         assert.equal(env.T3CODE_NO_BROWSER, "1");
+        assert.equal(env.DISPATCH_AUTO_BOOTSTRAP_PROJECT_FROM_CWD, "0");
         assert.equal(env.T3CODE_AUTO_BOOTSTRAP_PROJECT_FROM_CWD, "0");
+        assert.equal(env.DISPATCH_LOG_WS_EVENTS, "1");
         assert.equal(env.T3CODE_LOG_WS_EVENTS, "1");
+        assert.equal(env.DISPATCH_HOST, "0.0.0.0");
         assert.equal(env.T3CODE_HOST, "0.0.0.0");
         assert.equal(env.VITE_DEV_SERVER_URL, "http://localhost:7331/");
       }),
@@ -292,6 +307,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
         const env = yield* createDevRunnerEnv({
           mode: "dev",
           baseEnv: {
+            DISPATCH_LOG_WS_EVENTS: "keep-me-out-too",
             T3CODE_LOG_WS_EVENTS: "keep-me-out",
           },
           serverOffset: 0,
@@ -305,7 +321,9 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           devUrl: undefined,
         });
 
+        assert.equal(env.DISPATCH_MODE, "web");
         assert.equal(env.T3CODE_MODE, "web");
+        assert.equal(env.DISPATCH_LOG_WS_EVENTS, undefined);
         assert.equal(env.T3CODE_LOG_WS_EVENTS, undefined);
       }),
     );
@@ -315,6 +333,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
         const env = yield* createDevRunnerEnv({
           mode: "dev",
           baseEnv: {
+            DISPATCH_LOG_WS_EVENTS: "1",
             T3CODE_LOG_WS_EVENTS: "1",
           },
           serverOffset: 0,
@@ -328,6 +347,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           devUrl: undefined,
         });
 
+        assert.equal(env.DISPATCH_LOG_WS_EVENTS, "0");
         assert.equal(env.T3CODE_LOG_WS_EVENTS, "0");
       }),
     );
@@ -349,6 +369,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           devUrl: undefined,
         });
 
+        assert.equal(env.DISPATCH_HOME, path.resolve("/tmp/my-t3"));
         assert.equal(env.T3CODE_HOME, path.resolve("/tmp/my-t3"));
       }),
     );
@@ -359,10 +380,16 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
         const env = yield* createDevRunnerEnv({
           mode: "dev:desktop",
           baseEnv: {
+            DISPATCH_PORT: "13773",
+            DISPATCH_MODE: "web",
+            DISPATCH_NO_BROWSER: "0",
+            DISPATCH_HOST: "0.0.0.0",
+            DISPATCH_DEV_AUTH_TOKEN: "dispatch-token",
             T3CODE_PORT: "13773",
             T3CODE_MODE: "web",
             T3CODE_NO_BROWSER: "0",
             T3CODE_HOST: "0.0.0.0",
+            T3CODE_DEV_AUTH_TOKEN: "legacy-token",
             VITE_DEV_SERVER_URL: "http://127.0.0.1:8526",
             VITE_WS_URL: "ws://localhost:13773",
           },
@@ -381,11 +408,17 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
         assert.equal(env.PORT, "5733");
         assert.equal(env.VITE_DEV_SERVER_URL, "http://127.0.0.1:5733");
         assert.equal(env.HOST, "127.0.0.1");
+        assert.equal(env.DISPATCH_PORT, "4222");
         assert.equal(env.T3CODE_PORT, "4222");
         assert.equal(env.VITE_HTTP_URL, "http://127.0.0.1:4222");
+        assert.equal(env.DISPATCH_MODE, undefined);
         assert.equal(env.T3CODE_MODE, undefined);
+        assert.equal(env.DISPATCH_NO_BROWSER, undefined);
         assert.equal(env.T3CODE_NO_BROWSER, undefined);
+        assert.equal(env.DISPATCH_HOST, undefined);
         assert.equal(env.T3CODE_HOST, undefined);
+        assert.equal(env.DISPATCH_DEV_AUTH_TOKEN, undefined);
+        assert.equal(env.T3CODE_DEV_AUTH_TOKEN, undefined);
         assert.equal(env.VITE_WS_URL, "ws://127.0.0.1:4222");
       }),
     );
@@ -406,6 +439,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           devUrl: undefined,
         });
 
+        assert.equal(env.DISPATCH_PORT, "13773");
         assert.equal(env.T3CODE_PORT, "13773");
         assert.equal(env.PORT, "5733");
       }),
@@ -436,10 +470,12 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
 
           assert.equal(env.VITE_HTTP_URL, undefined);
           assert.equal(env.VITE_WS_URL, undefined);
+          assert.equal(env.DISPATCH_PORT, "13773");
           assert.equal(env.T3CODE_PORT, "13773");
           // Deleting the keys is not sufficient — vite.config.ts merges
           // `.env`/`.env.local` underneath this env and would revive them, so
           // the intent has to be stated positively.
+          assert.equal(env.DISPATCH_SINGLE_ORIGIN_DEV, "1");
           assert.equal(env.T3CODE_SINGLE_ORIGIN_DEV, "1");
         }),
       );
@@ -451,7 +487,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
       Effect.gen(function* () {
         const env = yield* createDevRunnerEnv({
           mode: "dev:desktop",
-          baseEnv: { T3CODE_SINGLE_ORIGIN_DEV: "1" },
+          baseEnv: { DISPATCH_SINGLE_ORIGIN_DEV: "1", T3CODE_SINGLE_ORIGIN_DEV: "1" },
           serverOffset: 0,
           webOffset: 0,
           t3Home: undefined,
@@ -463,6 +499,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           devUrl: undefined,
         });
 
+        assert.equal(env.DISPATCH_SINGLE_ORIGIN_DEV, undefined);
         assert.equal(env.T3CODE_SINGLE_ORIGIN_DEV, undefined);
         assert.equal(env.VITE_HTTP_URL, "http://127.0.0.1:13773");
       }),
@@ -472,7 +509,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
       Effect.gen(function* () {
         const env = yield* createDevRunnerEnv({
           mode: "dev:server",
-          baseEnv: { T3CODE_SINGLE_ORIGIN_DEV: "1" },
+          baseEnv: { DISPATCH_SINGLE_ORIGIN_DEV: "1", T3CODE_SINGLE_ORIGIN_DEV: "1" },
           serverOffset: 0,
           webOffset: 0,
           t3Home: undefined,
@@ -484,6 +521,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           devUrl: undefined,
         });
 
+        assert.equal(env.DISPATCH_SINGLE_ORIGIN_DEV, undefined);
         assert.equal(env.T3CODE_SINGLE_ORIGIN_DEV, undefined);
         assert.equal(env.VITE_HTTP_URL, "http://localhost:13773");
       }),
@@ -1049,9 +1087,14 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
     // A shared origin means a remote browser, where unbundled dev's
     // per-module waterfall pays a tailnet round trip per import level. The
     // runner defaults bundled dev on for the spawned stack, but only
-    // defaults: an explicit T3CODE_BUNDLED_DEV (even "0") must pass through.
+    // defaults: an explicit Dispatch or legacy BUNDLED_DEV (even "0") must pass through.
     describe("--share bundled dev default", () => {
-      const shareSpawnedEnv = (input: { readonly ambientBundledDev: string | undefined }) =>
+      const shareSpawnedEnv = (input: {
+        readonly ambientBundledDev?: string;
+        readonly ambientDispatchBundledDev?: string;
+        readonly ambientAllowedOrigins?: string;
+        readonly ambientDispatchAllowedOrigins?: string;
+      }) =>
         Effect.gen(function* () {
           let captured: Record<string, string | undefined> | undefined;
           const spawnerLayer = Layer.succeed(
@@ -1100,20 +1143,29 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           }).pipe(
             Effect.provide(Layer.mergeAll(emptyConfigLayer, netServiceLayer, spawnerLayer)),
             Effect.provideService(HostProcessPlatform, "linux"),
-            Effect.provideService(
-              HostProcessEnvironment,
-              input.ambientBundledDev === undefined
+            Effect.provideService(HostProcessEnvironment, {
+              ...(input.ambientBundledDev === undefined
                 ? {}
-                : { T3CODE_BUNDLED_DEV: input.ambientBundledDev },
-            ),
+                : { T3CODE_BUNDLED_DEV: input.ambientBundledDev }),
+              ...(input.ambientDispatchBundledDev === undefined
+                ? {}
+                : { DISPATCH_BUNDLED_DEV: input.ambientDispatchBundledDev }),
+              ...(input.ambientAllowedOrigins === undefined
+                ? {}
+                : { T3CODE_DEV_ALLOWED_ORIGINS: input.ambientAllowedOrigins }),
+              ...(input.ambientDispatchAllowedOrigins === undefined
+                ? {}
+                : { DISPATCH_DEV_ALLOWED_ORIGINS: input.ambientDispatchAllowedOrigins }),
+            }),
           );
 
           return captured;
         });
 
-      it.effect("defaults T3CODE_BUNDLED_DEV=1 for a shared run", () =>
+      it.effect("defaults canonical and legacy BUNDLED_DEV=1 for a shared run", () =>
         Effect.gen(function* () {
-          const env = yield* shareSpawnedEnv({ ambientBundledDev: undefined });
+          const env = yield* shareSpawnedEnv({});
+          assert.equal(env?.DISPATCH_BUNDLED_DEV, "1");
           assert.equal(env?.T3CODE_BUNDLED_DEV, "1");
         }),
       );
@@ -1121,7 +1173,31 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
       it.effect("keeps an explicit T3CODE_BUNDLED_DEV=0 opt-out", () =>
         Effect.gen(function* () {
           const env = yield* shareSpawnedEnv({ ambientBundledDev: "0" });
+          assert.equal(env?.DISPATCH_BUNDLED_DEV, "0");
           assert.equal(env?.T3CODE_BUNDLED_DEV, "0");
+        }),
+      );
+
+      it.effect("prefers an explicit canonical BUNDLED_DEV value over the legacy alias", () =>
+        Effect.gen(function* () {
+          const env = yield* shareSpawnedEnv({
+            ambientDispatchBundledDev: "0",
+            ambientBundledDev: "1",
+          });
+          assert.equal(env?.DISPATCH_BUNDLED_DEV, "0");
+          assert.equal(env?.T3CODE_BUNDLED_DEV, "0");
+        }),
+      );
+
+      it.effect("appends the shared origin to canonical allowed origins and mirrors legacy", () =>
+        Effect.gen(function* () {
+          const env = yield* shareSpawnedEnv({
+            ambientDispatchAllowedOrigins: "https://dispatch.example.test",
+            ambientAllowedOrigins: "https://legacy.example.test",
+          });
+          const expected = "https://dispatch.example.test,https://host.example.ts.net:5733";
+          assert.equal(env?.DISPATCH_DEV_ALLOWED_ORIGINS, expected);
+          assert.equal(env?.T3CODE_DEV_ALLOWED_ORIGINS, expected);
         }),
       );
 
@@ -1259,6 +1335,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
         readonly t3Home: string | undefined;
         readonly cwd: string;
         readonly ambientHome: string | undefined;
+        readonly ambientDispatchHome?: string | undefined;
       }) =>
         Effect.gen(function* () {
           let captured: Record<string, string | undefined> | undefined;
@@ -1278,10 +1355,12 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
             Effect.provide(Layer.mergeAll(emptyConfigLayer, netServiceLayer, spawnerLayer)),
             Effect.provideService(HostProcessPlatform, "linux"),
             Effect.provideService(HostProcessWorkingDirectory, input.cwd),
-            Effect.provideService(
-              HostProcessEnvironment,
-              input.ambientHome === undefined ? {} : { T3CODE_HOME: input.ambientHome },
-            ),
+            Effect.provideService(HostProcessEnvironment, {
+              ...(input.ambientDispatchHome === undefined
+                ? {}
+                : { DISPATCH_HOME: input.ambientDispatchHome }),
+              ...(input.ambientHome === undefined ? {} : { T3CODE_HOME: input.ambientHome }),
+            }),
           );
 
           return captured?.T3CODE_HOME;
@@ -1335,6 +1414,19 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
             ambientHome: "/home/user/.t3",
           });
           assert.equal(home, path.resolve("/home/user/.t3"));
+        }),
+      );
+
+      it.effect("prefers ambient DISPATCH_HOME over legacy T3CODE_HOME outside a worktree", () =>
+        Effect.gen(function* () {
+          const path = yield* Path.Path;
+          const home = yield* spawnedHome({
+            t3Home: undefined,
+            cwd: NodeOS.tmpdir(),
+            ambientDispatchHome: "/home/user/.dispatch",
+            ambientHome: "/home/user/.t3",
+          });
+          assert.equal(home, path.resolve("/home/user/.dispatch"));
         }),
       );
 

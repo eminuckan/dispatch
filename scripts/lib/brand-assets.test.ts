@@ -84,16 +84,10 @@ describe("brand-assets", () => {
     expect(resolveWebAssetBrandForPackageVersion("0.0.29-preview.20260723.882")).toBe("nightly");
   });
 
-  it("uses Dispatch desktop icons while retaining upstream mobile composer projects", () => {
-    expect([
-      BRAND_ASSET_PATHS.developmentIconComposerProject,
-      BRAND_ASSET_PATHS.nightlyIconComposerProject,
-      BRAND_ASSET_PATHS.productionIconComposerProject,
-    ]).toEqual([
-      "assets/dev/app-icon.icon",
-      "assets/nightly/app-icon.icon",
-      "assets/prod/app-icon.icon",
-    ]);
+  it("uses Dispatch artwork as the canonical Icon Composer source", () => {
+    expect(BRAND_ASSET_PATHS.dispatchIconSvg).toBe("assets/dispatch/icon.svg");
+    expect(BRAND_ASSET_PATHS.dispatchMarkSvg).toBe("assets/dispatch/mark.svg");
+    expect(BRAND_ASSET_PATHS.dispatchIconComposerProject).toBe("assets/dispatch/app-icon.icon");
     expect(BRAND_ASSET_PATHS.developmentDesktopIconPng).toBe("assets/dispatch/icon-1024.png");
     expect(BRAND_ASSET_PATHS.nightlyMacIconPng).toBe("assets/dispatch/icon-1024.png");
     expect(BRAND_ASSET_PATHS.productionMacIconPng).toBe("assets/dispatch/icon-1024.png");

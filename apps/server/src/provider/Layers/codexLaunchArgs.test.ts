@@ -9,6 +9,16 @@ import {
 } from "./codexLaunchArgs.ts";
 
 describe("resolveCodexLaunchArgs", () => {
+  it("prefers DISPATCH_CODEX_LAUNCH_ARGS over the legacy alias and configured settings", () => {
+    NodeAssert.equal(
+      resolveCodexLaunchArgs(" --strict-config ", {
+        DISPATCH_CODEX_LAUNCH_ARGS: "--enable dispatch",
+        T3CODE_CODEX_LAUNCH_ARGS: "--enable legacy",
+      }),
+      "--enable dispatch",
+    );
+  });
+
   it("uses T3CODE_CODEX_LAUNCH_ARGS before configured settings", () => {
     NodeAssert.equal(
       resolveCodexLaunchArgs(" --strict-config ", { T3CODE_CODEX_LAUNCH_ARGS: "--enable foo" }),

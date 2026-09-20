@@ -20,7 +20,11 @@ vi.mock("electron", () => ({
 import { LinuxCaptureConnection } from "./LinuxSnapShot.ts";
 import { startNiriCaptureShortcut } from "./NiriCaptureShortcut.ts";
 import { GnomeCaptureSetup } from "./GnomeCaptureSetup.ts";
-import { GNOME_CAPTURE_UUID } from "./gnomeCaptureBundle.ts";
+import {
+  GNOME_CAPTURE_DBUS_NAME,
+  GNOME_CAPTURE_UUID,
+  LEGACY_GNOME_CAPTURE_DBUS_NAME,
+} from "./gnomeCaptureBundle.ts";
 
 const hasDbus =
   NodeChildProcess.spawnSync("dbus-daemon", ["--version"]).status === 0 &&
@@ -58,7 +62,7 @@ it.runIf(hasDbus)("captures through real D-Bus marshalling on a private bus", as
     server = sessionBus({ busAddress: String(address) });
     server.on("error", () => undefined);
     await server.requestName("org.freedesktop.portal.Desktop", NameFlag.DO_NOT_QUEUE);
-    await server.requestName("org.gnome.Shell.Extensions.T3SnapShot", NameFlag.DO_NOT_QUEUE);
+    await server.requestName(GNOME_CAPTURE_DBUS_NAME, NameFlag.DO_NOT_QUEUE);
     await server.requestName("org.gnome.Shell", NameFlag.DO_NOT_QUEUE);
     await server.requestName("org.kde.KWin.ScreenShot2", NameFlag.DO_NOT_QUEUE);
     const png = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 0]);
@@ -72,6 +76,7 @@ it.runIf(hasDbus)("captures through real D-Bus marshalling on a private bus", as
     let target: unknown;
     let clientName: string | undefined;
     let shellExtensionState = 2;
+    let canonicalExtensionKnown = true;
     server.addMethodHandler((message: Message) => {
       if (message.member === "Register") {
         server!.send(Message.newMethodReturn(message));
@@ -94,7 +99,9 @@ it.runIf(hasDbus)("captures through real D-Bus marshalling on a private bus", as
       } else if (message.member === "GetExtensionInfo") {
         server!.send(
           Message.newMethodReturn(message, "a{sv}", [
-            { state: new Variant("d", shellExtensionState), version: new Variant("d", 2) },
+            message.body[0] === GNOME_CAPTURE_UUID && !canonicalExtensionKnown
+              ? {}
+              : { state: new Variant("d", shellExtensionState), version: new Variant("d", 2) },
           ]),
         );
       } else if (message.member === "EnableExtension" || message.member === "DisableExtension") {
@@ -164,13 +171,13 @@ it.runIf(hasDbus)("captures through real D-Bus marshalling on a private bus", as
       setup.close();
     }
     const portal = connect();
-    expect(await portal.backend("com.t3tools.T3Code")).toBe("screenshot-portal");
+    expect(await portal.backend("com.eminuckan.dispatch")).toBe("screenshot-portal");
     expect(await portal.capturePortal()).toEqual({ png });
     expect(target).toBe(8);
     portalVersion = 2;
     const extension = connect();
-    expect(await extension.backend("com.t3tools.T3Code")).toBe("gnome-extension");
-    expect(await extension.captureExtension("com.t3tools.T3Code")).toMatchObject({
+    expect(await extension.backend("com.eminuckan.dispatch")).toBe("gnome-extension");
+    expect(await extension.captureExtension("com.eminuckan.dispatch")).toMatchObject({
       png,
       window: { processId: 42 },
     });
@@ -181,15 +188,15 @@ it.runIf(hasDbus)("captures through real D-Bus marshalling on a private bus", as
         interface: "org.freedesktop.DBus",
         member: "GetNameOwner",
         signature: "s",
-        body: ["com.t3tools.T3Code.SnapShot"],
+        body: ["com.eminuckan.dispatch.SnapShot"],
       }),
     );
     expect(owner?.body[0]).toBe(clientName);
     extension.close();
     extensionVersion = 2;
     const updated = connect();
-    expect(await updated.backend("com.t3tools.T3Code")).toBe("gnome-extension");
-    const snapshot = await updated.captureExtension("com.t3tools.T3Code", {
+    expect(await updated.backend("com.eminuckan.dispatch")).toBe("gnome-extension");
+    const snapshot = await updated.captureExtension("com.eminuckan.dispatch", {
       flash: true,
       animate: true,
     });
@@ -200,16 +207,39 @@ it.runIf(hasDbus)("captures through real D-Bus marshalling on a private bus", as
     expect(feedbackArgs).toEqual([true, true]);
     expect(activateTitle).toBe("Dispatch");
     expect(animateFrame).toEqual([0.1, 0.8, 0.2, 0.1]);
+
+    await server.releaseName(GNOME_CAPTURE_DBUS_NAME);
+    canonicalExtensionKnown = false;
+    await server.requestName(LEGACY_GNOME_CAPTURE_DBUS_NAME, NameFlag.DO_NOT_QUEUE);
+    const legacy = connect();
+    expect(await legacy.backend("com.eminuckan.dispatch")).toBe("gnome-extension");
+    expect(await legacy.captureExtension("com.eminuckan.dispatch")).toMatchObject({
+      png,
+      window: { processId: 42 },
+    });
+    const legacyClientOwner = await server.call(
+      new Message({
+        destination: "org.freedesktop.DBus",
+        path: "/org/freedesktop/DBus",
+        interface: "org.freedesktop.DBus",
+        member: "GetNameOwner",
+        signature: "s",
+        body: ["com.t3tools.T3Code.SnapShot"],
+      }),
+    );
+    expect(legacyClientOwner?.body[0]).toBe(clientName);
+    legacy.close();
+
     vi.stubEnv("XDG_CURRENT_DESKTOP", "KDE");
     const kde = connect();
-    expect(await kde.backend("com.t3tools.T3Code")).toBe("kde");
+    expect(await kde.backend("com.eminuckan.dispatch")).toBe("kde");
     expect(kde.feedbackAvailable).toBe(false);
     kde.close();
     const triggered = vi.fn();
     const failed = vi.fn();
     const niriBus = sessionBus({ busAddress: String(address) });
     stopNiriShortcut = await startNiriCaptureShortcut(
-      "com.t3tools.T3Code.NiriTest",
+      "com.eminuckan.Dispatch",
       triggered,
       failed,
       niriBus,
@@ -218,11 +248,11 @@ it.runIf(hasDbus)("captures through real D-Bus marshalling on a private bus", as
       "call",
       "--session",
       "--dest",
-      "com.t3tools.T3Code.NiriTest.SnapShot",
+      "com.eminuckan.dispatch.SnapShot",
       "--object-path",
-      "/com/t3tools/SnapShot",
+      "/com/eminuckan/dispatch/SnapShot",
       "--method",
-      "com.t3tools.SnapShot.Capture",
+      "com.eminuckan.dispatch.SnapShot.Capture",
     ];
     // Exercise the actual command copied to Niri's configuration, including gdbus introspection.
     await new Promise<void>((resolve, reject) => {
@@ -238,21 +268,44 @@ it.runIf(hasDbus)("captures through real D-Bus marshalling on a private bus", as
     });
     expect(triggered).toHaveBeenCalledOnce();
     expect(failed).not.toHaveBeenCalled();
+
+    await new Promise<void>((resolve, reject) => {
+      NodeChildProcess.execFile(
+        "gdbus",
+        [
+          "call",
+          "--session",
+          "--dest",
+          "com.t3tools.T3Code.SnapShot",
+          "--object-path",
+          "/com/t3tools/SnapShot",
+          "--method",
+          "com.t3tools.SnapShot.Capture",
+        ],
+        {
+          env: { ...process.env, DBUS_SESSION_BUS_ADDRESS: String(address) },
+          timeout: 3_000,
+        },
+        (error) => (error ? reject(error) : resolve()),
+      );
+    });
+    expect(triggered).toHaveBeenCalledTimes(2);
+
     const invalid = server.call(
       new Message({
-        destination: "com.t3tools.T3Code.NiriTest.SnapShot",
-        path: "/com/t3tools/SnapShot",
-        interface: "com.t3tools.SnapShot",
+        destination: "com.eminuckan.dispatch.SnapShot",
+        path: "/com/eminuckan/dispatch/SnapShot",
+        interface: "com.eminuckan.dispatch.SnapShot",
         member: "Capture",
         signature: "s",
         body: ["not allowed"],
       }),
     );
     await expect(invalid).rejects.toThrow("Capture takes no arguments");
-    expect(triggered).toHaveBeenCalledOnce();
+    expect(triggered).toHaveBeenCalledTimes(2);
     await expect(
       startNiriCaptureShortcut(
-        "com.t3tools.T3Code.NiriTest",
+        "com.eminuckan.Dispatch",
         triggered,
         failed,
         sessionBus({ busAddress: String(address) }),
@@ -260,7 +313,7 @@ it.runIf(hasDbus)("captures through real D-Bus marshalling on a private bus", as
     ).rejects.toThrow("already owns");
     stopNiriShortcut();
     const restarted = await startNiriCaptureShortcut(
-      "com.t3tools.T3Code.NiriTest",
+      "com.eminuckan.Dispatch",
       triggered,
       failed,
       sessionBus({ busAddress: String(address) }),

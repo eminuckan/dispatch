@@ -10,7 +10,11 @@ import {
   installGnomeCaptureBundle,
   isGnomeCaptureSession,
 } from "./GnomeCaptureSetup.ts";
-import { GNOME_CAPTURE_FILES, GNOME_CAPTURE_UUID } from "./gnomeCaptureBundle.ts";
+import {
+  GNOME_CAPTURE_FILES,
+  GNOME_CAPTURE_UUID,
+  LEGACY_GNOME_CAPTURE_UUID,
+} from "./gnomeCaptureBundle.ts";
 
 let dataHome: string;
 const bundle = NodePath.resolve(import.meta.dirname, "../../gnome-extension");
@@ -30,8 +34,19 @@ function fixture(
     enabled?: boolean;
     accepted?: boolean;
     error?: string;
+    legacyState?: number;
+    legacyVersion?: number;
   } = {},
 ) {
+  const extensionInfo = (legacy: boolean) => {
+    const state = legacy ? options.legacyState : options.state;
+    const version = legacy ? options.legacyVersion : options.version;
+    return {
+      ...(state === undefined ? {} : { state: { value: state } }),
+      ...(version === undefined ? {} : { version: { value: version } }),
+      error: { value: options.error ?? "" },
+    };
+  };
   const call = vi.fn(async (message: Message) => ({
     body: [
       message.member === "GetAll"
@@ -40,11 +55,7 @@ function fixture(
             UserExtensionsEnabled: { value: options.enabled ?? true },
           }
         : message.member === "GetExtensionInfo"
-          ? {
-              ...(options.state === undefined ? {} : { state: { value: options.state } }),
-              ...(options.version === undefined ? {} : { version: { value: options.version } }),
-              error: { value: options.error ?? "" },
-            }
+          ? extensionInfo(message.body[0] === LEGACY_GNOME_CAPTURE_UUID)
           : (options.accepted ?? true),
     ],
   }));
@@ -72,11 +83,30 @@ it("installs exactly the bundled payload offline and leaves other extensions alo
   expect(await NodeFSP.readFile(NodePath.join(other, "keep.txt"), "utf8")).toBe("keep");
 });
 
+it("installs the canonical Dispatch UUID without removing a legacy T3 extension", async () => {
+  const legacy = NodePath.join(dataHome, "gnome-shell/extensions", LEGACY_GNOME_CAPTURE_UUID);
+  await NodeFSP.mkdir(legacy, { recursive: true });
+  await NodeFSP.writeFile(
+    NodePath.join(legacy, "metadata.json"),
+    JSON.stringify({ uuid: LEGACY_GNOME_CAPTURE_UUID, version: 2, "shell-version": ["50"] }),
+  );
+  await NodeFSP.writeFile(NodePath.join(legacy, "keep.txt"), "legacy");
+
+  await installGnomeCaptureBundle({ bundle, dataHome });
+
+  expect(await NodeFSP.readFile(NodePath.join(legacy, "keep.txt"), "utf8")).toBe("legacy");
+  expect(
+    JSON.parse(await NodeFSP.readFile(NodePath.join(installedPath(), "metadata.json"), "utf8")),
+  ).toMatchObject({
+    uuid: GNOME_CAPTURE_UUID,
+  });
+});
+
 it("preserves the replaced extension as a recoverable backup", async () => {
   await installGnomeCaptureBundle({ bundle, dataHome });
   await NodeFSP.writeFile(NodePath.join(installedPath(), "custom.txt"), "local change");
   await installGnomeCaptureBundle({ bundle, dataHome });
-  const backups = NodePath.join(dataHome, "t3code/extension-backups");
+  const backups = NodePath.join(dataHome, "dispatch/extension-backups");
   const [backup] = await NodeFSP.readdir(backups);
   expect(
     await NodeFSP.readFile(
@@ -130,8 +160,25 @@ it.each([
   expect(call.mock.calls.map(([message]) => message.member).sort()).toEqual([
     "GetAll",
     "GetExtensionInfo",
+    "GetExtensionInfo",
   ]);
   setup.close();
+});
+
+it("offers migration when only the legacy T3 extension is loaded or installed", async () => {
+  const loaded = fixture({ legacyState: 1, legacyVersion: 2 });
+  expect(await loaded.setup.state()).toMatchObject({
+    status: "update-required",
+    message: expect.stringContaining("legacy T3 Code capture extension"),
+  });
+  loaded.setup.close();
+
+  const legacy = NodePath.join(dataHome, "gnome-shell/extensions", LEGACY_GNOME_CAPTURE_UUID);
+  await NodeFSP.mkdir(legacy, { recursive: true });
+  await NodeFSP.writeFile(NodePath.join(legacy, "metadata.json"), "{}");
+  const installed = fixture();
+  expect((await installed.setup.state()).status).toBe("update-required");
+  installed.setup.close();
 });
 
 it("requires login for local installs and updates until the new version is loaded", async () => {

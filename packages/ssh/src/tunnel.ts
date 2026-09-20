@@ -448,16 +448,21 @@ fi
 # Self-contained release archive: no Node, npm, or compiler on the remote.
 # Unpacked into the pinned-runtime layout so \`t3 service install\` reuses it.
 T3_RELEASE_BASE_URL=@@T3_RELEASE_BASE_URL@@
-T3_RUNTIME_DIR="$HOME/.t3/runtime/versions/$T3_ARCHIVE_VERSION"
+T3_RUNTIME_HOME="$HOME/.dispatch/runtime"
+if [ ! -d "$T3_RUNTIME_HOME" ] && [ -d "$HOME/.t3/runtime" ]; then
+  T3_RUNTIME_HOME="$HOME/.t3/runtime"
+fi
+T3_VERSIONS_DIR="$T3_RUNTIME_HOME/versions"
+T3_RUNTIME_DIR="$T3_VERSIONS_DIR/$T3_ARCHIVE_VERSION"
 t3_runtime_ready() {
   [ -x "$T3_RUNTIME_DIR/t3" ] && [ "$(cat "$T3_RUNTIME_DIR/.install-complete" 2>/dev/null)" = "$T3_ARCHIVE_VERSION" ]
 }
 if ! t3_runtime_ready; then
-  mkdir -p "$HOME/.t3/runtime/versions"
+  mkdir -p "$T3_VERSIONS_DIR"
   # Concurrent launches (two clients, a retry racing a slow first run) must
   # not both install: mkdir is the atomic lock and the ready check repeats
   # under it.
-  T3_LOCK="$HOME/.t3/runtime/versions/.$T3_ARCHIVE_VERSION.install.lock"
+  T3_LOCK="$T3_VERSIONS_DIR/.$T3_ARCHIVE_VERSION.install.lock"
   # mkdir is the only portable atomic exclusive create (mv would silently
   # nest a candidate inside an existing lock). The owner publishes its pid
   # right after, so a lock with a live owner is never reclaimed however
@@ -504,7 +509,7 @@ if ! t3_runtime_ready; then
     *) printf 'Remote host %s has no t3 release archive.\\n' "$(uname -m)" >&2; exit 1 ;;
   esac
   T3_ARCHIVE="t3-$T3_ARCHIVE_VERSION-$T3_PLATFORM-$T3_ARCH.tar.gz"
-  T3_STAGING="$(mktemp -d "$HOME/.t3/runtime/versions/.staging-XXXXXX")"
+  T3_STAGING="$(mktemp -d "$T3_VERSIONS_DIR/.staging-XXXXXX")"
   trap 'rm -rf "$T3_STAGING" "$T3_LOCK"' EXIT
   t3_fetch() {
     if command -v curl >/dev/null 2>&1; then curl -fsSL --connect-timeout 30 --max-time "$3" "$1" -o "$2"
@@ -544,8 +549,15 @@ exec "$T3_RUNTIME_DIR/t3" "$@"
 const REMOTE_LAUNCH_SCRIPT = `set -eu
 @@T3_NODE_ENV_SCRIPT@@
 STATE_KEY="$1"
-STATE_DIR="$HOME/.t3/ssh-launch/$STATE_KEY"
-DEFAULT_SERVER_HOME="$HOME/.t3"
+DEFAULT_SERVER_HOME="$HOME/.dispatch"
+if [ ! -d "$DEFAULT_SERVER_HOME" ] && [ -d "$HOME/.t3" ]; then
+  DEFAULT_SERVER_HOME="$HOME/.t3"
+fi
+STATE_ROOT="$HOME/.dispatch/ssh-launch"
+if [ ! -d "$STATE_ROOT" ] && [ -d "$HOME/.t3/ssh-launch" ]; then
+  STATE_ROOT="$HOME/.t3/ssh-launch"
+fi
+STATE_DIR="$STATE_ROOT/$STATE_KEY"
 DEFAULT_RUNTIME_FILE="$DEFAULT_SERVER_HOME/userdata/server-runtime.json"
 PORT_FILE="$STATE_DIR/port"
 PID_FILE="$STATE_DIR/pid"
@@ -701,7 +713,7 @@ if [ -z "$REMOTE_PORT" ]; then
     fi
     exit 1
   fi
-  nohup env T3CODE_NO_BROWSER=1 "$RUNNER_FILE" serve --host 127.0.0.1 --port "$REMOTE_PORT" --base-dir "$DEFAULT_SERVER_HOME" >>"$LOG_FILE" 2>&1 < /dev/null &
+  nohup env DISPATCH_NO_BROWSER=1 T3CODE_NO_BROWSER=1 "$RUNNER_FILE" serve --host 127.0.0.1 --port "$REMOTE_PORT" --base-dir "$DEFAULT_SERVER_HOME" >>"$LOG_FILE" 2>&1 < /dev/null &
   REMOTE_PID="$!"
   printf '%s\\n' "$REMOTE_PID" >"$PID_FILE"
   printf '%s\\n' "$REMOTE_PORT" >"$PORT_FILE"
@@ -723,8 +735,15 @@ printf '{"remotePort":%s,"serverKind":"%s"}\\n' "$REMOTE_PORT" "\${REMOTE_MANAGE
 `;
 
 const REMOTE_PAIRING_SCRIPT = `set -eu
-STATE_DIR="$HOME/.t3/ssh-launch/@@T3_STATE_KEY@@"
-DEFAULT_SERVER_HOME="$HOME/.t3"
+DEFAULT_SERVER_HOME="$HOME/.dispatch"
+if [ ! -d "$DEFAULT_SERVER_HOME" ] && [ -d "$HOME/.t3" ]; then
+  DEFAULT_SERVER_HOME="$HOME/.t3"
+fi
+STATE_ROOT="$HOME/.dispatch/ssh-launch"
+if [ ! -d "$STATE_ROOT" ] && [ -d "$HOME/.t3/ssh-launch" ]; then
+  STATE_ROOT="$HOME/.t3/ssh-launch"
+fi
+STATE_DIR="$STATE_ROOT/@@T3_STATE_KEY@@"
 RUNNER_FILE="$STATE_DIR/run-t3.sh"
 mkdir -p "$STATE_DIR"
 cat >"$RUNNER_FILE" <<'SH'
@@ -736,7 +755,11 @@ PAIRING_BASE_DIR="$DEFAULT_SERVER_HOME"
 `;
 
 const REMOTE_STOP_SCRIPT = `set -eu
-STATE_DIR="$HOME/.t3/ssh-launch/@@T3_STATE_KEY@@"
+STATE_ROOT="$HOME/.dispatch/ssh-launch"
+if [ ! -d "$STATE_ROOT" ] && [ -d "$HOME/.t3/ssh-launch" ]; then
+  STATE_ROOT="$HOME/.t3/ssh-launch"
+fi
+STATE_DIR="$STATE_ROOT/@@T3_STATE_KEY@@"
 PID_FILE="$STATE_DIR/pid"
 PORT_FILE="$STATE_DIR/port"
 MANAGED_FILE="$STATE_DIR/managed"
@@ -759,7 +782,11 @@ printf '{"stopped":true}\\n'
 `;
 
 const REMOTE_LOG_TAIL_SCRIPT = `set -eu
-STATE_DIR="$HOME/.t3/ssh-launch/@@T3_STATE_KEY@@"
+STATE_ROOT="$HOME/.dispatch/ssh-launch"
+if [ ! -d "$STATE_ROOT" ] && [ -d "$HOME/.t3/ssh-launch" ]; then
+  STATE_ROOT="$HOME/.t3/ssh-launch"
+fi
+STATE_DIR="$STATE_ROOT/@@T3_STATE_KEY@@"
 LOG_FILE="$STATE_DIR/server.log"
 if [ -f "$LOG_FILE" ]; then
   tail -n 80 "$LOG_FILE" 2>/dev/null || true

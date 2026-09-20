@@ -32,15 +32,32 @@ const linuxPlan = {
   unitPath: "/home/theo/.config/systemd/user/t3code.service",
 };
 
+it("uses the Dispatch command in service recovery guidance", () => {
+  expect(BootService.formatBootServiceProblem("user-manager-unavailable")).toContain(
+    "do not run Dispatch with sudo",
+  );
+  expect(BootService.formatBootServiceProblem("service-disabled")).toContain(
+    "dispatch service install",
+  );
+  expect(BootService.formatBootServiceProblem("service-stopped")).toContain(
+    "dispatch service install",
+  );
+  expect(BootService.formatBootServiceProblem("restart-pending")).toContain(
+    "dispatch service restart",
+  );
+});
+
 it("runs the pinned runtime's own executable as the systemd launcher", () => {
   const unit = BootService.renderBootServiceUnit(linuxPlan);
 
   expect(unit).toContain(`ExecStart=${linuxRuntime} __service-launcher`);
+  expect(unit).toContain("Environment=DISPATCH_HOME=/home/theo/.t3");
+  expect(unit).toContain("Environment=T3CODE_HOME=/home/theo/.t3");
   expect(unit).toContain("KillMode=mixed");
   expect(unit).not.toContain("node");
 });
 
-it("reads the served T3 home back out of a rendered unit or plist", () => {
+it("reads the served Dispatch home back out of a rendered unit or plist", () => {
   const plan = (baseDir: string) => ({
     program: [`${baseDir}/runtime/versions/1.2.3/t3`, "__service-launcher"],
     baseDir,
@@ -66,6 +83,28 @@ it("reads the served T3 home back out of a rendered unit or plist", () => {
     ),
   ).toBe("/Users/theo/a&b");
   expect(BootService.bootServiceBaseDirOf("[Service]\nExecStart=/x\n")).toBeUndefined();
+});
+
+it("prefers DISPATCH_HOME over T3CODE_HOME in an existing managed service", () => {
+  expect(
+    BootService.bootServiceBaseDirOf(
+      [
+        "[Service]",
+        "Environment=T3CODE_HOME=/home/theo/.t3-legacy",
+        "Environment=DISPATCH_HOME=/home/theo/.dispatch",
+      ].join("\n"),
+    ),
+  ).toBe("/home/theo/.dispatch");
+});
+
+it("reads legacy-only T3CODE_HOME from an existing systemd unit", () => {
+  expect(
+    BootService.bootServiceBaseDirOf(
+      ["[Service]", 'Environment=T3CODE_HOME="/home/theo/T3 Data/100%%"', "ExecStart=/x"].join(
+        "\n",
+      ),
+    ),
+  ).toBe("/home/theo/T3 Data/100%");
 });
 
 it("survives the kernel OOM-killing a greedy agent child", () => {
@@ -509,7 +548,7 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
         ),
       ).toEqual([]);
       // The files say 1.2.4 but the process is still 1.2.3: not current, and
-      // the reason is named so `t3 service status` can point at restart.
+      // the reason is named so `dispatch service status` can point at restart.
       const status = yield* newer.status;
       expect(status.current).toBe(false);
       expect(status.problems).toContain("restart-pending");

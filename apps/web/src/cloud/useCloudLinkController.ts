@@ -112,7 +112,7 @@ export function useCloudLinkController() {
       }
       const clerkToken = tokenResult.value;
       if (!clerkToken) {
-        reportUpdateFailure(new Error("Sign in to T3 Connect before enabling this."));
+        reportUpdateFailure(new Error("T3 Connect authentication is unavailable."));
         return false;
       }
       if (!linked || managedTunnelActive !== desired.managedTunnel) {

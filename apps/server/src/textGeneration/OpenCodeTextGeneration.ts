@@ -218,7 +218,7 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
           try: (signal) =>
             client.session.create(
               {
-                title: `T3 Code ${input.operation}`,
+                title: `Dispatch ${input.operation}`,
                 location: { directory: input.cwd },
                 model: {
                   providerID: parsedModel.providerID,

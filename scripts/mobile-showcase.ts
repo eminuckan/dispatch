@@ -31,14 +31,14 @@ import {
 
 const REPO_ROOT = NodePath.resolve(NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)), "..");
 const MOBILE_ROOT = NodePath.join(REPO_ROOT, "apps/mobile");
-const ANDROID_PACKAGE = "com.t3tools.t3code";
-const APP_SCHEME = "t3code";
+const ANDROID_PACKAGE = "com.eminuckan.dispatch";
+const APP_SCHEME = "dispatch";
 const IOS_READY_FILENAME = "T3ShowcaseReadyScene";
 const SERVER_HOST = "0.0.0.0";
 const IOS_SIMULATOR_ARCH = NodeProcess.arch === "arm64" ? "arm64" : "x86_64";
 const IOS_APP_PATH = NodePath.join(
   MOBILE_ROOT,
-  ".showcase/ios-derived-data/Build/Products/Debug-iphonesimulator/T3Code.app",
+  ".showcase/ios-derived-data/Build/Products/Debug-iphonesimulator/Dispatch.app",
 );
 const ANDROID_APK_PATH = NodePath.join(
   MOBILE_ROOT,
@@ -63,7 +63,7 @@ const MOBILE_BUILD_ENV = {
   EXPO_NO_GIT_STATUS: "1",
   // Lets the capture build require full screen on iPad so the app can rotate
   // itself to landscape (see app.config.ts).
-  T3_SHOWCASE_CAPTURE_BUILD: "1",
+  DISPATCH_SHOWCASE_CAPTURE_BUILD: "1",
   JAVA_HOME:
     NodeProcess.env.JAVA_HOME ??
     (NodeProcess.platform === "darwin"
@@ -117,6 +117,10 @@ export function selectLanIpv4Address(addresses: ReadonlyArray<NetworkAddress>): 
         family === "IPv4" && !internal && !address.startsWith("169.254."),
     )?.address ?? null
   );
+}
+
+export function showcaseDevClientUrl(metroUrl: string): string {
+  return `${APP_SCHEME}://expo-development-client/?url=${encodeURIComponent(metroUrl)}`;
 }
 
 function lanIpv4Address(): string {
@@ -703,9 +707,9 @@ async function buildIos(): Promise<string> {
     "xcodebuild",
     [
       "-workspace",
-      NodePath.join(MOBILE_ROOT, "ios/T3Code.xcworkspace"),
+      NodePath.join(MOBILE_ROOT, "ios/Dispatch.xcworkspace"),
       "-scheme",
-      "T3Code",
+      "Dispatch",
       "-configuration",
       "Debug",
       "-sdk",
@@ -1250,7 +1254,7 @@ async function captureAndroid(
   await runAdb(serial, ["shell", "pm", "clear", ANDROID_PACKAGE]);
   await prepareAndroidShowcaseApp(serial);
   await runAdb(serial, ["reverse", `tcp:${config.metroPort}`, `tcp:${config.metroPort}`]);
-  const metroUrl = encodeURIComponent(`http://127.0.0.1:${config.metroPort}?disableOnboarding=1`);
+  const metroUrl = `http://127.0.0.1:${config.metroPort}?disableOnboarding=1`;
   const firstScene = capture.scenes[0] ?? "threads";
   await runAdb(serial, [
     "shell",
@@ -1260,7 +1264,7 @@ async function captureAndroid(
     "-a",
     "android.intent.action.VIEW",
     "-d",
-    `${APP_SCHEME}://expo-development-client/?url=${metroUrl}`,
+    showcaseDevClientUrl(metroUrl),
     "--es",
     "showcasePairingUrl",
     encodeAndroidPairingUrls(pairingUrls),

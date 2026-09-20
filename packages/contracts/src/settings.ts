@@ -1068,7 +1068,7 @@ export const ServerSettings = Schema.Struct({
   ),
   /**
    * Whether agents may drive the in-app preview browser. Turning this off
-   * withholds the MCP credential, so the `t3-code` server (and with it every
+   * withholds the MCP credential, so the `dispatch` server (and with it every
    * `preview_*` tool) is never attached to a provider session, and the prompt
    * text describing those tools is dropped along with them. The user's own
    * browser panel is unaffected — this gates agent access only.

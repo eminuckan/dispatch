@@ -72,10 +72,16 @@ The bundled protocol XML ships with the helper because its BSD license requires 
 
 ## Niri
 
-Niri does not implement the global-shortcut portal. While capture is enabled the app owns
-`<app-id>.SnapShot` on the session bus and exports `com.t3tools.SnapShot.Capture`; the config
-binding spawns `gdbus` to call it. Development and packaged app IDs use separate names so a dev
-build does not steal the user's binding.
+Niri does not implement the global-shortcut portal. New bindings call the canonical Dispatch
+endpoint `com.eminuckan.dispatch.SnapShot.Capture` at
+`/com/eminuckan/dispatch/SnapShot`; production and development use distinct well-known names
+(`com.eminuckan.dispatch.SnapShot` and `com.eminuckan.dispatch.dev.SnapShot`). The app still
+accepts the legacy `/com/t3tools/SnapShot` + `com.t3tools.SnapShot.Capture` method and
+queues for the old production/development destination aliases without replacing a current owner. A
+running legacy app may keep those aliases without preventing the canonical Dispatch endpoint from
+starting; D-Bus grants the queued alias to Dispatch after the old owner exits. Config editing recognizes bindings written by the old T3 and transitional Dispatch
+identities; installing again rewrites them to the canonical endpoint while preserving the user's
+shortcut, and removal can remove either form.
 
 Niri supplies no global screenshot origin, so AT-SPI matching uses logical size and title only.
 
@@ -91,16 +97,22 @@ Modifier serialization writes Linux `Ctrl` explicitly, never the cross-platform 
 
 ## GNOME extension
 
-Source in `apps/desktop/gnome-extension`, UUID `snap-shot@t3.codes`. GNOME only discovers a newly
+Source in `apps/desktop/gnome-extension`, canonical UUID `snap-shot@dispatch`. The legacy
+`snap-shot@t3.codes` UUID is recognized during migration. GNOME only discovers a newly
 installed extension at login, so setup distinguishes "installed, needs logout" from "discovered but
 disabled" and compares loaded and installed versions.
 
-The extension trusts callers that own `com.t3tools.T3Code.SnapShot` (or the `.Development`
-variant) on the same connection. This is GNOME's trusted-session-client pattern, not authentication
-against a hostile process on the user's bus.
+The current extension owns `org.gnome.Shell.Extensions.DispatchSnapShot` and trusts callers that own
+the canonical Dispatch desktop snapshot bus names. Its allowlist also recognizes the transitional
+Linux and legacy T3 desktop names during migration. The client probes the Dispatch extension first;
+an old T3 extension is used only while the Dispatch extension is absent, and the client claims the
+legacy caller name for that request so the old extension can authorize it. Once GNOME knows about
+the Dispatch extension, disabling it does not silently fall back to the legacy extension. This is
+GNOME's trusted-session-client pattern, not authentication against a hostile process on the user's
+bus.
 
 Electron does not position overlay windows on Wayland, so the flash and flight run as Shell actors
-inside the extension with coordinates relative to T3's content area. Electron 44's restored-session
+inside the extension with coordinates relative to Dispatch's content area. Electron 44's restored-session
 path can skip rebinding and leave callbacks behind on unregister, which is why
 `PortalCaptureShortcut` owns its own portal session instead of using Electron's global-shortcut API.
 

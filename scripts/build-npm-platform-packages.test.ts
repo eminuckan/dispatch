@@ -129,6 +129,12 @@ it.layer(NodeServices.layer)("build-npm-platform-packages", (it) => {
       );
       assert.equal(linuxManifest.name, "@t3code/t3-linux-x64");
       assert.equal(linuxManifest.version, VERSION);
+      assert.equal(linuxManifest.description, "Dispatch CLI executable for linux-x64");
+      assert.deepStrictEqual(linuxManifest.repository, {
+        type: "git",
+        url: "https://github.com/eminuckan/dispatch",
+        directory: "apps/server",
+      });
       assert.deepStrictEqual(linuxManifest.os, ["linux"]);
       assert.deepStrictEqual(linuxManifest.cpu, ["x64"]);
       assert.deepStrictEqual(linuxManifest.files, [
@@ -154,6 +160,10 @@ it.layer(NodeServices.layer)("build-npm-platform-packages", (it) => {
         yield* fs.readFileString(path.join(linuxDir, "README.md")),
         "# @t3code/t3-linux-x64",
       );
+      assert.include(
+        yield* fs.readFileString(path.join(linuxDir, "README.md")),
+        "Source and documentation: https://github.com/eminuckan/dispatch",
+      );
       assert.isTrue(yield* fs.exists(path.join(linuxDir, "node_modules/node-pty")));
       assert.equal(Number((yield* fs.stat(path.join(linuxDir, "t3"))).mode) & 0o111, 0o111);
 
@@ -171,7 +181,14 @@ it.layer(NodeServices.layer)("build-npm-platform-packages", (it) => {
       );
       assert.equal(launcherManifest.name, "t3");
       assert.equal(launcherManifest.version, VERSION);
-      assert.deepStrictEqual(launcherManifest.bin, { t3: "./bin/t3.js" });
+      assert.equal(
+        launcherManifest.description,
+        "Dispatch CLI. Installs the self-contained executable for this platform.",
+      );
+      assert.deepStrictEqual(launcherManifest.bin, {
+        dispatch: "./bin/t3.js",
+        t3: "./bin/t3.js",
+      });
       assert.deepStrictEqual(launcherManifest.files, ["bin", "dist"]);
       assert.deepStrictEqual(launcherManifest.optionalDependencies, {
         "@t3code/t3-darwin-arm64": VERSION,
@@ -255,7 +272,7 @@ it.layer(NodeServices.layer)("build-npm-platform-packages", (it) => {
       assert.equal(unsupported.exitCode, 1);
       assert.include(unsupported.stderr, "linux-x64");
       assert.include(unsupported.stderr, "win32-arm64");
-      assert.include(unsupported.stderr, "https://github.com/pingdotgg/t3code/releases");
+      assert.include(unsupported.stderr, "https://github.com/eminuckan/dispatch/releases");
     }),
   );
 });

@@ -13,7 +13,8 @@ import { makeXAiPromptCompletionRuntime } from "./XAiAcpExtension.ts";
 
 const GROK_API_KEY_ENV = "XAI_API_KEY";
 const GROK_OAUTH2_REFERRER_ENV = "GROK_OAUTH2_REFERRER";
-const T3_CODE_OAUTH_REFERRER = "t3code";
+const DISPATCH_GROK_OAUTH2_REFERRER_ENV = "DISPATCH_GROK_OAUTH2_REFERRER";
+const LEGACY_T3_CODE_OAUTH_REFERRER = "t3code";
 const GROK_AUTH_METHOD_API_KEY = "xai.api_key";
 const GROK_AUTH_METHOD_CACHED_TOKEN = "cached_token";
 const GROK_DRIVER_KIND = ProviderDriverKind.make("grok");
@@ -51,13 +52,17 @@ export function buildGrokAcpSpawnInput(
   environment?: NodeJS.ProcessEnv,
   runtimeMode?: RuntimeMode,
 ): AcpSessionRuntime.AcpSpawnInput {
+  const oauthReferrer =
+    environment?.[DISPATCH_GROK_OAUTH2_REFERRER_ENV]?.trim() ||
+    environment?.[GROK_OAUTH2_REFERRER_ENV]?.trim() ||
+    LEGACY_T3_CODE_OAUTH_REFERRER;
   return {
     command: grokSettings?.binaryPath || "grok",
     args: [...grokAcpSpawnArgs(runtimeMode)],
     cwd,
     env: {
       ...environment,
-      [GROK_OAUTH2_REFERRER_ENV]: T3_CODE_OAUTH_REFERRER,
+      [GROK_OAUTH2_REFERRER_ENV]: oauthReferrer,
     },
   };
 }

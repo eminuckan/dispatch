@@ -1,28 +1,56 @@
-# Installs the T3 Code CLI from a GitHub Release archive on Windows. Needs
+# Installs the Dispatch CLI from a GitHub Release archive on Windows. Needs
 # only PowerShell 5.1+; no Node, npm, or compiler.
 #
-#   irm https://t3.codes/install.ps1 | iex
+#   irm https://raw.githubusercontent.com/eminuckan/dispatch/main/scripts/install.ps1 | iex
 #
 # Environment:
-#   T3CODE_CHANNEL           release train to follow: stable, nightly, or preview
+#   DISPATCH_CHANNEL         release train to follow: stable, nightly, or preview
 #                            (default: stable; preview is a maintainers' test train)
-#   T3CODE_VERSION           exact version to install (overrides T3CODE_CHANNEL)
-#   T3CODE_HOME              T3 home directory (default: ~\.t3)
-#   T3CODE_INSTALL_BIN_DIR   where t3.exe is linked (default: ~\.local\bin)
-#   T3CODE_RELEASE_BASE_URL  mirror for releases/download (default: GitHub)
+#   DISPATCH_VERSION         exact version to install (overrides DISPATCH_CHANNEL)
+#   DISPATCH_HOME            Dispatch home directory (fresh default: ~\.dispatch;
+#                            reuses an existing ~\.t3 when no home is configured)
+#   DISPATCH_INSTALL_BIN_DIR where dispatch.cmd and legacy t3.cmd go (default: ~\.local\bin)
+#   DISPATCH_RELEASE_BASE_URL mirror for releases/download (default: GitHub)
 #
-# The archive is unpacked into $T3CODE_HOME\runtime\versions\<version>, the
-# same layout `t3 service install` uses, so the service reuses this download.
+# Legacy T3CODE_CHANNEL, T3CODE_VERSION, T3CODE_HOME, T3CODE_INSTALL_BIN_DIR,
+# and T3CODE_RELEASE_BASE_URL are still accepted as fallbacks.
+#
+# The archive is unpacked into $DISPATCH_HOME\runtime\versions\<version>, the
+# same layout `dispatch service install` uses, so the service reuses this download.
 $ErrorActionPreference = "Stop"
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-$repo = "pingdotgg/t3code"
-$baseUrl = if ($env:T3CODE_RELEASE_BASE_URL) { $env:T3CODE_RELEASE_BASE_URL.TrimEnd("/") } else { "https://github.com/$repo/releases/download" }
-$t3Home = if ($env:T3CODE_HOME) { $env:T3CODE_HOME } else { Join-Path $HOME ".t3" }
-$binDir = if ($env:T3CODE_INSTALL_BIN_DIR) { $env:T3CODE_INSTALL_BIN_DIR } else { Join-Path $HOME ".local\bin" }
+$repo = "eminuckan/dispatch"
+$baseUrl = if ($env:DISPATCH_RELEASE_BASE_URL) {
+  $env:DISPATCH_RELEASE_BASE_URL.TrimEnd("/")
+} elseif ($env:T3CODE_RELEASE_BASE_URL) {
+  $env:T3CODE_RELEASE_BASE_URL.TrimEnd("/")
+} else {
+  "https://github.com/$repo/releases/download"
+}
+$dispatchHomeOverride = if ($env:DISPATCH_HOME) { $env:DISPATCH_HOME.Trim() } else { "" }
+$legacyHomeOverride = if ($env:T3CODE_HOME) { $env:T3CODE_HOME.Trim() } else { "" }
+$dispatchHome = if ($dispatchHomeOverride) {
+  $dispatchHomeOverride
+} elseif ($legacyHomeOverride) {
+  $legacyHomeOverride
+} elseif (Test-Path (Join-Path $HOME ".dispatch")) {
+  Join-Path $HOME ".dispatch"
+} elseif (Test-Path (Join-Path $HOME ".t3")) {
+  Join-Path $HOME ".t3"
+} else {
+  Join-Path $HOME ".dispatch"
+}
+$binDir = if ($env:DISPATCH_INSTALL_BIN_DIR) {
+  $env:DISPATCH_INSTALL_BIN_DIR
+} elseif ($env:T3CODE_INSTALL_BIN_DIR) {
+  $env:T3CODE_INSTALL_BIN_DIR
+} else {
+  Join-Path $HOME ".local\bin"
+}
 
 function Fail([string] $message) {
-  Write-Error "t3 install: $message"
+  Write-Error "dispatch install: $message"
   exit 1
 }
 
@@ -110,7 +138,7 @@ if ($interactive) {
   [Console]::Error.WriteLine()
   for ($i = 0; $i -lt $mark.Length; $i++) {
     $row = $mark[$i].Replace('#', [char]0x2588).Replace('^', [char]0x2580).Replace('_', [char]0x2584)
-    $label = if ($i -eq 1) { "     ${bold}T3 Code$reset" } elseif ($i -eq 2) { "     ${muted}CLI installer$reset" } else { "" }
+    $label = if ($i -eq 1) { "     ${bold}Dispatch$reset" } elseif ($i -eq 2) { "     ${muted}CLI installer$reset" } else { "" }
     [Console]::Error.WriteLine("  $bold$row$reset$label")
   }
   [Console]::Error.WriteLine()
@@ -127,8 +155,14 @@ $arch = switch ($rawArch) {
   default { Fail "unsupported architecture $rawArch" }
 }
 
-$channel = if ($env:T3CODE_CHANNEL) { $env:T3CODE_CHANNEL } else { "stable" }
-$version = $env:T3CODE_VERSION
+$channel = if ($env:DISPATCH_CHANNEL) {
+  $env:DISPATCH_CHANNEL
+} elseif ($env:T3CODE_CHANNEL) {
+  $env:T3CODE_CHANNEL
+} else {
+  "stable"
+}
+$version = if ($env:DISPATCH_VERSION) { $env:DISPATCH_VERSION } else { $env:T3CODE_VERSION }
 if (-not $version) {
   # Tags are v<semver>; the channel is the prerelease identifier, or none for
   # stable. Only tags of the requested train are considered, so a stable
@@ -137,23 +171,23 @@ if (-not $version) {
     "stable" { '^v\d+\.\d+\.\d+$' }
     "nightly" { '^v\d+\.\d+\.\d+-nightly\.\d+\.\d+$' }
     "preview" { '^v\d+\.\d+\.\d+-preview\.\d+\.\d+$' }
-    default { Fail "T3CODE_CHANNEL must be stable, nightly, or preview" }
+    default { Fail "DISPATCH_CHANNEL must be stable, nightly, or preview" }
   }
-  $releases = Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/releases?per_page=100" -Headers @{ "User-Agent" = "t3-install" }
+  $releases = Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/releases?per_page=100" -Headers @{ "User-Agent" = "dispatch-install" }
   $tag = ($releases | Where-Object { -not $_.draft -and $_.tag_name -match $tagPattern } | Select-Object -First 1).tag_name
-  if (-not $tag) { Fail "could not find a $channel release; set T3CODE_VERSION" }
+  if (-not $tag) { Fail "could not find a $channel release; set DISPATCH_VERSION" }
   $version = $tag.Substring(1)
 }
 if ($version -match '-preview\.') {
-  Write-Warning "t3 $version is a preview build. Preview builds are cut by maintainers from unreleased branches to exercise the release pipeline. They can be broken, receive no fixes, and are never offered as updates. Set T3CODE_CHANNEL=stable (the default) for a supported build."
-  if ($channel -ne "preview" -and -not $env:T3CODE_VERSION) {
+  Write-Warning "Dispatch $version is a preview build. Preview builds are cut by maintainers from unreleased branches to exercise the release pipeline. They can be broken, receive no fixes, and are never offered as updates. Set DISPATCH_CHANNEL=stable (the default) for a supported build."
+  if ($channel -ne "preview" -and -not $env:DISPATCH_VERSION -and -not $env:T3CODE_VERSION) {
     Fail "refusing a preview build that was not explicitly requested"
   }
 }
 
 $stem = "t3-$version-win32-$arch"
 $archive = "$stem.zip"
-$versionsDir = Join-Path $t3Home "runtime\versions"
+$versionsDir = Join-Path $dispatchHome "runtime\versions"
 $targetDir = Join-Path $versionsDir $version
 $marker = Join-Path $targetDir ".install-complete"
 
@@ -165,7 +199,7 @@ if ((Test-Path $marker) -and ((Get-Content $marker -Raw).Trim() -eq $version)) {
   New-Item -ItemType Directory -Path $staging | Out-Null
   try {
     if ($interactive) { [Console]::Error.Write("`r$esc[2K") }
-    [Console]::Error.WriteLine("  ${muted}Installing$reset T3 Code $bold$version$reset`n")
+    [Console]::Error.WriteLine("  ${muted}Installing$reset Dispatch $bold$version$reset`n")
     Step "Downloading..."
     try {
       Fetch "$baseUrl/v$version/SHA256SUMS" (Join-Path $staging "SHA256SUMS")
@@ -186,7 +220,7 @@ if ((Test-Path $marker) -and ((Get-Content $marker -Raw).Trim() -eq $version)) {
     $actual = (Get-FileHash -Algorithm SHA256 (Join-Path $staging $archive)).Hash.ToLowerInvariant()
     if ($actual -ne $expected) { Fail "checksum mismatch for $archive" }
 
-    Step "Extracting T3 Code..."
+    Step "Extracting Dispatch..."
     # The archive module reads the global preference, not the caller's local scope.
     $savedProgress = $global:ProgressPreference
     try {
@@ -209,16 +243,20 @@ if ((Test-Path $marker) -and ((Get-Content $marker -Raw).Trim() -eq $version)) {
   }
 }
 
-Step "Setting up the t3 command..."
+Step "Setting up the dispatch command..."
 New-Item -ItemType Directory -Force -Path $binDir | Out-Null
-$shim = Join-Path $binDir "t3.cmd"
+$dispatchShim = Join-Path $binDir "dispatch.cmd"
+$legacyShim = Join-Path $binDir "t3.cmd"
 # UTF-8 without a BOM: cmd.exe reads the shim as-is, and ASCII would corrupt
 # non-ASCII characters in the user's home path.
-[System.IO.File]::WriteAllText($shim, "@echo off`r`n`"$(Join-Path $targetDir 't3.exe')`" %*", (New-Object System.Text.UTF8Encoding $false))
+$shimContents = "@echo off`r`n`"$(Join-Path $targetDir 't3.exe')`" %*"
+$utf8NoBom = New-Object System.Text.UTF8Encoding $false
+[System.IO.File]::WriteAllText($dispatchShim, $shimContents, $utf8NoBom)
+[System.IO.File]::WriteAllText($legacyShim, $shimContents, $utf8NoBom)
 if ($interactive) { [Console]::Error.Write("`r$esc[2K") }
-[Console]::Error.WriteLine("  ${green}Installed T3 Code $version$reset`n")
+[Console]::Error.WriteLine("  ${green}Installed Dispatch $version$reset`n")
 if (($env:PATH -split ";") -notcontains $binDir) {
-  Write-Host "  Add $binDir to your PATH, then run ${bold}t3$reset.`n"
+  Write-Host "  Add $binDir to your PATH, then run ${bold}dispatch$reset.`n"
 } else {
-  Write-Host "  Run ${bold}t3$reset to get started.`n"
+  Write-Host "  Run ${bold}dispatch$reset to get started.`n"
 }

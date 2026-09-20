@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  CLI_RELEASE_BASE_URL_ENV,
+  CLI_RELEASE_BASE_URL_LEGACY_ENV,
   cliArchiveFileName,
   cliArchivePlatformKey,
   cliArchiveTarCommand,
@@ -9,6 +11,7 @@ import {
   cliReleaseIndexPageUrl,
   newestCliReleaseVersion,
   parseChecksums,
+  resolveCliReleaseBaseUrlEnv,
 } from "./cliRelease.ts";
 
 describe("cliRelease", () => {
@@ -33,11 +36,33 @@ describe("cliRelease", () => {
 
   it("resolves download URLs under the tagged release, honoring a mirror", () => {
     expect(cliReleaseDownloadBaseUrl("1.2.3")).toBe(
-      "https://github.com/pingdotgg/t3code/releases/download/v1.2.3",
+      "https://github.com/eminuckan/dispatch/releases/download/v1.2.3",
     );
     expect(cliReleaseDownloadBaseUrl("1.2.3", "https://mirror.example/t3/")).toBe(
       "https://mirror.example/t3/v1.2.3",
     );
+  });
+
+  it("prefers the Dispatch release mirror and retains the legacy T3 Code fallback", () => {
+    expect(CLI_RELEASE_BASE_URL_ENV).toBe("DISPATCH_RELEASE_BASE_URL");
+    expect(CLI_RELEASE_BASE_URL_LEGACY_ENV).toBe("T3CODE_RELEASE_BASE_URL");
+    expect(
+      resolveCliReleaseBaseUrlEnv({
+        DISPATCH_RELEASE_BASE_URL: "  https://dispatch.example/releases  ",
+        T3CODE_RELEASE_BASE_URL: "https://legacy.example/releases",
+      }),
+    ).toBe("https://dispatch.example/releases");
+    expect(
+      resolveCliReleaseBaseUrlEnv({
+        T3CODE_RELEASE_BASE_URL: "  https://legacy.example/releases  ",
+      }),
+    ).toBe("https://legacy.example/releases");
+    expect(
+      resolveCliReleaseBaseUrlEnv({
+        DISPATCH_RELEASE_BASE_URL: "   ",
+        T3CODE_RELEASE_BASE_URL: " https://legacy.example/releases ",
+      }),
+    ).toBe("https://legacy.example/releases");
   });
 
   it("parses sha256sum output including binary-mode markers", () => {
@@ -87,7 +112,7 @@ describe("cliRelease", () => {
 
   it("pages through the release index at the largest page GitHub allows", () => {
     expect(cliReleaseIndexPageUrl(1)).toBe(
-      "https://api.github.com/repos/pingdotgg/t3code/releases?per_page=100&page=1",
+      "https://api.github.com/repos/eminuckan/dispatch/releases?per_page=100&page=1",
     );
     expect(cliReleaseIndexPageUrl(3)).toContain("page=3");
   });

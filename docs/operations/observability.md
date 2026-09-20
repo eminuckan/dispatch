@@ -1,8 +1,8 @@
 # Observability
 
-> For maintainers. Using T3 Code? See [docs/user](../user/).
+> For maintainers. Using Dispatch? See [docs/user](../user/).
 
-T3 Code has one server-side observability model:
+Dispatch has one server-side observability model:
 
 - pretty logs go to stdout for humans
 - completed spans go to a local NDJSON trace file
@@ -10,7 +10,8 @@ T3 Code has one server-side observability model:
 
 The local trace file is the persisted source of truth for normal local launches. Those launches do not
 write a separate server log file, but SSH-managed launches also persist the remote process's
-stdout/stderr at `~/.t3/ssh-launch/<state>/server.log`.
+stdout/stderr at `~/.dispatch/ssh-launch/<state>/server.log` on a fresh install. An existing legacy
+`~/.t3/ssh-launch` tree is adopted in place rather than copied.
 
 ## Where To Find Things
 
@@ -21,7 +22,8 @@ Logs are human-facing:
 - destination: stdout
 - format: `Logger.consolePretty()`
 - normal local persistence: none
-- SSH-managed launch persistence: `~/.t3/ssh-launch/<state>/server.log`
+- SSH-managed launch persistence: `~/.dispatch/ssh-launch/<state>/server.log` for fresh installs;
+  existing `~/.t3/ssh-launch` state may remain in place after upgrade
 - remote export: OTLP only, when configured
 
 If you want a log message to show up in the trace file, emit it inside an active span with `Effect.log...`. `Logger.tracerLogger` will attach it as a span event.
@@ -36,7 +38,8 @@ SSH-managed launch persistence stay unchanged either way.
 
 Completed spans are written as NDJSON records to `serverTracePath`. The default depends on how the
 server starts: production and explicitly configured homes use
-`<home>/userdata/logs/server.trace.ndjson` (so `~/.t3/userdata/...` by default, or
+`<home>/userdata/logs/server.trace.ndjson` (so a fresh install uses `~/.dispatch/userdata/...`, while
+an upgraded install may continue using an adopted `~/.t3`/`~/.t3-jev` home, or
 `/custom/path/userdata/...` with `--home-dir /custom/path`), a linked worktree dev run uses
 `<worktree>/.t3/userdata/logs/server.trace.ndjson`, and an implicit dev run outside a linked
 worktree uses `~/.t3/dev/logs/server.trace.ndjson`.
@@ -92,7 +95,7 @@ You do not need any extra env vars. Just run the app normally and inspect `serve
 Examples:
 
 ```bash
-npx t3
+dispatch
 ```
 
 ```bash
@@ -144,7 +147,7 @@ export T3CODE_TRACE_TIMING_ENABLED=true
 CLI:
 
 ```bash
-npx t3
+dispatch
 ```
 
 Monorepo web/server dev:
@@ -170,7 +173,7 @@ T3CODE_OTLP_TRACES_URL=http://localhost:4318/v1/traces \
 T3CODE_OTLP_METRICS_URL=http://localhost:4318/v1/metrics \
 T3CODE_OTLP_LOGS_URL=http://localhost:4318/v1/logs \
 T3CODE_OTLP_SERVICE_NAME=t3-desktop \
-"/Applications/T3 Code.app/Contents/MacOS/T3 Code"
+"/Applications/Dispatch.app/Contents/MacOS/Dispatch"
 ```
 
 Direct binary example:

@@ -11,7 +11,30 @@ import {
   HostProcessWorkingDirectory,
 } from "@t3tools/shared/hostProcess";
 
-import { repointLauncher, resolveLauncherPath } from "./update.ts";
+import { repointLauncher, resolveLauncherPath, resolveUpdateReleaseBaseUrl } from "./update.ts";
+
+it("prefers the Dispatch release mirror with a blank-aware legacy fallback", () => {
+  assert.equal(
+    resolveUpdateReleaseBaseUrl({
+      DISPATCH_RELEASE_BASE_URL: "  https://dispatch.example/releases  ",
+      T3CODE_RELEASE_BASE_URL: "https://legacy.example/releases",
+    }),
+    "https://dispatch.example/releases",
+  );
+  assert.equal(
+    resolveUpdateReleaseBaseUrl({
+      T3CODE_RELEASE_BASE_URL: "  https://legacy.example/releases  ",
+    }),
+    "https://legacy.example/releases",
+  );
+  assert.equal(
+    resolveUpdateReleaseBaseUrl({
+      DISPATCH_RELEASE_BASE_URL: "   ",
+      T3CODE_RELEASE_BASE_URL: " https://legacy.example/releases ",
+    }),
+    "https://legacy.example/releases",
+  );
+});
 
 it.layer(NodeServices.layer)("t3 update launcher", (it) => {
   it.effect("repoints a symlink that lives in a runtime versions tree", () =>

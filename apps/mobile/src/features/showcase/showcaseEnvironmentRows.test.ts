@@ -5,6 +5,8 @@ import type { ConnectedEnvironmentSummary } from "../../state/remote-runtime-typ
 import {
   applyShowcaseLocalEnvironmentDisplayUrls,
   resolveShowcaseEnvironmentUpdateDisplayUrl,
+  SHOWCASE_AVAILABLE_CLOUD_ENVIRONMENTS,
+  SHOWCASE_CONNECTED_CLOUD_ENVIRONMENTS,
 } from "./showcaseEnvironmentRows";
 
 function environment(
@@ -34,9 +36,26 @@ it("presents showcase transports as remote endpoints", () => {
   assert.deepStrictEqual(
     environments.map(({ displayUrl }) => displayUrl),
     [
-      "https://moonbase.tail9f3a.ts.net/",
-      "https://suspense-vps.hel1.t3.sh/",
+      "https://moonbase.dispatch.test/",
+      "https://suspense-station.dispatch.test/",
       "http://100.82.16.5:3773/",
+    ],
+  );
+});
+
+it("uses reserved Dispatch test domains for synthetic cloud endpoints", () => {
+  assert.deepStrictEqual(
+    SHOWCASE_CONNECTED_CLOUD_ENVIRONMENTS.map(({ displayUrl }) => displayUrl),
+    ["https://aurora-gpu.dispatch.test"],
+  );
+  assert.deepStrictEqual(
+    SHOWCASE_AVAILABLE_CLOUD_ENVIRONMENTS.map(({ environment }) => environment.endpoint),
+    [
+      {
+        httpBaseUrl: "https://pocket-pi.dispatch.test",
+        wsBaseUrl: "wss://pocket-pi.dispatch.test",
+        providerKind: "t3_relay",
+      },
     ],
   );
 });
@@ -55,15 +74,15 @@ it("does not persist a cosmetic showcase URL when only the label is saved", () =
   assert.equal(
     resolveShowcaseEnvironmentUpdateDisplayUrl({
       actualDisplayUrl: "http://127.0.0.1:3773/",
-      presentedDisplayUrl: "https://moonbase.tail9f3a.ts.net/",
-      submittedDisplayUrl: "https://moonbase.tail9f3a.ts.net/",
+      presentedDisplayUrl: "https://moonbase.dispatch.test/",
+      submittedDisplayUrl: "https://moonbase.dispatch.test/",
     }),
     "http://127.0.0.1:3773/",
   );
   assert.equal(
     resolveShowcaseEnvironmentUpdateDisplayUrl({
       actualDisplayUrl: "http://127.0.0.1:3773/",
-      presentedDisplayUrl: "https://moonbase.tail9f3a.ts.net/",
+      presentedDisplayUrl: "https://moonbase.dispatch.test/",
       submittedDisplayUrl: "https://new-host.example.com/",
     }),
     "https://new-host.example.com/",

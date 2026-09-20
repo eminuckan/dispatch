@@ -696,17 +696,16 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
     }
   }
 
-  // Build an explicit copy of process.env minus T3CODE_HOME (dev-runner
-  // exports the Windows-side base dir for the primary; if it leaks into
-  // the WSL backend the Linux side ends up sharing C:\Users\...\.t3 via
-  // /mnt/c, which means both backends read/write the same database and
-  // their env-ids collide).
-  const parentEnvWithoutT3Home: Record<string, string | undefined> = {};
+  // Build an explicit copy of process.env minus both home env names. The
+  // dev-runner exports the Windows-side base dir for the primary; if either
+  // current or legacy name leaks into the WSL backend the Linux side can end
+  // up sharing the Windows database through /mnt/c and collide on env ids.
+  const parentEnvWithoutDesktopHome: Record<string, string | undefined> = {};
   for (const [key, value] of Object.entries(process.env)) {
-    if (key === "T3CODE_HOME") continue;
-    parentEnvWithoutT3Home[key] = value;
+    if (key === "DISPATCH_HOME" || key === "T3CODE_HOME") continue;
+    parentEnvWithoutDesktopHome[key] = value;
   }
-  const wslEnv = mergeWslEnv(parentEnvWithoutT3Home.WSLENV, forwardedEnvNames);
+  const wslEnv = mergeWslEnv(parentEnvWithoutDesktopHome.WSLENV, forwardedEnvNames);
 
   const baseConfig = {
     executablePath: "wsl.exe",
@@ -714,12 +713,12 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
       preflight._tag === "Ready" ? preflight.windowsEntryPath : environment.backendEntryPath,
     cwd: environment.backendCwd,
     env: {
-      ...parentEnvWithoutT3Home,
+      ...parentEnvWithoutDesktopHome,
       ...backendChildEnvPatch(),
       ...forwardedEnv,
       ...(wslEnv !== undefined ? { WSLENV: wslEnv } : {}),
     },
-    // env is already a complete process.env minus T3CODE_HOME; pass it
+    // env is already a complete process.env minus both home aliases; pass it
     // verbatim instead of letting the spawner re-merge process.env on top.
     extendEnv: false,
     bootstrap,

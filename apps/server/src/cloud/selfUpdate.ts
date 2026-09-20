@@ -20,7 +20,11 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import { HttpClient } from "effect/unstable/http";
 
-import { CLI_RELEASE_BASE_URL_ENV } from "@t3tools/shared/cliRelease";
+import {
+  CLI_RELEASE_BASE_URL_ENV,
+  CLI_RELEASE_BASE_URL_LEGACY_ENV,
+  resolveCliReleaseBaseUrlEnv,
+} from "@t3tools/shared/cliRelease";
 
 import * as ServerConfig from "../config.ts";
 import * as DesktopAppUpdate from "../desktopUpdate/DesktopAppUpdate.ts";
@@ -181,9 +185,14 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
   // Archive-distributed targets download from GitHub Releases. The client is
   // optional so callers without one (tests, npm-only hosts) still construct.
   const httpClient = yield* HttpClient.HttpClient;
-  const releaseBaseUrl = Option.getOrUndefined(
-    yield* Config.String(CLI_RELEASE_BASE_URL_ENV).pipe(Config.option),
-  );
+  const releaseBaseUrl = resolveCliReleaseBaseUrlEnv({
+    [CLI_RELEASE_BASE_URL_ENV]: Option.getOrUndefined(
+      yield* Config.String(CLI_RELEASE_BASE_URL_ENV).pipe(Config.option),
+    ),
+    [CLI_RELEASE_BASE_URL_LEGACY_ENV]: Option.getOrUndefined(
+      yield* Config.String(CLI_RELEASE_BASE_URL_LEGACY_ENV).pipe(Config.option),
+    ),
+  });
   const inFlight = yield* Ref.make(false);
 
   const capability: ServerSelfUpdateCapability | null =
@@ -204,12 +213,12 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
         return yield* desktopAppUpdate.run(reportProgress);
       }
       return yield* failWith(
-        "This server is managed by the T3 Code desktop app on its machine; update the desktop app to update it.",
+        "This server is managed by the Dispatch desktop app on its machine; update the desktop app to update it.",
       );
     }
     if (capability === null) {
       return yield* failWith(
-        "Remote updates require the T3 Code background service. Run `t3 service install` on the server machine.",
+        "Remote updates require the Dispatch background service. Run `dispatch service install` on the server machine.",
       );
     }
 

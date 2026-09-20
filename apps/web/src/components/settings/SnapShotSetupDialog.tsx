@@ -45,7 +45,7 @@ const GNOME_ACCESS_COPY = {
   },
   disabled: {
     title: "Enable the extension",
-    description: "Enable T3 Code SnapShots to start capturing windows.",
+    description: "Enable Dispatch SnapShots to start capturing windows.",
   },
   enabled: {
     title: "Capture is ready",
@@ -57,7 +57,7 @@ const GNOME_ACCESS_COPY = {
   },
   error: {
     title: "Couldn't set up the extension",
-    description: "Check T3 Code SnapShots in GNOME Extensions, then try again.",
+    description: "Check Dispatch SnapShots in GNOME Extensions, then try again.",
   },
 };
 

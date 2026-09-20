@@ -20,7 +20,7 @@ export function SettingsAboutRouteScreen() {
   const insets = useSafeAreaInsets();
 
   return (
-    <SettingsScreen title="About T3 Code">
+    <SettingsScreen title="About Dispatch">
       <ScrollView
         contentInsetAdjustmentBehavior="automatic"
         showsVerticalScrollIndicator={false}
@@ -127,7 +127,11 @@ function AppSettingsSection() {
         label="Open source licenses"
         target="SettingsOpenSourceLicenses"
       />
-      <SettingsRow icon="doc.text" label="Legal" fullScreenTarget="SettingsLegal" />
+      <SettingsRow
+        icon="doc.text"
+        label="Upstream T3 Code legal reference"
+        fullScreenTarget="SettingsLegal"
+      />
       {updateCheckAvailable ? (
         <Pressable
           accessibilityLabel={`Version ${versionLabel}`}

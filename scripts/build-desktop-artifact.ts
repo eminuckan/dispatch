@@ -54,8 +54,31 @@ import { Command, Flag } from "effect/unstable/cli";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 const LINUX_ICON_SIZES = [16, 22, 24, 32, 48, 64, 128, 256, 512] as const;
-const DESKTOP_APP_ID = "com.eminuckan.t3jev";
+const DESKTOP_APP_ID = "com.eminuckan.dispatch";
 const APPLE_TEAM_ID_PATTERN = /^[A-Z0-9]{10}$/u;
+const DESKTOP_REUSE_RESOURCE_MONITOR_CONFIG = Config.Boolean(
+  "DISPATCH_DESKTOP_REUSE_RESOURCE_MONITOR",
+).pipe(
+  Config.orElse(() => Config.Boolean("T3CODE_DESKTOP_REUSE_RESOURCE_MONITOR")),
+  Config.withDefault(false),
+);
+const DESKTOP_REUSE_LINUX_CAPTURE_HELPERS_CONFIG = Config.Boolean(
+  "DISPATCH_DESKTOP_REUSE_LINUX_CAPTURE_HELPERS",
+).pipe(
+  Config.orElse(() => Config.Boolean("T3CODE_DESKTOP_REUSE_LINUX_CAPTURE_HELPERS")),
+  Config.withDefault(false),
+);
+
+function firstNonEmptyEnvValue(
+  env: Readonly<Record<string, string | undefined>>,
+  canonical: string,
+  legacy: string,
+): string | undefined {
+  const current = env[canonical]?.trim();
+  if (current) return current;
+  const fallback = env[legacy]?.trim();
+  return fallback || undefined;
+}
 
 const BuildPlatform = Schema.Literals(["mac", "linux", "win"]);
 const BuildArch = Schema.Literals(["arm64", "x64", "universal"]);
@@ -941,7 +964,7 @@ interface StagePackageJson {
 export const STAGE_INSTALL_ARGS = ["install", "--prod"] as const;
 export const DESKTOP_ELECTRON_LANGUAGES = ["en-US"] as const;
 export const DESKTOP_FILE_EXCLUSIONS = [
-  // T3 Code always passes the user's installed Claude executable to the SDK,
+  // Dispatch always passes the user's installed Claude executable to the SDK,
   // so the SDK's optional platform packages (each a ~200MB bundled executable)
   // are dead weight. The trailing dash keeps the SDK's own JS package.
   "!**/node_modules/@anthropic-ai/claude-agent-sdk-*/**/*",
@@ -1130,7 +1153,7 @@ export class InvalidAppleTeamIdError extends Schema.TaggedError<InvalidAppleTeam
   },
 ) {
   override get message(): string {
-    return `T3CODE_APPLE_TEAM_ID '${this.teamId}' must be a 10-character Apple Developer Team ID.`;
+    return `DISPATCH_APPLE_TEAM_ID '${this.teamId}' must be a 10-character Apple Developer Team ID.`;
   }
 }
 
@@ -1139,7 +1162,7 @@ export class MissingMacPasskeyProvisioningProfileError extends Schema.TaggedErro
   {},
 ) {
   override get message(): string {
-    return "T3CODE_MACOS_PROVISIONING_PROFILE must point to an Associated Domains provisioning profile.";
+    return "DISPATCH_MACOS_PROVISIONING_PROFILE must point to an Associated Domains provisioning profile.";
   }
 }
 
@@ -1148,7 +1171,7 @@ export class MissingMacPasskeyDomainConfigurationError extends Schema.TaggedErro
   {},
 ) {
   override get message(): string {
-    return "T3CODE_CLERK_PUBLISHABLE_KEY or T3CODE_CLERK_PASSKEY_RP_DOMAINS is required for signed macOS passkey builds.";
+    return "DISPATCH_CLERK_PUBLISHABLE_KEY or DISPATCH_CLERK_PASSKEY_RP_DOMAINS is required for signed macOS passkey builds.";
   }
 }
 
@@ -1159,7 +1182,7 @@ export class InvalidMacPasskeyPublishableKeyError extends Schema.TaggedError<Inv
   },
 ) {
   override get message(): string {
-    return "T3CODE_CLERK_PUBLISHABLE_KEY is invalid.";
+    return "DISPATCH_CLERK_PUBLISHABLE_KEY is invalid.";
   }
 }
 
@@ -1227,22 +1250,37 @@ function normalizePasskeyRpDomain(value: string): string {
 export function resolveMacPasskeySigningConfiguration(
   env: Readonly<Record<string, string | undefined>>,
 ): MacPasskeySigningConfiguration {
-  const teamId = env.T3CODE_APPLE_TEAM_ID?.trim().toUpperCase() ?? "";
+  const teamId =
+    firstNonEmptyEnvValue(env, "DISPATCH_APPLE_TEAM_ID", "T3CODE_APPLE_TEAM_ID")?.toUpperCase() ??
+    "";
   if (!APPLE_TEAM_ID_PATTERN.test(teamId)) {
     throw new InvalidAppleTeamIdError({ teamId });
   }
 
-  const provisioningProfilePath = env.T3CODE_MACOS_PROVISIONING_PROFILE?.trim() ?? "";
+  const provisioningProfilePath =
+    firstNonEmptyEnvValue(
+      env,
+      "DISPATCH_MACOS_PROVISIONING_PROFILE",
+      "T3CODE_MACOS_PROVISIONING_PROFILE",
+    ) ?? "";
   if (provisioningProfilePath.length === 0) {
     throw new MissingMacPasskeyProvisioningProfileError();
   }
 
-  const configuredRpDomains = env.T3CODE_CLERK_PASSKEY_RP_DOMAINS?.trim();
+  const configuredRpDomains = firstNonEmptyEnvValue(
+    env,
+    "DISPATCH_CLERK_PASSKEY_RP_DOMAINS",
+    "T3CODE_CLERK_PASSKEY_RP_DOMAINS",
+  );
   let rpDomains: readonly string[];
   if (configuredRpDomains) {
     rpDomains = configuredRpDomains.split(",").map(normalizePasskeyRpDomain);
   } else {
-    const publishableKey = env.T3CODE_CLERK_PUBLISHABLE_KEY?.trim();
+    const publishableKey = firstNonEmptyEnvValue(
+      env,
+      "DISPATCH_CLERK_PUBLISHABLE_KEY",
+      "T3CODE_CLERK_PUBLISHABLE_KEY",
+    );
     if (!publishableKey) {
       throw new MissingMacPasskeyDomainConfigurationError();
     }
@@ -1718,12 +1756,8 @@ const rustTargetIsInstalled = Effect.fn("rustTargetIsInstalled")(function* (targ
 export const preflightLinuxDesktopBuild = Effect.fn("preflightLinuxDesktopBuild")(function* (
   arch: typeof BuildArch.Type = "x64",
 ) {
-  const reuseResourceMonitor = yield* Config.Boolean("T3CODE_DESKTOP_REUSE_RESOURCE_MONITOR").pipe(
-    Config.withDefault(false),
-  );
-  const reuseCaptureHelpers = yield* Config.Boolean(
-    "T3CODE_DESKTOP_REUSE_LINUX_CAPTURE_HELPERS",
-  ).pipe(Config.withDefault(false));
+  const reuseResourceMonitor = yield* DESKTOP_REUSE_RESOURCE_MONITOR_CONFIG;
+  const reuseCaptureHelpers = yield* DESKTOP_REUSE_LINUX_CAPTURE_HELPERS_CONFIG;
   // Rust is only optional when every Linux Rust artifact comes from a cache.
   const needsRust = !reuseResourceMonitor || !reuseCaptureHelpers;
   const rustTarget = resolveResourceMonitorRustTargets("linux", arch)[0]!;
@@ -1760,9 +1794,7 @@ export const preflightMacDesktopBuild = Effect.fn("preflightMacDesktopBuild")(fu
   arch: typeof BuildArch.Type,
 ) {
   const rustTargets = resolveResourceMonitorRustTargets("mac", arch);
-  const reuseResourceMonitor = yield* Config.Boolean("T3CODE_DESKTOP_REUSE_RESOURCE_MONITOR").pipe(
-    Config.withDefault(false),
-  );
+  const reuseResourceMonitor = yield* DESKTOP_REUSE_RESOURCE_MONITOR_CONFIG;
   const checks = yield* Effect.all(
     {
       rust: reuseResourceMonitor
@@ -1817,9 +1849,7 @@ function windowsVswherePrerequisiteScript(arch: typeof BuildArch.Type): string {
 export const preflightWindowsDesktopBuild = Effect.fn("preflightWindowsDesktopBuild")(
   function* (input: { readonly arch: typeof BuildArch.Type; readonly bundlesWslRuntime: boolean }) {
     const rustTarget = resolveResourceMonitorRustTargets("win", input.arch)[0]!;
-    const reuseResourceMonitor = yield* Config.Boolean(
-      "T3CODE_DESKTOP_REUSE_RESOURCE_MONITOR",
-    ).pipe(Config.withDefault(false));
+    const reuseResourceMonitor = yield* DESKTOP_REUSE_RESOURCE_MONITOR_CONFIG;
     const python = yield* resolvePythonForNodeGyp();
     const checks = yield* Effect.all(
       {
@@ -2135,9 +2165,7 @@ export const stageLinuxCaptureHelper = Effect.fn("stageLinuxCaptureHelper")(func
   const [rustTarget] = resolveResourceMonitorRustTargets("linux", input.arch);
   // Release CI restores these binaries from a cache keyed on the crate sources and
   // skips the Rust toolchain on a hit, so the build must be skippable too.
-  const reuseHelpers = yield* Config.Boolean("T3CODE_DESKTOP_REUSE_LINUX_CAPTURE_HELPERS").pipe(
-    Config.withDefault(false),
-  );
+  const reuseHelpers = yield* DESKTOP_REUSE_LINUX_CAPTURE_HELPERS_CONFIG;
   const binaryPath = path.join(
     input.repoRoot,
     `native/${input.backend}-snap-shot/target`,
@@ -2198,9 +2226,7 @@ export const stageResourceMonitor = Effect.fn("stageResourceMonitor")(function* 
   const manifestPath = path.join(input.repoRoot, "native/resource-monitor/Cargo.toml");
   const executableName = resourceMonitorExecutableName(input.platform);
   const rustTargets = resolveResourceMonitorRustTargets(input.platform, input.arch);
-  const reuseResourceMonitor = yield* Config.Boolean("T3CODE_DESKTOP_REUSE_RESOURCE_MONITOR").pipe(
-    Config.withDefault(false),
-  );
+  const reuseResourceMonitor = yield* DESKTOP_REUSE_RESOURCE_MONITOR_CONFIG;
   const builtBinaries: string[] = [];
 
   for (const rustTarget of rustTargets) {
@@ -2539,11 +2565,13 @@ export const resolveGitHubPublishConfig = Effect.fn("resolveGitHubPublishConfig"
   updateChannel: "latest" | "nightly",
 ) {
   const env = yield* Config.all({
-    updateRepository: Config.String("T3CODE_DESKTOP_UPDATE_REPOSITORY").pipe(Config.option),
+    updateRepository: Config.String("DISPATCH_DESKTOP_UPDATE_REPOSITORY").pipe(Config.option),
+    legacyUpdateRepository: Config.String("T3CODE_DESKTOP_UPDATE_REPOSITORY").pipe(Config.option),
     githubRepository: Config.String("GITHUB_REPOSITORY").pipe(Config.option),
   });
   const rawRepo = (
     Option.getOrUndefined(env.updateRepository)?.trim() ||
+    Option.getOrUndefined(env.legacyUpdateRepository)?.trim() ||
     Option.getOrUndefined(env.githubRepository)?.trim() ||
     ""
   ).trim();
@@ -2694,8 +2722,10 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
         NSScreenCaptureUsageDescription:
           "Dispatch captures the active window when you use the window capture shortcut.",
       },
-      // Keep upstream T3 URL associations untouched in this local macOS fork.
-      // Electron still registers its private renderer scheme internally.
+      // The packaged macOS app does not claim external URL-handler schemes here.
+      // Electron still registers the Dispatch renderer scheme internally, and
+      // avoiding legacy OS associations prevents collisions with an installed
+      // upstream T3 Code app.
       protocols: [],
       ...(signed ? { sign: path.join(repoRoot, "scripts/sign-macos.ts") } : {}),
       ...(macPasskeySigning
@@ -2732,21 +2762,21 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   if (platform === "linux") {
     buildConfig.linux = {
       target: [target],
-      executableName: "t3code",
+      executableName: "dispatch",
       icon: "icons",
       category: "Development",
       // electron-builder turns these into MimeType=x-scheme-handler/<scheme>;
       // in the .desktop entry (Exec already gets %U), so browsers can hand
-      // t3code:// OAuth callbacks to the app.
+      // current and legacy OAuth callbacks to the app.
       protocols: [
         {
-          name: "T3 Code",
-          schemes: ["t3code", "t3code-dev"],
+          name: "Dispatch",
+          schemes: ["dispatch", "dispatch-dev", "t3code", "t3code-dev"],
         },
       ],
       desktop: {
         entry: {
-          StartupWMClass: "t3code",
+          StartupWMClass: "dispatch",
         },
       },
     };
@@ -3587,12 +3617,17 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   const stageProdResourcesDir = path.join(stageAppDir, "apps/desktop/prod-resources");
   yield* fs.copy(stageResourcesDir, stageProdResourcesDir);
 
+  const repoEnv = loadRepoEnv({ repoRoot });
   const configuredMacPasskeySigning =
     options.platform === "mac" &&
     options.signed &&
-    loadRepoEnv({ repoRoot }).T3CODE_MACOS_PROVISIONING_PROFILE
+    firstNonEmptyEnvValue(
+      repoEnv,
+      "DISPATCH_MACOS_PROVISIONING_PROFILE",
+      "T3CODE_MACOS_PROVISIONING_PROFILE",
+    )
       ? yield* Effect.try({
-          try: () => resolveMacPasskeySigningConfiguration(loadRepoEnv({ repoRoot })),
+          try: () => resolveMacPasskeySigningConfiguration(repoEnv),
           catch: MacPasskeySigningConfigurationResolutionError.fromCause,
         })
       : undefined;
@@ -3640,14 +3675,14 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
       ? path.join(stageAppDir, WINDOWS_SERVER_RESOURCE_SOURCE_DIR, WINDOWS_SERVER_ASAR_RESOURCE)
       : undefined;
   const stagePackageJson: StagePackageJson = {
-    name: "t3code",
+    name: "dispatch",
     version: appVersion,
     buildVersion: appVersion,
     t3codeCommitHash: commitHash,
     private: true,
     packageManager: rootPackageJson.packageManager,
-    description: "T3 Code desktop build",
-    author: "T3 Tools",
+    description: "Dispatch desktop build",
+    author: "Dispatch",
     main: "apps/desktop/dist-electron/main.cjs",
     build: yield* createBuildConfig(
       options.platform,
@@ -3920,7 +3955,7 @@ const buildDesktopArtifactCli = Command.make("build-desktop-artifact", {
     Flag.optional,
   ),
 }).pipe(
-  Command.withDescription("Build a desktop artifact for T3 Code."),
+  Command.withDescription("Build a desktop artifact for Dispatch."),
   Command.withHandler((input) => Effect.flatMap(resolveBuildOptions(input), buildDesktopArtifact)),
 );
 

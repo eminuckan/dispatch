@@ -3,9 +3,9 @@
 pkgname=t3code-nightly-bin
 pkgver=0.0.34_nightly.20260814.1095
 pkgrel=1
-pkgdesc='Nightly desktop control surface for local coding agents'
+pkgdesc='Dispatch nightly desktop control surface for local coding agents'
 arch=('x86_64')
-url='https://github.com/pingdotgg/t3code'
+url='https://github.com/eminuckan/dispatch'
 license=('MIT')
 depends=(
   'alsa-lib'
@@ -43,15 +43,15 @@ provides=("t3code-nightly=$pkgver")
 conflicts=('t3code-nightly' 't3code')
 options=('!debug' '!strip')
 
-_upstream_version="${pkgver/_nightly./-nightly.}"
-_appimage="T3-Code-${_upstream_version}-x86_64.AppImage"
+_release_version="${pkgver/_nightly./-nightly.}"
+_appimage="Dispatch-${_release_version}-x64.AppImage"
 source=(
-  "$_appimage::https://github.com/pingdotgg/t3code/releases/download/v${_upstream_version}/$_appimage"
-  "${pkgname}-${pkgver}-LICENSE::https://raw.githubusercontent.com/pingdotgg/t3code/v${_upstream_version}/LICENSE"
+  "$_appimage::https://github.com/eminuckan/dispatch/releases/download/v${_release_version}/$_appimage"
+  "${pkgname}-${pkgver}-LICENSE::https://raw.githubusercontent.com/eminuckan/dispatch/v${_release_version}/LICENSE"
 )
 sha256sums=(
   'c4dea5bba9ed0b51b2f60f2d4a4867e61d62b57c50ea66f2792a73112e054566' # AppImage
-  '935d8f2af0c703f9c39517ee57cc4930b19d02d533be930b63f0e82f93614b43' # upstream license
+  '935d8f2af0c703f9c39517ee57cc4930b19d02d533be930b63f0e82f93614b43' # license
 )
 
 prepare() {
@@ -72,32 +72,36 @@ package() {
   chmod -R u=rwX,go=rX "$pkgdir/opt/$pkgname"
   chmod 4755 "$pkgdir/opt/$pkgname/chrome-sandbox"
 
-  install -Dm755 /dev/stdin "$pkgdir/usr/bin/t3code-nightly" <<'EOF'
+  install -Dm755 /dev/stdin "$pkgdir/usr/bin/dispatch-nightly" <<'EOF'
 #!/bin/sh
 exec /opt/t3code-nightly-bin/AppRun "$@"
 EOF
-  ln -s t3code-nightly "$pkgdir/usr/bin/t3-code-nightly-desktop"
+  ln -s dispatch-nightly "$pkgdir/usr/bin/t3code-nightly"
+  ln -s dispatch-nightly "$pkgdir/usr/bin/t3-code-nightly-desktop"
 
   # Icon lookup only sees sizes registered in hicolor's index.theme (max 512x512).
   local icon size_dir
-  for icon in "$srcdir"/squashfs-root/usr/share/icons/hicolor/*/apps/t3code.png; do
-    size_dir="${icon%/apps/t3code.png}"
+  for icon in \
+    "$srcdir"/squashfs-root/usr/share/icons/hicolor/*/apps/dispatch.png \
+    "$srcdir"/squashfs-root/usr/share/icons/hicolor/*/apps/t3code.png; do
+    [[ -f "$icon" ]] || continue
+    size_dir="${icon%/apps/*}"
     install -Dm644 "$icon" \
-      "$pkgdir/usr/share/icons/hicolor/${size_dir##*/}/apps/t3code-nightly.png"
+      "$pkgdir/usr/share/icons/hicolor/${size_dir##*/}/apps/dispatch-nightly.png"
   done
 
-  install -Dm644 /dev/stdin "$pkgdir/usr/share/applications/t3code.desktop" <<'EOF'
+  install -Dm644 /dev/stdin "$pkgdir/usr/share/applications/dispatch-nightly.desktop" <<'EOF'
 [Desktop Entry]
-Name=T3 Code Nightly
+Name=Dispatch (Nightly)
 Comment=Nightly desktop control surface for local coding agents
-Exec=t3code-nightly %U
-TryExec=t3code-nightly
+Exec=dispatch-nightly %U
+TryExec=dispatch-nightly
 Terminal=false
 Type=Application
-Icon=t3code-nightly
-StartupWMClass=t3code
+Icon=dispatch-nightly
+StartupWMClass=dispatch
 Categories=Development;
-MimeType=x-scheme-handler/t3code;
+MimeType=x-scheme-handler/dispatch;x-scheme-handler/dispatch-dev;x-scheme-handler/t3code;x-scheme-handler/t3code-dev;
 EOF
 
   install -Dm644 "$srcdir/${pkgname}-${pkgver}-LICENSE" \

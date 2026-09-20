@@ -4,7 +4,12 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 
-import { Launcher, readServiceState, writeServiceState } from "./serviceLauncher.ts";
+import {
+  Launcher,
+  readServiceState,
+  resolveServiceLauncherBaseDir,
+  writeServiceState,
+} from "./serviceLauncher.ts";
 import {
   compareExactServiceVersions,
   decodeServiceState,
@@ -31,6 +36,33 @@ it("orders exact semantic versions without treating build metadata as precedence
   assert.equal(compareExactServiceVersions("2.0.0-alpha-beta", "2.0.0-alpha-alpha"), 1);
   assert.equal(compareExactServiceVersions("2.0.0", "2.0.0-rc.1"), 1);
   assert.equal(compareExactServiceVersions("2.0.0+one", "2.0.0+two"), 0);
+});
+
+it("prefers a trimmed DISPATCH_HOME over the legacy T3CODE_HOME", () => {
+  assert.equal(
+    resolveServiceLauncherBaseDir({
+      DISPATCH_HOME: "  /home/alice/.dispatch  ",
+      T3CODE_HOME: "/home/alice/.t3",
+    }),
+    "/home/alice/.dispatch",
+  );
+});
+
+it("falls back to a trimmed T3CODE_HOME when DISPATCH_HOME is blank", () => {
+  assert.equal(
+    resolveServiceLauncherBaseDir({
+      DISPATCH_HOME: "   ",
+      T3CODE_HOME: "  /home/alice/.t3  ",
+    }),
+    "/home/alice/.t3",
+  );
+});
+
+it("reports the Dispatch home first when no service launcher home is configured", () => {
+  assert.throws(
+    () => resolveServiceLauncherBaseDir({ DISPATCH_HOME: " ", T3CODE_HOME: "" }),
+    "DISPATCH_HOME is required by the Dispatch service launcher; T3CODE_HOME is accepted as a legacy fallback.",
+  );
 });
 
 it("rejects contradictory service state", () => {

@@ -126,7 +126,8 @@ const capabilitiesLayer = Layer.effectContext(
           if (session === null) {
             return yield* new ConnectionBlockedError({
               reason: "authentication",
-              detail: "Sign in to T3 Connect to connect this environment.",
+              detail:
+                "An existing legacy T3 Connect session is required to connect this environment.",
             });
           }
           const token = yield* session.readClerkToken().pipe(

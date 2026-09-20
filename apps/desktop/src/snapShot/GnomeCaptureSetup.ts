@@ -6,7 +6,11 @@ import { Message, sessionBus, type MessageBus, type MessageLike } from "dbus-nex
 import * as Schema from "effect/Schema";
 import type { DesktopCaptureExtensionState } from "@t3tools/contracts";
 
-import { GNOME_CAPTURE_FILES, GNOME_CAPTURE_UUID } from "./gnomeCaptureBundle.ts";
+import {
+  GNOME_CAPTURE_FILES,
+  GNOME_CAPTURE_UUID,
+  LEGACY_GNOME_CAPTURE_UUID,
+} from "./gnomeCaptureBundle.ts";
 export { isGnomeCaptureSession } from "./linuxCaptureSession.ts";
 
 const SHELL = "org.gnome.Shell";
@@ -58,7 +62,7 @@ export async function installGnomeCaptureBundle({ bundle, dataHome }: SetupPaths
     if (installed.version > metadata.version)
       throw new Error("A newer extension is installed. Update Dispatch instead of replacing it.");
   }
-  const staged = await NodeFSP.mkdtemp(NodePath.join(parent, ".t3-capture-install-"));
+  const staged = await NodeFSP.mkdtemp(NodePath.join(parent, ".dispatch-capture-install-"));
   let backup: string | undefined;
   try {
     for (const name of GNOME_CAPTURE_FILES) {
@@ -67,7 +71,7 @@ export async function installGnomeCaptureBundle({ bundle, dataHome }: SetupPaths
     }
     await NodeFSP.chmod(staged, 0o755);
     if (existing) {
-      const backupParent = NodePath.join(dataHome, "t3code", "extension-backups");
+      const backupParent = NodePath.join(dataHome, "dispatch", "extension-backups");
       await NodeFSP.mkdir(backupParent, { recursive: true });
       backup = NodePath.join(
         await NodeFSP.mkdtemp(NodePath.join(backupParent, "capture-")),
@@ -136,49 +140,79 @@ export class GnomeCaptureSetup {
 
   async state(): Promise<DesktopCaptureExtensionState> {
     try {
-      const [properties, info, bundled, installed] = await Promise.all([
-        this.call({
-          interface: "org.freedesktop.DBus.Properties",
-          member: "GetAll",
-          signature: "s",
-          body: [EXTENSIONS],
-        }).then(decodeProperties),
-        this.call({
-          interface: EXTENSIONS,
-          member: "GetExtensionInfo",
-          signature: "s",
-          body: [GNOME_CAPTURE_UUID],
-        }).then(decodeInfo),
-        NodeFSP.readFile(NodePath.join(this.paths.bundle, "metadata.json"), "utf8").then(
-          decodeMetadata,
-        ),
-        NodeFSP.readFile(
-          NodePath.join(
-            this.paths.dataHome,
-            "gnome-shell",
-            "extensions",
-            GNOME_CAPTURE_UUID,
-            "metadata.json",
+      const [properties, info, legacyInfo, bundled, installed, legacyInstalled] = await Promise.all(
+        [
+          this.call({
+            interface: "org.freedesktop.DBus.Properties",
+            member: "GetAll",
+            signature: "s",
+            body: [EXTENSIONS],
+          }).then(decodeProperties),
+          this.call({
+            interface: EXTENSIONS,
+            member: "GetExtensionInfo",
+            signature: "s",
+            body: [GNOME_CAPTURE_UUID],
+          }).then(decodeInfo),
+          this.call({
+            interface: EXTENSIONS,
+            member: "GetExtensionInfo",
+            signature: "s",
+            body: [LEGACY_GNOME_CAPTURE_UUID],
+          }).then(decodeInfo),
+          NodeFSP.readFile(NodePath.join(this.paths.bundle, "metadata.json"), "utf8").then(
+            decodeMetadata,
           ),
-          "utf8",
-        )
-          .then(decodeMetadata)
-          .catch((error: NodeJS.ErrnoException) => {
-            if (error.code !== "ENOENT") throw error;
-            return undefined;
-          }),
-      ]);
+          NodeFSP.readFile(
+            NodePath.join(
+              this.paths.dataHome,
+              "gnome-shell",
+              "extensions",
+              GNOME_CAPTURE_UUID,
+              "metadata.json",
+            ),
+            "utf8",
+          )
+            .then(decodeMetadata)
+            .catch((error: NodeJS.ErrnoException) => {
+              if (error.code !== "ENOENT") throw error;
+              return undefined;
+            }),
+          NodeFSP.access(
+            NodePath.join(
+              this.paths.dataHome,
+              "gnome-shell",
+              "extensions",
+              LEGACY_GNOME_CAPTURE_UUID,
+              "metadata.json",
+            ),
+          )
+            .then(() => true)
+            .catch((error: NodeJS.ErrnoException) => {
+              if (error.code !== "ENOENT") throw error;
+              return false;
+            }),
+        ],
+      );
       const major = properties.ShellVersion.value.split(".")[0]!;
       if (!bundled["shell-version"].includes(major))
         return {
           status: "unsupported",
           message: `The bundled extension supports GNOME ${bundled["shell-version"].join(", ")}. This session runs GNOME ${major}.`,
         };
-      if (!info.state && !installed)
+      const canonicalPresent = info.state !== undefined || installed !== undefined;
+      const legacyPresent = legacyInfo.state !== undefined || legacyInstalled;
+      if (!canonicalPresent && legacyPresent)
+        return {
+          status: "update-required",
+          message:
+            "A legacy T3 Code capture extension is installed. Install the Dispatch extension to migrate; the legacy extension is left in place so older clients keep working during the transition.",
+        };
+      if (!canonicalPresent)
         return {
           status: "not-installed",
           message:
-            "Install the bundled extension to capture the active window without a picker. No download or administrator password is needed.",
+            "Install the bundled Dispatch extension to capture the active window without a picker. No download or administrator password is needed.",
         };
       if (installed && (!info.state || (info.version && installed.version > info.version.value)))
         return {
@@ -201,7 +235,7 @@ export class GnomeCaptureSetup {
       if (info.state?.value === 1)
         return {
           status: "enabled",
-          message: "The T3 Code extension is running. Active-window snapshots are available.",
+          message: "The Dispatch extension is running. Active-window snapshots are available.",
         };
       if (info.state?.value === 3 || info.state?.value === 4)
         return {
@@ -213,7 +247,7 @@ export class GnomeCaptureSetup {
       return {
         status: "disabled",
         message:
-          "Enable the T3 Code extension to allow active-window snapshots. You can disable it here at any time.",
+          "Enable the Dispatch extension to allow active-window snapshots. You can disable it here at any time.",
       };
     } catch (error) {
       return {

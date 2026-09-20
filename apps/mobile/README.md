@@ -1,7 +1,7 @@
-# T3 Code Mobile
+# Dispatch Mobile
 
 > [!WARNING]
-> T3 Code Mobile is currently in development and is not distributed yet. If you want to try it out, you can build it from source.
+> Dispatch Mobile is currently in development and is not distributed yet. If you want to try it out, you can build it from source.
 
 ## Quickstart
 
@@ -10,13 +10,17 @@
 
 This app has three variants:
 
-- `development`: Expo dev client, installable side-by-side as `T3 Code Dev`
-- `preview`: persistent internal preview build, installable side-by-side as `T3 Code Preview`
-- `production`: store/release build as `T3 Code`
+- `development`: Expo dev client, installable side-by-side as `Dispatch Dev`
+- `preview`: persistent internal preview build, installable side-by-side as `Dispatch Preview`
+- `production`: store/release build as `Dispatch`
 
 Run commands from `apps/mobile`.
 
-T3 Connect is optional and disabled in a fresh clone. Public configuration belongs in the
+T3 Connect and Clerk remain optional legacy compatibility for authenticated relay transport. A fresh
+clone has no cloud configuration and the mobile product exposes no Dispatch account, login, logout,
+or profile flow. Direct pairing over LAN or Tailscale is the default remote workflow.
+
+When maintaining a legacy T3 Connect deployment, public transport configuration belongs in the
 repository-root `.env` or `.env.local`, not an `apps/mobile/.env` file. See
 [`../../.env.example`](../../.env.example).
 
@@ -68,11 +72,11 @@ previous directory.
 
 If your Xcode account only has a Personal Team, use a bundle identifier you control and opt into the
 reduced-capability local build. Personal Team builds omit the widget and share extensions, push
-entitlement, and native Sign in with Apple entitlement; builds without this opt-in are unchanged.
+entitlement, and legacy Clerk Apple-auth capability; builds without this opt-in are unchanged.
 
 ```bash
-T3CODE_IOS_PERSONAL_TEAM=1 \
-T3CODE_IOS_PERSONAL_TEAM_BUNDLE_ID=com.example.t3code.dev \
+DISPATCH_IOS_PERSONAL_TEAM=1 \
+DISPATCH_IOS_PERSONAL_TEAM_BUNDLE_ID=com.example.dispatch.dev \
 vp run ios:dev
 ```
 
@@ -85,8 +89,8 @@ vp run ios:release
 The Personal Team equivalent also needs a unique bundle identifier:
 
 ```bash
-T3CODE_IOS_PERSONAL_TEAM=1 \
-T3CODE_IOS_PERSONAL_TEAM_BUNDLE_ID=com.example.t3code \
+DISPATCH_IOS_PERSONAL_TEAM=1 \
+DISPATCH_IOS_PERSONAL_TEAM_BUNDLE_ID=com.example.dispatch \
 vp run ios:release
 ```
 
@@ -125,9 +129,11 @@ Preview and production variants use Expo fingerprinting so OTA updates only reac
 
 The development variant uses `appVersion` to avoid recalculating the native fingerprint for each Metro launch manifest. `MOBILE_VERSION_POLICY` can override either default. If you distribute a custom Release build with the development identity and publish OTA updates to it, set `MOBILE_VERSION_POLICY=fingerprint` for both its build and updates. Changing the runtime policy requires a native rebuild for OTA matching; an existing dev client can still load local Metro bundles.
 
-For preview or production EAS environments, set `T3CODE_CLERK_PUBLISHABLE_KEY`,
-`T3CODE_CLERK_JWT_TEMPLATE`, and `T3CODE_RELAY_URL`
-as EAS environment variables. Expo config maps the canonical values into the mobile build.
+Only legacy T3 Connect compatibility builds need `DISPATCH_CLERK_PUBLISHABLE_KEY`,
+`DISPATCH_CLERK_JWT_TEMPLATE`, and `DISPATCH_RELAY_URL` in their EAS environment. These values support
+the existing authenticated relay transport; they do not enable a product account UI. Expo config maps
+the canonical values into the mobile build while still accepting the legacy `T3CODE_*` names for
+compatibility.
 
 Create a PR preview dev-client build manually:
 

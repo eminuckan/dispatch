@@ -25,6 +25,7 @@ import {
   readPngMetadata,
   resolveAndroidSdkRoot,
   selectLanIpv4Address,
+  showcaseDevClientUrl,
   showcaseCaptureDirectory,
   validateStoreAsset,
   validateStoreAssetCount,
@@ -310,7 +311,7 @@ it("selects a reachable LAN IPv4 address", () => {
 it("seeds a playful multi-environment project spectrum", () => {
   assert.deepStrictEqual(
     SHOWCASE_PROJECTS.map((project) => project.title),
-    ["T3 Code", "React", "Linux"],
+    ["Dispatch", "React", "Linux"],
   );
   assert.deepStrictEqual(
     SHOWCASE_ENVIRONMENTS.map((environment) => environment.label),
@@ -367,4 +368,12 @@ it("encodes Android pairing URLs without shell-sensitive JSON quotes", () => {
   assert.equal(encoded.startsWith("json-uri:"), true);
   assert.deepStrictEqual(JSON.parse(decodeURIComponent(encoded.slice("json-uri:".length))), urls);
   assert.equal(encoded.includes('"'), false);
+});
+
+it("opens showcase dev clients through the canonical Dispatch scheme", () => {
+  const metroUrl = "http://127.0.0.1:8199?disableOnboarding=1";
+  assert.equal(
+    showcaseDevClientUrl(metroUrl),
+    `dispatch://expo-development-client/?url=${encodeURIComponent(metroUrl)}`,
+  );
 });

@@ -1,6 +1,6 @@
 import { parseKeybindingShortcut } from "@t3tools/shared/keybindings";
 import { readKdlNodes, type KdlNode } from "./captureConfigKdl.ts";
-import { niriCaptureBinding } from "./linuxCaptureSession.ts";
+import { niriCaptureBinding, niriCaptureBindingCandidates } from "./linuxCaptureSession.ts";
 
 export type CaptureConfigFormat = "niri" | "hyprland" | "hyprland-lua";
 
@@ -56,16 +56,18 @@ function niriBinds(source: string) {
   return blocks[0];
 }
 
-function niriCaptureNode(node: KdlNode, appId: string) {
-  const expected = readKdlNodes(captureConfigBinding("niri", appId, "Ctrl+Shift+2"))[0]!
-    .children[0]!;
+function niriCaptureNodeKind(node: KdlNode, appId: string): "canonical" | "legacy" | undefined {
+  if (node.children.length !== 1) return undefined;
   const action = node.children[0];
-  return (
-    node.children.length === 1 &&
-    action?.children.length === 0 &&
-    JSON.stringify(action.header.map((token) => token.value)) ===
-      JSON.stringify(expected.header.map((token) => token.value))
-  );
+  if (!action || action.children.length !== 0) return undefined;
+  const actual = JSON.stringify(action.header.map((token) => token.value));
+  const candidates = niriCaptureBindingCandidates(appId);
+  for (let index = 0; index < candidates.length; index += 1) {
+    const expected = readKdlNodes(candidates[index]!)[0]!.children[0]!;
+    if (actual === JSON.stringify(expected.header.map((token) => token.value)))
+      return index === 0 ? "canonical" : "legacy";
+  }
+  return undefined;
 }
 
 function hyprlandBinds(source: string, lua: boolean) {
@@ -117,7 +119,7 @@ export function niriConfigIncludes(source: string) {
 export function niriConfigConflict(source: string, appId: string, keys: string) {
   return (
     niriBinds(source)?.children.some(
-      (node) => sameKeys(node.name, keys) && !niriCaptureNode(node, appId),
+      (node) => sameKeys(node.name, keys) && niriCaptureNodeKind(node, appId) === undefined,
     ) ?? false
   );
 }
@@ -150,14 +152,22 @@ export function editCaptureConfig(
     );
   const niri = format === "niri";
   const existing = niri
-    ? (niriBinds(source)?.children ?? [])
-        .filter((node) => niriCaptureNode(node, appId))
-        .map((node) => ({ ...node, keys: node.name }))
-    : hyprlandBinds(source, format === "hyprland-lua").filter(
-        (bind) => bind.action === `${appId}:capture-window`,
-      );
+    ? (niriBinds(source)?.children ?? []).flatMap((node) => {
+        const kind = niriCaptureNodeKind(node, appId);
+        return kind === undefined
+          ? []
+          : [{ ...node, keys: node.name, canonical: kind === "canonical" }];
+      })
+    : hyprlandBinds(source, format === "hyprland-lua")
+        .filter((bind) => bind.action === `${appId}:capture-window`)
+        .map((bind) => ({ ...bind, canonical: true }));
   const keys = captureConfigKeys(requestedKeys ?? existing[0]?.keys).label;
-  if (operation === "install" && existing.length === 1 && sameKeys(existing[0]!.keys, keys))
+  if (
+    operation === "install" &&
+    existing.length === 1 &&
+    existing[0]!.canonical &&
+    sameKeys(existing[0]!.keys, keys)
+  )
     return { after: source, shortcut: keys };
   let after = removeNodes(source, existing);
   if (operation === "remove") return { after, shortcut: keys };

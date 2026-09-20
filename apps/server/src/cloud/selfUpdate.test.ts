@@ -3,10 +3,12 @@ import { expect, it } from "@effect/vitest";
 import { ServerSelfUpdateError, ThreadId } from "@t3tools/contracts";
 import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Cause from "effect/Cause";
+import * as ConfigProvider from "effect/ConfigProvider";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
+import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
@@ -22,6 +24,7 @@ interface HarnessOptions {
   readonly mode?: "web" | "desktop";
   readonly managed?: boolean;
   readonly preflight?: "ready" | "blocked";
+  readonly releaseEnv?: Readonly<Record<string, string>>;
   readonly requestUpdate?: ServiceLauncherClient.ServiceLauncherClient["Service"]["requestUpdate"];
   readonly desktopAppUpdate?: DesktopAppUpdate.DesktopAppUpdate["Service"];
 }
@@ -30,9 +33,10 @@ interface HarnessOptions {
 // and the tarball, and the fake runner stands in for tar before it answers
 // the staged preflight.
 const archiveBytes = new TextEncoder().encode("not really a tarball");
-const releaseHttpClient = (order: string[]) =>
+const releaseHttpClient = (order: string[], requests: string[] = []) =>
   HttpClient.make((request) =>
     Effect.gen(function* () {
+      requests.push(request.url);
       if (request.url.endsWith("/SHA256SUMS")) {
         const digest = yield* Effect.promise(() => crypto.subtle.digest("SHA-256", archiveBytes));
         const hex = Array.from(new Uint8Array(digest), (byte) =>
@@ -55,6 +59,7 @@ const makeHarness = Effect.fn("test.make_self_update_harness")(function* (
   const path = yield* Path.Path;
   const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-self-update-test-" });
   const order: string[] = [];
+  const requests: string[] = [];
   const runner = ProcessRunner.ProcessRunner.of({
     run: (input) =>
       Effect.gen(function* () {
@@ -120,12 +125,17 @@ const makeHarness = Effect.fn("test.make_self_update_harness")(function* (
         run: () => Effect.die("unexpected desktop app update run"),
       },
     ),
-    Effect.provideService(HttpClient.HttpClient, releaseHttpClient(order)),
+    Effect.provideService(HttpClient.HttpClient, releaseHttpClient(order, requests)),
     Effect.provideService(HostProcessPlatform, "linux"),
     Effect.provideService(HostProcessArchitecture, "x64"),
-    Effect.provide(ServerConfig.layer({ ...config, mode: options.mode ?? "web" })),
+    Effect.provide(
+      Layer.mergeAll(
+        ServerConfig.layer({ ...config, mode: options.mode ?? "web" }),
+        ConfigProvider.layer(ConfigProvider.fromEnv({ env: options.releaseEnv ?? {} })),
+      ),
+    ),
   );
-  return { selfUpdate, order };
+  return { selfUpdate, order, requests };
 });
 
 it.layer(NodeServices.layer)("server self update", (it) => {
@@ -356,6 +366,37 @@ it.layer(NodeServices.layer)("server self update", (it) => {
     }),
   );
 
+  it.effect("uses the Dispatch release mirror before the legacy fallback", () =>
+    Effect.gen(function* () {
+      const cases = [
+        {
+          env: {
+            DISPATCH_RELEASE_BASE_URL: " https://dispatch.example/releases/ ",
+            T3CODE_RELEASE_BASE_URL: "https://legacy.example/releases/",
+          },
+          expected: "https://dispatch.example/releases/v1.1.0/SHA256SUMS",
+        },
+        {
+          env: { T3CODE_RELEASE_BASE_URL: " https://legacy.example/releases/ " },
+          expected: "https://legacy.example/releases/v1.1.0/SHA256SUMS",
+        },
+        {
+          env: {
+            DISPATCH_RELEASE_BASE_URL: "   ",
+            T3CODE_RELEASE_BASE_URL: " https://legacy.example/releases/ ",
+          },
+          expected: "https://legacy.example/releases/v1.1.0/SHA256SUMS",
+        },
+      ] as const;
+
+      for (const testCase of cases) {
+        const { selfUpdate, requests } = yield* makeHarness({ releaseEnv: testCase.env });
+        yield* selfUpdate.update({ targetVersion: "1.1.0" });
+        expect(requests[0]).toBe(testCase.expected);
+      }
+    }),
+  );
+
   it.effect("rejects invalid versions and desktop-managed servers before staging", () =>
     Effect.gen(function* () {
       const web = yield* makeHarness();
@@ -366,7 +407,11 @@ it.layer(NodeServices.layer)("server self update", (it) => {
       expect(
         (yield* desktop.selfUpdate.update({ targetVersion: "1.1.0" }).pipe(Effect.flip)).reason,
       ).toContain("desktop app");
-      expect([...web.order, ...desktop.order]).toEqual([]);
+      const unmanaged = yield* makeHarness({ managed: false });
+      expect(
+        (yield* unmanaged.selfUpdate.update({ targetVersion: "1.1.0" }).pipe(Effect.flip)).reason,
+      ).toContain("dispatch service install");
+      expect([...web.order, ...desktop.order, ...unmanaged.order]).toEqual([]);
     }),
   );
 

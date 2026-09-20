@@ -56,6 +56,11 @@ it("exports provider-compatible object schemas with described parameters", () =>
   }
 });
 
+it("uses a neutral public website in the navigate example", () => {
+  expect(PreviewToolkit.tools.preview_navigate.description).toContain("https://example.com");
+  expect(PreviewToolkit.tools.preview_navigate.description).not.toContain("t3.chat");
+});
+
 it("exports exact object result schemas for preview actions", () => {
   const actionNames = [
     "preview_click",

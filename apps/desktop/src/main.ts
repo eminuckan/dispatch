@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off - Desktop bootstrap must choose the current or legacy data home before the Effect layers exist.
 import * as MacPermissions from "./permissions/MacPermissions.ts";
 for (const stream of [process.stdout, process.stderr]) {
   stream.on("error", (err: NodeJS.ErrnoException) => {
@@ -8,7 +9,9 @@ for (const stream of [process.stdout, process.stderr]) {
 import * as NodeHttpClient from "@effect/platform-node/NodeHttpClient";
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -16,6 +19,7 @@ import * as Option from "effect/Option";
 import * as Electron from "electron";
 
 import * as NetService from "@t3tools/shared/Net";
+import { applyDispatchEnvironmentAliases } from "@t3tools/shared/dispatchEnv";
 import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import type { RemoteT3RunnerOptions } from "@t3tools/ssh/tunnel";
 import serverPackageJson from "../../server/package.json" with { type: "json" };
@@ -67,6 +71,14 @@ import * as DesktopWindow from "./window/DesktopWindow.ts";
 import * as DesktopWslBackend from "./wsl/DesktopWslBackend.ts";
 import * as DesktopWslEnvironment from "./wsl/DesktopWslEnvironment.ts";
 import * as DesktopWslServerTree from "./wsl/DesktopWslServerTree.ts";
+
+if (!process.env.DISPATCH_HOME?.trim() && !process.env.T3CODE_HOME?.trim()) {
+  const dispatchHome = NodePath.join(NodeOS.homedir(), ".dispatch");
+  const legacyHome = NodePath.join(NodeOS.homedir(), ".t3-jev");
+  process.env.DISPATCH_HOME =
+    NodeFS.existsSync(dispatchHome) || !NodeFS.existsSync(legacyHome) ? dispatchHome : legacyHome;
+}
+applyDispatchEnvironmentAliases(process.env);
 
 const desktopEnvironmentLayer = Layer.unwrap(
   Effect.gen(function* () {

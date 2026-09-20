@@ -9,17 +9,46 @@ const repoEnv = loadRepoEnv();
 Object.assign(process.env, repoEnv);
 
 const APP_VARIANT = resolveAppVariant(repoEnv.APP_VARIANT);
-const isIosPersonalTeamBuild = repoEnv.T3CODE_IOS_PERSONAL_TEAM === "1";
+const firstNonEmpty = (...values: ReadonlyArray<string | undefined>) =>
+  values.map((value) => value?.trim()).find((value): value is string => Boolean(value));
+const isIosPersonalTeamBuild =
+  firstNonEmpty(repoEnv.DISPATCH_IOS_PERSONAL_TEAM, repoEnv.T3CODE_IOS_PERSONAL_TEAM) === "1";
 const runtimeVersionPolicy =
   process.env.MOBILE_VERSION_POLICY ??
   (APP_VARIANT === "development" ? "appVersion" : "fingerprint");
 
-const personalTeamBundleIdentifier = repoEnv.T3CODE_IOS_PERSONAL_TEAM_BUNDLE_ID?.trim();
+const personalTeamBundleIdentifier = firstNonEmpty(
+  repoEnv.DISPATCH_IOS_PERSONAL_TEAM_BUNDLE_ID,
+  repoEnv.T3CODE_IOS_PERSONAL_TEAM_BUNDLE_ID,
+);
+const appleTeamId = firstNonEmpty(repoEnv.DISPATCH_APPLE_TEAM_ID);
+const passkeyRelyingParties = firstNonEmpty(
+  repoEnv.DISPATCH_CLERK_PASSKEY_RP_DOMAINS,
+  repoEnv.T3CODE_CLERK_PASSKEY_RP_DOMAINS,
+  repoEnv.DISPATCH_CLERK_PASSKEY_RP_DOMAIN,
+  repoEnv.T3CODE_CLERK_PASSKEY_RP_DOMAIN,
+)
+  ?.split(",")
+  .map((domain) => domain.trim())
+  .filter(Boolean);
+const easOwner = firstNonEmpty(repoEnv.DISPATCH_EXPO_OWNER);
+const easProjectId = firstNonEmpty(repoEnv.DISPATCH_EXPO_PROJECT_ID);
+const mobileUpdatesUrl = firstNonEmpty(repoEnv.DISPATCH_MOBILE_UPDATES_URL);
+const androidGoogleServicesFile = firstNonEmpty(
+  repoEnv.DISPATCH_ANDROID_GOOGLE_SERVICES_FILE,
+  repoEnv.T3CODE_ANDROID_GOOGLE_SERVICES_FILE,
+);
+const relayUrl = firstNonEmpty(repoEnv.DISPATCH_RELAY_URL, repoEnv.T3CODE_RELAY_URL);
+const mobileUpdatesEnabled =
+  firstNonEmpty(repoEnv.DISPATCH_MOBILE_UPDATES_ENABLED, repoEnv.T3CODE_MOBILE_UPDATES_ENABLED) !==
+    "0" && mobileUpdatesUrl !== undefined;
+const isShowcaseCaptureBuild =
+  firstNonEmpty(repoEnv.DISPATCH_SHOWCASE_CAPTURE_BUILD, repoEnv.T3_SHOWCASE_CAPTURE_BUILD) === "1";
 const IOS_BUNDLE_IDENTIFIER_PATTERN = /^[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$/;
 
 const fromRepoRoot = (relativePath: string) => `../../${relativePath}`;
-// Android layers are rendered by scripts/export-android-icons.ts from the Icon Composer sources.
-// The wordmark sits inside the adaptive safe zone; the variant artwork is a full-bleed background.
+// Android layers are rendered by scripts/export-android-icons.ts from the Dispatch artwork.
+// The mark sits inside the adaptive safe zone over the Dispatch icon background.
 const androidAdaptiveForeground = "./assets/android-icon-foreground.png";
 
 if (
@@ -28,72 +57,69 @@ if (
     !IOS_BUNDLE_IDENTIFIER_PATTERN.test(personalTeamBundleIdentifier))
 ) {
   throw new Error(
-    "T3CODE_IOS_PERSONAL_TEAM_BUNDLE_ID must be a reverse-DNS identifier such as com.example.t3code when T3CODE_IOS_PERSONAL_TEAM=1.",
+    "DISPATCH_IOS_PERSONAL_TEAM_BUNDLE_ID must be a reverse-DNS identifier such as com.example.dispatch when DISPATCH_IOS_PERSONAL_TEAM=1.",
   );
 }
 
 const DEVELOPMENT_ASSETS = {
   appIcon: fromRepoRoot(BRAND_ASSET_PATHS.developmentIosIconPng),
-  iosIcon: fromRepoRoot(BRAND_ASSET_PATHS.developmentIconComposerProject),
+  iosIcon: fromRepoRoot(BRAND_ASSET_PATHS.developmentIosIconPng),
   splashIcon: fromRepoRoot(BRAND_ASSET_PATHS.developmentIosIconPng),
   androidAdaptiveForeground,
-  androidAdaptiveBackgroundColor: "#347FF8",
+  androidAdaptiveBackgroundColor: "#FEFAF4",
   androidAdaptiveBackgroundImage: "./assets/android-icon-background-dev.png",
   androidSplashIcon: "./assets/android-splash-icon-dev.png",
   androidMonochromeIcon: "./assets/android-icon-mark.png",
   androidNotificationIcon: "./assets/android-notification-icon.png",
-  androidNotificationColor: "#00639B",
+  androidNotificationColor: "#FF671B",
 } as const;
 
 const PREVIEW_ASSETS = {
   appIcon: fromRepoRoot(BRAND_ASSET_PATHS.nightlyIosIconPng),
-  iosIcon: fromRepoRoot(BRAND_ASSET_PATHS.nightlyIconComposerProject),
+  iosIcon: fromRepoRoot(BRAND_ASSET_PATHS.nightlyIosIconPng),
   splashIcon: fromRepoRoot(BRAND_ASSET_PATHS.nightlyIosIconPng),
   androidAdaptiveForeground,
-  androidAdaptiveBackgroundColor: "#111533",
+  androidAdaptiveBackgroundColor: "#FEFAF4",
   androidAdaptiveBackgroundImage: "./assets/android-icon-background-nightly.png",
   androidSplashIcon: "./assets/android-splash-icon-nightly.png",
   androidMonochromeIcon: "./assets/android-icon-mark.png",
   androidNotificationIcon: "./assets/android-notification-icon.png",
-  androidNotificationColor: "#7565C7",
+  androidNotificationColor: "#FF671B",
 } as const;
 
 const RELEASE_ASSETS = {
   appIcon: fromRepoRoot(BRAND_ASSET_PATHS.productionIosIconPng),
-  iosIcon: fromRepoRoot(BRAND_ASSET_PATHS.productionIconComposerProject),
+  iosIcon: fromRepoRoot(BRAND_ASSET_PATHS.productionIosIconPng),
   splashIcon: fromRepoRoot(BRAND_ASSET_PATHS.productionIosIconPng),
   androidAdaptiveForeground,
-  androidAdaptiveBackgroundColor: "#000000",
+  androidAdaptiveBackgroundColor: "#FEFAF4",
   androidAdaptiveBackgroundImage: undefined,
   androidSplashIcon: "./assets/android-splash-icon-prod.png",
   androidMonochromeIcon: "./assets/android-icon-mark.png",
   androidNotificationIcon: "./assets/android-notification-icon.png",
-  androidNotificationColor: "#FFFFFF",
+  androidNotificationColor: "#FF671B",
 } as const;
 
 const VARIANT_CONFIG = {
   development: {
-    appName: "T3 Code Dev",
-    scheme: "t3code-dev",
-    iosBundleIdentifier: "com.t3tools.t3code.dev",
-    androidPackage: "com.t3tools.t3code.dev",
-    relyingParty: "clerk.t3.codes",
+    appName: "Dispatch Dev",
+    scheme: "dispatch-dev",
+    iosBundleIdentifier: "com.eminuckan.dispatch.dev",
+    androidPackage: "com.eminuckan.dispatch.dev",
     assets: DEVELOPMENT_ASSETS,
   },
   preview: {
-    appName: "T3 Code Preview",
-    scheme: "t3code-preview",
-    iosBundleIdentifier: "com.t3tools.t3code.preview",
-    androidPackage: "com.t3tools.t3code.preview",
-    relyingParty: "clerk.t3.codes",
+    appName: "Dispatch Preview",
+    scheme: "dispatch-preview",
+    iosBundleIdentifier: "com.eminuckan.dispatch.preview",
+    androidPackage: "com.eminuckan.dispatch.preview",
     assets: PREVIEW_ASSETS,
   },
   production: {
-    appName: "T3 Code",
-    scheme: "t3code",
-    iosBundleIdentifier: "com.t3tools.t3code",
-    androidPackage: "com.t3tools.t3code",
-    relyingParty: "clerk.t3.codes",
+    appName: "Dispatch",
+    scheme: "dispatch",
+    iosBundleIdentifier: "com.eminuckan.dispatch",
+    androidPackage: "com.eminuckan.dispatch",
     assets: RELEASE_ASSETS,
   },
 } as const;
@@ -133,7 +159,7 @@ const widgetsPlugin: NonNullable<ExpoConfig["plugins"]>[number] = [
       {
         name: "SubscriptionUsage",
         displayName: "Subscription usage",
-        description: "Subscription quotas from your connected T3 Code environments.",
+        description: "Subscription quotas from your connected Dispatch environments.",
         configuration: {
           title: "Subscription usage",
           description:
@@ -172,7 +198,7 @@ const widgetsPlugin: NonNullable<ExpoConfig["plugins"]>[number] = [
       {
         name: "AgentActivity",
         displayName: "Agent Activity",
-        description: "Shows the current state of active T3 Code agents.",
+        description: "Shows the current state of active Dispatch agents.",
         supportedFamilies: ["systemSmall", "systemMedium", "accessoryRectangular"],
       },
     ],
@@ -211,7 +237,7 @@ const sharingPlugin: NonNullable<ExpoConfig["plugins"]>[number] = [
 
 const config: ExpoConfig = {
   name: variant.appName,
-  slug: "t3-code",
+  slug: "dispatch",
   platforms: ["ios", "android"],
   scheme: variant.scheme,
   version: "1.2.1",
@@ -225,8 +251,8 @@ const config: ExpoConfig = {
   icon: variant.assets.appIcon,
   userInterfaceStyle: "automatic",
   updates: {
-    enabled: repoEnv.T3CODE_MOBILE_UPDATES_ENABLED !== "0",
-    url: "https://u.expo.dev/d763fcb8-d37c-41ea-a773-b54a0ab4a454",
+    enabled: mobileUpdatesEnabled,
+    ...(mobileUpdatesUrl ? { url: mobileUpdatesUrl } : {}),
     checkAutomatically: "ON_LOAD",
     fallbackToCacheTimeout: 0,
   },
@@ -235,33 +261,34 @@ const config: ExpoConfig = {
     supportsTablet: true,
     // Multitasking-capable iPad apps cannot rotate programmatically, so the
     // showcase capture build requires full screen (see infoPlist below).
-    requireFullScreen: process.env.T3_SHOWCASE_CAPTURE_BUILD === "1",
+    requireFullScreen: isShowcaseCaptureBuild,
     bundleIdentifier: iosBundleIdentifier,
-    // Pin code signing to the T3 Tools team so non-interactive `expo run:ios`
-    // does not fall back to a personal team (which cannot sign app groups,
-    // Sign in with Apple, or push notification entitlements).
-    appleTeamId: "ARK85ZXQ4Z",
-    associatedDomains: [
-      `applinks:${variant.relyingParty}`,
-      `webcredentials:${variant.relyingParty}`,
-    ],
+    ...(appleTeamId ? { appleTeamId } : {}),
+    ...(passkeyRelyingParties?.length
+      ? {
+          associatedDomains: passkeyRelyingParties.flatMap((domain) => [
+            `applinks:${domain}`,
+            `webcredentials:${domain}`,
+          ]),
+        }
+      : {}),
     entitlements: {
-      "keychain-access-groups": [`$(AppIdentifierPrefix)${variant.iosBundleIdentifier}`],
+      "keychain-access-groups": [`$(AppIdentifierPrefix)${iosBundleIdentifier}`],
     },
     infoPlist: {
       NSAppTransportSecurity: {
         NSAllowsArbitraryLoads: true,
       },
       NSLocalNetworkUsageDescription:
-        "Allow T3 Code to connect to T3 Code servers on your local network or tailnet.",
-      NSPhotoLibraryAddUsageDescription: "Allow T3 Code to save images to your photo library.",
+        "Allow Dispatch to connect to Dispatch servers on your local network or tailnet.",
+      NSPhotoLibraryAddUsageDescription: "Allow Dispatch to save images to your photo library.",
       ITSAppUsesNonExemptEncryption: false,
       // The App Store screenshot harness rotates the iPad interface from
       // inside the app (CI denies osascript the Accessibility access that
       // Simulator menu scripting needs), and iPadOS ignores programmatic
       // orientation requests for multitasking-capable apps — so the capture
       // build opts out of multitasking and declares landscape support.
-      ...(process.env.T3_SHOWCASE_CAPTURE_BUILD === "1"
+      ...(isShowcaseCaptureBuild
         ? {
             "UISupportedInterfaceOrientations~ipad": [
               "UIInterfaceOrientationPortrait",
@@ -276,9 +303,7 @@ const config: ExpoConfig = {
   android: {
     icon: variant.assets.appIcon,
     package: variant.androidPackage,
-    ...(repoEnv.T3CODE_ANDROID_GOOGLE_SERVICES_FILE
-      ? { googleServicesFile: repoEnv.T3CODE_ANDROID_GOOGLE_SERVICES_FILE }
-      : {}),
+    ...(androidGoogleServicesFile ? { googleServicesFile: androidGoogleServicesFile } : {}),
     adaptiveIcon: {
       backgroundColor: variant.assets.androidAdaptiveBackgroundColor,
       ...(variant.assets.androidAdaptiveBackgroundImage
@@ -336,7 +361,13 @@ const config: ExpoConfig = {
     ],
     // appleSignIn must be gated here: withoutIosPersonalTeamCapabilities.cjs runs before
     // plugins earlier in this array, so it cannot strip the entitlement Clerk would add.
-    ["@clerk/expo", { theme: "./clerk-theme.json", appleSignIn: !isIosPersonalTeamBuild }],
+    [
+      "@clerk/expo",
+      {
+        theme: "./clerk-theme.json",
+        appleSignIn: !isIosPersonalTeamBuild && appleTeamId !== undefined,
+      },
+    ],
     "expo-web-browser",
     [
       "expo-quick-actions",
@@ -357,7 +388,7 @@ const config: ExpoConfig = {
     [
       "expo-audio",
       {
-        microphonePermission: "Allow T3 Code to use your microphone for voice input.",
+        microphonePermission: "Allow Dispatch to use your microphone for voice input.",
         recordAudioAndroid: false,
         enableBackgroundPlayback: false,
         enableBackgroundRecording: false,
@@ -366,7 +397,7 @@ const config: ExpoConfig = {
     [
       "expo-camera",
       {
-        cameraPermission: "Allow T3 Code to access your camera so you can scan pairing QR codes.",
+        cameraPermission: "Allow Dispatch to access your camera so you can scan pairing QR codes.",
         microphonePermission: false,
         barcodeScannerEnabled: true,
         recordAudioAndroid: false,
@@ -386,9 +417,8 @@ const config: ExpoConfig = {
         },
         android: {
           // Android 12+ masks the splash icon to a circle over the central two thirds of
-          // its 288dp canvas, so the iOS export's corners get cut. A full-canvas image of
-          // the composed adaptive layers puts the wordmark in the same frame the launcher
-          // icon uses.
+          // its 288dp canvas. The exporter composes the Dispatch background and mark onto
+          // that full canvas so the splash uses the same safe framing as the launcher.
           image: variant.assets.androidSplashIcon,
           imageWidth: 288,
           dark: { image: variant.assets.androidSplashIcon },
@@ -433,7 +463,7 @@ const config: ExpoConfig = {
     appVariant: APP_VARIANT,
     iosPersonalTeamBuild: isIosPersonalTeamBuild,
     relay: {
-      url: repoEnv.T3CODE_RELAY_URL ?? null,
+      url: relayUrl ?? null,
     },
     clerk: {
       publishableKey: repoEnv.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY ?? null,
@@ -453,11 +483,9 @@ const config: ExpoConfig = {
       tracesDataset: repoEnv.EXPO_PUBLIC_OTLP_TRACES_DATASET ?? null,
       tracesToken: repoEnv.EXPO_PUBLIC_OTLP_TRACES_TOKEN ?? null,
     },
-    eas: {
-      projectId: "d763fcb8-d37c-41ea-a773-b54a0ab4a454",
-    },
+    ...(easProjectId ? { eas: { projectId: easProjectId } } : {}),
   },
-  owner: "pingdotgg",
+  ...(easOwner ? { owner: easOwner } : {}),
 };
 
 export default config;

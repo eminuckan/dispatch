@@ -200,7 +200,7 @@ jobs:
             echo "release_channel=stable" >> "$GITHUB_OUTPUT"
             echo "version=$version" >> "$GITHUB_OUTPUT"
             echo "tag=v$version" >> "$GITHUB_OUTPUT"
-            echo "name=T3 Code v$version" >> "$GITHUB_OUTPUT"
+            echo "name=Dispatch v$version" >> "$GITHUB_OUTPUT"
             echo "cli_dist_tag=latest" >> "$GITHUB_OUTPUT"
             if [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
               echo "is_prerelease=false" >> "$GITHUB_OUTPUT"
@@ -269,11 +269,13 @@ jobs:
 
   relay_public_config:
     name: Resolve T3 Connect public config
-    # Consumes only the release commit, not preflight's resolved version, so it
-    # runs alongside preflight instead of after it. The condition mirrors preflight's.
+    # T3 Connect is an upstream-operated service. Independent Dispatch releases
+    # stay cloud-disabled unless the repository explicitly opts into resolving
+    # production config for it.
     needs: [resolve_commit]
     if: |
       needs.resolve_commit.result == 'success' &&
+      vars.DISPATCH_RELEASE_ENABLE_T3_CONNECT == 'true' &&
       (github.event_name != 'schedule' || needs.resolve_commit.outputs.has_changes == 'true')
     runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 5
@@ -332,9 +334,9 @@ jobs:
           token="$(field clientTracingToken)"
           echo "::add-mask::$token"
           {
-            echo "T3CODE_RELAY_CLIENT_OTLP_TRACES_URL=$url"
-            echo "T3CODE_RELAY_CLIENT_OTLP_TRACES_DATASET=$dataset"
-            echo "T3CODE_RELAY_CLIENT_OTLP_TRACES_TOKEN=$token"
+            echo "DISPATCH_RELAY_CLIENT_OTLP_TRACES_URL=$url"
+            echo "DISPATCH_RELAY_CLIENT_OTLP_TRACES_DATASET=$dataset"
+            echo "DISPATCH_RELAY_CLIENT_OTLP_TRACES_TOKEN=$token"
           } > "$RUNNER_TEMP/relay-client-tracing.env"
 
       - name: Upload relay client tracing config
@@ -379,21 +381,20 @@ jobs:
 
   # The platform-independent JS (server bundle, web client, Electron main) is
   # built exactly once here and handed to every platform job as `js-bundle`.
-  # The relay/Clerk values are baked into the bundle, so they belong to this
-  # job rather than to the packaging jobs.
+  # T3 Connect relay/Clerk values are baked into the bundle only when the
+  # explicit production-config opt-in above ran successfully. Otherwise the
+  # empty canonical Dispatch env values intentionally build a cloud-disabled bundle.
   build_bundle:
     name: Build JS bundle
-    # Same gating as relay_public_config: only the release commit is needed, so
-    # this runs alongside preflight. See the condition comment there.
     needs: [preflight, relay_public_config]
-    if: ${{ !cancelled() && needs.preflight.result == 'success' && needs.relay_public_config.result == 'success' }}
+    if: ${{ always() && !cancelled() && needs.preflight.result == 'success' && (needs.relay_public_config.result == 'success' || needs.relay_public_config.result == 'skipped') }}
     runs-on: blacksmith-32vcpu-ubuntu-2404
     timeout-minutes: 30
     env:
-      T3CODE_CLERK_PUBLISHABLE_KEY: ${{ needs.relay_public_config.outputs.clerk_publishable_key }}
-      T3CODE_CLERK_JWT_TEMPLATE: ${{ needs.relay_public_config.outputs.clerk_jwt_template }}
-      T3CODE_CLERK_CLI_OAUTH_CLIENT_ID: ${{ needs.relay_public_config.outputs.clerk_cli_oauth_client_id }}
-      T3CODE_RELAY_URL: ${{ needs.relay_public_config.outputs.relay_url }}
+      DISPATCH_CLERK_PUBLISHABLE_KEY: ${{ needs.relay_public_config.outputs.clerk_publishable_key }}
+      DISPATCH_CLERK_JWT_TEMPLATE: ${{ needs.relay_public_config.outputs.clerk_jwt_template }}
+      DISPATCH_CLERK_CLI_OAUTH_CLIENT_ID: ${{ needs.relay_public_config.outputs.clerk_cli_oauth_client_id }}
+      DISPATCH_RELAY_URL: ${{ needs.relay_public_config.outputs.relay_url }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -426,18 +427,35 @@ jobs:
         run: vp install --filter=t3... --filter=@t3tools/web... --filter=@t3tools/desktop... --filter=@t3tools/scripts...
 
       - name: Download relay client tracing config
+        if: needs.relay_public_config.result == 'success'
         uses: actions/download-artifact@v8
         with:
           name: relay-client-tracing-config
           path: ${{ runner.temp }}/relay-client-tracing
 
       - name: Load relay client tracing config
+        if: needs.relay_public_config.result == 'success'
         shell: bash
         run: |
           config_path="$RUNNER_TEMP/relay-client-tracing/relay-client-tracing.env"
-          tracing_token="$(sed -n 's/^T3CODE_RELAY_CLIENT_OTLP_TRACES_TOKEN=//p' "$config_path")"
+          tracing_value() {
+            canonical="$1"
+            legacy="$2"
+            value="$(sed -n "s/^${canonical}=//p" "$config_path" | head -n 1)"
+            if [[ -z "$value" ]]; then
+              value="$(sed -n "s/^${legacy}=//p" "$config_path" | head -n 1)"
+            fi
+            printf '%s' "$value"
+          }
+          tracing_url="$(tracing_value DISPATCH_RELAY_CLIENT_OTLP_TRACES_URL T3CODE_RELAY_CLIENT_OTLP_TRACES_URL)"
+          tracing_dataset="$(tracing_value DISPATCH_RELAY_CLIENT_OTLP_TRACES_DATASET T3CODE_RELAY_CLIENT_OTLP_TRACES_DATASET)"
+          tracing_token="$(tracing_value DISPATCH_RELAY_CLIENT_OTLP_TRACES_TOKEN T3CODE_RELAY_CLIENT_OTLP_TRACES_TOKEN)"
           echo "::add-mask::$tracing_token"
-          cat "$config_path" >> "$GITHUB_ENV"
+          {
+            echo "DISPATCH_RELAY_CLIENT_OTLP_TRACES_URL=$tracing_url"
+            echo "DISPATCH_RELAY_CLIENT_OTLP_TRACES_DATASET=$tracing_dataset"
+            echo "DISPATCH_RELAY_CLIENT_OTLP_TRACES_TOKEN=$tracing_token"
+          } >> "$GITHUB_ENV"
 
       - name: Align package versions to release version
         run: node scripts/update-release-package-versions.ts "${{ needs.preflight.outputs.version }}"
@@ -476,7 +494,7 @@ jobs:
   desktop_mac_arm64:
     name: Desktop macOS arm64
     needs: [preflight, relay_public_config, build_bundle]
-    if: ${{ !cancelled() && needs.preflight.result == 'success' && needs.relay_public_config.result == 'success' && needs.build_bundle.result == 'success' }}
+    if: ${{ always() && !cancelled() && needs.preflight.result == 'success' && (needs.relay_public_config.result == 'success' || needs.relay_public_config.result == 'skipped') && needs.build_bundle.result == 'success' }}
     uses: ./.github/workflows/release-desktop.yml
     secrets: inherit
     with:
@@ -487,6 +505,7 @@ jobs:
       clerk_jwt_template: ${{ needs.relay_public_config.outputs.clerk_jwt_template }}
       clerk_cli_oauth_client_id: ${{ needs.relay_public_config.outputs.clerk_cli_oauth_client_id }}
       relay_url: ${{ needs.relay_public_config.outputs.relay_url }}
+      relay_client_tracing: ${{ needs.relay_public_config.result == 'success' }}
       label: macOS arm64
       runner: blacksmith-12vcpu-macos-26
       platform: mac
@@ -499,7 +518,7 @@ jobs:
   desktop_mac_x64:
     name: Desktop macOS x64
     needs: [preflight, relay_public_config, build_bundle]
-    if: ${{ !cancelled() && needs.preflight.result == 'success' && needs.relay_public_config.result == 'success' && needs.build_bundle.result == 'success' }}
+    if: ${{ always() && !cancelled() && needs.preflight.result == 'success' && (needs.relay_public_config.result == 'success' || needs.relay_public_config.result == 'skipped') && needs.build_bundle.result == 'success' }}
     uses: ./.github/workflows/release-desktop.yml
     secrets: inherit
     with:
@@ -510,6 +529,7 @@ jobs:
       clerk_jwt_template: ${{ needs.relay_public_config.outputs.clerk_jwt_template }}
       clerk_cli_oauth_client_id: ${{ needs.relay_public_config.outputs.clerk_cli_oauth_client_id }}
       relay_url: ${{ needs.relay_public_config.outputs.relay_url }}
+      relay_client_tracing: ${{ needs.relay_public_config.result == 'success' }}
       label: macOS x64
       runner: blacksmith-12vcpu-macos-26
       platform: mac
@@ -525,7 +545,7 @@ jobs:
   desktop_linux_x64:
     name: Desktop Linux x64
     needs: [preflight, relay_public_config, build_bundle]
-    if: ${{ !cancelled() && needs.preflight.result == 'success' && needs.relay_public_config.result == 'success' && needs.build_bundle.result == 'success' }}
+    if: ${{ always() && !cancelled() && needs.preflight.result == 'success' && (needs.relay_public_config.result == 'success' || needs.relay_public_config.result == 'skipped') && needs.build_bundle.result == 'success' }}
     uses: ./.github/workflows/release-desktop.yml
     secrets: inherit
     with:
@@ -536,6 +556,7 @@ jobs:
       clerk_jwt_template: ${{ needs.relay_public_config.outputs.clerk_jwt_template }}
       clerk_cli_oauth_client_id: ${{ needs.relay_public_config.outputs.clerk_cli_oauth_client_id }}
       relay_url: ${{ needs.relay_public_config.outputs.relay_url }}
+      relay_client_tracing: ${{ needs.relay_public_config.result == 'success' }}
       label: Linux x64
       runner: blacksmith-32vcpu-ubuntu-2404
       platform: linux
@@ -550,7 +571,7 @@ jobs:
   desktop_linux_arm64:
     name: Desktop Linux arm64
     needs: [preflight, relay_public_config, build_bundle]
-    if: ${{ !cancelled() && needs.preflight.result == 'success' && needs.relay_public_config.result == 'success' && needs.build_bundle.result == 'success' }}
+    if: ${{ always() && !cancelled() && needs.preflight.result == 'success' && (needs.relay_public_config.result == 'success' || needs.relay_public_config.result == 'skipped') && needs.build_bundle.result == 'success' }}
     uses: ./.github/workflows/release-desktop.yml
     secrets: inherit
     with:
@@ -561,6 +582,7 @@ jobs:
       clerk_jwt_template: ${{ needs.relay_public_config.outputs.clerk_jwt_template }}
       clerk_cli_oauth_client_id: ${{ needs.relay_public_config.outputs.clerk_cli_oauth_client_id }}
       relay_url: ${{ needs.relay_public_config.outputs.relay_url }}
+      relay_client_tracing: ${{ needs.relay_public_config.result == 'success' }}
       label: Linux arm64
       runner: ubuntu-24.04-arm
       platform: linux
@@ -577,7 +599,7 @@ jobs:
   desktop_win_x64:
     name: Desktop Windows x64
     needs: [preflight, relay_public_config, build_bundle, desktop_linux_x64]
-    if: ${{ !cancelled() && needs.preflight.result == 'success' && needs.relay_public_config.result == 'success' && needs.build_bundle.result == 'success' }}
+    if: ${{ always() && !cancelled() && needs.preflight.result == 'success' && (needs.relay_public_config.result == 'success' || needs.relay_public_config.result == 'skipped') && needs.build_bundle.result == 'success' }}
     uses: ./.github/workflows/release-desktop.yml
     secrets: inherit
     with:
@@ -588,6 +610,7 @@ jobs:
       clerk_jwt_template: ${{ needs.relay_public_config.outputs.clerk_jwt_template }}
       clerk_cli_oauth_client_id: ${{ needs.relay_public_config.outputs.clerk_cli_oauth_client_id }}
       relay_url: ${{ needs.relay_public_config.outputs.relay_url }}
+      relay_client_tracing: ${{ needs.relay_public_config.result == 'success' }}
       label: Windows x64
       runner: blacksmith-32vcpu-windows-2025
       platform: win
@@ -600,7 +623,7 @@ jobs:
   desktop_win_arm64:
     name: Desktop Windows arm64
     needs: [preflight, relay_public_config, build_bundle, desktop_linux_arm64]
-    if: ${{ !cancelled() && needs.preflight.result == 'success' && needs.relay_public_config.result == 'success' && needs.build_bundle.result == 'success' }}
+    if: ${{ always() && !cancelled() && needs.preflight.result == 'success' && (needs.relay_public_config.result == 'success' || needs.relay_public_config.result == 'skipped') && needs.build_bundle.result == 'success' }}
     uses: ./.github/workflows/release-desktop.yml
     secrets: inherit
     with:
@@ -611,6 +634,7 @@ jobs:
       clerk_jwt_template: ${{ needs.relay_public_config.outputs.clerk_jwt_template }}
       clerk_cli_oauth_client_id: ${{ needs.relay_public_config.outputs.clerk_cli_oauth_client_id }}
       relay_url: ${{ needs.relay_public_config.outputs.relay_url }}
+      relay_client_tracing: ${{ needs.relay_public_config.result == 'success' }}
       label: Windows arm64
       runner: windows-11-arm
       platform: win
@@ -622,13 +646,14 @@ jobs:
 
   # npm gets the same bytes as the GitHub Release: the launcher plus one
   # package per CLI archive. Preview publishes too, under the `preview`
-  # dist-tag, which nothing resolves unless asked for by name.
+  # dist-tag, which nothing resolves unless asked for by name. Dispatch does
+  # not assume ownership of the legacy `t3` / `@t3code/*` npm names: publishing
+  # them is an explicit repository opt-in.
   publish_cli:
     name: Publish CLI to npm
     needs:
       [
         preflight,
-        relay_public_config,
         quality,
         desktop_mac_arm64,
         desktop_linux_x64,
@@ -636,7 +661,7 @@ jobs:
         desktop_win_x64,
         desktop_win_arm64,
       ]
-    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.relay_public_config.result == 'success' && needs.quality.result == 'success' && needs.desktop_mac_arm64.result == 'success' && needs.desktop_linux_x64.result == 'success' && needs.desktop_linux_arm64.result == 'success' && needs.desktop_win_x64.result == 'success' && needs.desktop_win_arm64.result == 'success' }}
+    if: ${{ !failure() && !cancelled() && vars.DISPATCH_RELEASE_PUBLISH_LEGACY_NPM == 'true' && needs.preflight.result == 'success' && needs.quality.result == 'success' && needs.desktop_mac_arm64.result == 'success' && needs.desktop_linux_x64.result == 'success' && needs.desktop_linux_arm64.result == 'success' && needs.desktop_win_x64.result == 'success' && needs.desktop_win_arm64.result == 'success' }}
     runs-on: ubuntu-24.04 # blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 15
     permissions:
@@ -690,6 +715,7 @@ jobs:
     needs:
       [
         preflight,
+        quality,
         desktop_mac_arm64,
         desktop_mac_x64,
         desktop_linux_x64,
@@ -698,7 +724,7 @@ jobs:
         desktop_win_arm64,
         publish_cli,
       ]
-    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.desktop_mac_arm64.result == 'success' && needs.desktop_mac_x64.result == 'success' && needs.desktop_linux_x64.result == 'success' && needs.desktop_linux_arm64.result == 'success' && needs.desktop_win_x64.result == 'success' && needs.desktop_win_arm64.result == 'success' && needs.publish_cli.result == 'success' }}
+    if: ${{ always() && !cancelled() && needs.preflight.result == 'success' && needs.quality.result == 'success' && needs.desktop_mac_arm64.result == 'success' && needs.desktop_mac_x64.result == 'success' && needs.desktop_linux_x64.result == 'success' && needs.desktop_linux_arm64.result == 'success' && needs.desktop_win_x64.result == 'success' && needs.desktop_win_arm64.result == 'success' && (needs.publish_cli.result == 'success' || needs.publish_cli.result == 'skipped') }}
     runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 30
     permissions:
@@ -833,7 +859,7 @@ jobs:
           > [!WARNING]
           > **This is a preview build. Do not install it unless you know exactly why you are here.**
           >
-          > Preview builds are cut by maintainers from unreleased branches to exercise the release pipeline. They can be broken, receive no fixes, are never offered as updates, and are not supported. If you want T3 Code, install the [latest release](https://github.com/pingdotgg/t3code/releases/latest) or a nightly instead.
+          > Preview builds are cut by maintainers from unreleased branches to exercise the release pipeline. They can be broken, receive no fixes, are never offered as updates, and are not supported. If you want Dispatch, install the [latest release](https://github.com/eminuckan/dispatch/releases/latest) or a nightly instead.
 
           Built from `${{ needs.preflight.outputs.ref }}`.
           EOF
@@ -872,7 +898,7 @@ jobs:
   publish_aur:
     name: Publish AUR package
     needs: [preflight, release]
-    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.release.result == 'success' && needs.preflight.outputs.release_channel != 'preview' }}
+    if: ${{ !failure() && !cancelled() && vars.DISPATCH_RELEASE_PUBLISH_AUR_COMPAT == 'true' && needs.preflight.result == 'success' && needs.release.result == 'success' && needs.preflight.outputs.release_channel != 'preview' }}
     uses: ./.github/workflows/publish-aur.yml
     with:
       release_tag: ${{ needs.preflight.outputs.tag }}
@@ -882,20 +908,20 @@ jobs:
   deploy_web:
     name: Deploy hosted web app
     needs: [preflight, relay_public_config, release]
-    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.relay_public_config.result == 'success' && needs.release.result == 'success' && needs.preflight.outputs.release_channel != 'preview' }}
+    if: ${{ always() && !cancelled() && vars.DISPATCH_RELEASE_DEPLOY_WEB == 'true' && needs.preflight.result == 'success' && (needs.relay_public_config.result == 'success' || needs.relay_public_config.result == 'skipped') && needs.release.result == 'success' && needs.preflight.outputs.release_channel != 'preview' }}
     runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 10
     env:
-      T3CODE_CLERK_PUBLISHABLE_KEY: ${{ needs.relay_public_config.outputs.clerk_publishable_key }}
-      T3CODE_CLERK_JWT_TEMPLATE: ${{ needs.relay_public_config.outputs.clerk_jwt_template }}
-      T3CODE_CLERK_CLI_OAUTH_CLIENT_ID: ${{ needs.relay_public_config.outputs.clerk_cli_oauth_client_id }}
-      T3CODE_RELAY_URL: ${{ needs.relay_public_config.outputs.relay_url }}
+      DISPATCH_CLERK_PUBLISHABLE_KEY: ${{ needs.relay_public_config.outputs.clerk_publishable_key }}
+      DISPATCH_CLERK_JWT_TEMPLATE: ${{ needs.relay_public_config.outputs.clerk_jwt_template }}
+      DISPATCH_CLERK_CLI_OAUTH_CLIENT_ID: ${{ needs.relay_public_config.outputs.clerk_cli_oauth_client_id }}
+      DISPATCH_RELAY_URL: ${{ needs.relay_public_config.outputs.relay_url }}
       VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
       VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
       VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
-      T3CODE_WEB_ROUTER_URL: ${{ vars.T3CODE_WEB_ROUTER_URL }}
-      T3CODE_WEB_LATEST_DOMAIN: ${{ vars.T3CODE_WEB_LATEST_DOMAIN }}
-      T3CODE_WEB_NIGHTLY_DOMAIN: ${{ vars.T3CODE_WEB_NIGHTLY_DOMAIN }}
+      DISPATCH_WEB_ROUTER_URL: ${{ vars.DISPATCH_WEB_ROUTER_URL }}
+      DISPATCH_WEB_LATEST_DOMAIN: ${{ vars.DISPATCH_WEB_LATEST_DOMAIN }}
+      DISPATCH_WEB_NIGHTLY_DOMAIN: ${{ vars.DISPATCH_WEB_NIGHTLY_DOMAIN }}
       VERCEL_TEAM_SLUG: ${{ vars.VERCEL_TEAM_SLUG }}
     steps:
       - name: Checkout
@@ -918,18 +944,35 @@ jobs:
               - --filter=@t3tools/web...
 
       - name: Download relay client tracing config
+        if: needs.relay_public_config.result == 'success'
         uses: actions/download-artifact@v8
         with:
           name: relay-client-tracing-config
           path: ${{ runner.temp }}/relay-client-tracing
 
       - name: Load relay client tracing config
+        if: needs.relay_public_config.result == 'success'
         shell: bash
         run: |
           config_path="$RUNNER_TEMP/relay-client-tracing/relay-client-tracing.env"
-          tracing_token="$(sed -n 's/^T3CODE_RELAY_CLIENT_OTLP_TRACES_TOKEN=//p' "$config_path")"
+          tracing_value() {
+            canonical="$1"
+            legacy="$2"
+            value="$(sed -n "s/^${canonical}=//p" "$config_path" | head -n 1)"
+            if [[ -z "$value" ]]; then
+              value="$(sed -n "s/^${legacy}=//p" "$config_path" | head -n 1)"
+            fi
+            printf '%s' "$value"
+          }
+          tracing_url="$(tracing_value DISPATCH_RELAY_CLIENT_OTLP_TRACES_URL T3CODE_RELAY_CLIENT_OTLP_TRACES_URL)"
+          tracing_dataset="$(tracing_value DISPATCH_RELAY_CLIENT_OTLP_TRACES_DATASET T3CODE_RELAY_CLIENT_OTLP_TRACES_DATASET)"
+          tracing_token="$(tracing_value DISPATCH_RELAY_CLIENT_OTLP_TRACES_TOKEN T3CODE_RELAY_CLIENT_OTLP_TRACES_TOKEN)"
           echo "::add-mask::$tracing_token"
-          cat "$config_path" >> "$GITHUB_ENV"
+          {
+            echo "DISPATCH_RELAY_CLIENT_OTLP_TRACES_URL=$tracing_url"
+            echo "DISPATCH_RELAY_CLIENT_OTLP_TRACES_DATASET=$tracing_dataset"
+            echo "DISPATCH_RELAY_CLIENT_OTLP_TRACES_TOKEN=$tracing_token"
+          } >> "$GITHUB_ENV"
 
       - name: Align package versions to release version
         run: node scripts/update-release-package-versions.ts "${{ needs.preflight.outputs.version }}"
@@ -947,9 +990,25 @@ jobs:
             exit 1
           fi
 
-          router_url="${T3CODE_WEB_ROUTER_URL:-https://app.t3.codes}"
-          latest_domain="${T3CODE_WEB_LATEST_DOMAIN:-latest.app.t3.codes}"
-          nightly_domain="${T3CODE_WEB_NIGHTLY_DOMAIN:-nightly.app.t3.codes}"
+          required_web_config=(
+            DISPATCH_WEB_ROUTER_URL
+            DISPATCH_WEB_LATEST_DOMAIN
+            DISPATCH_WEB_NIGHTLY_DOMAIN
+          )
+          missing_web_config=()
+          for name in "${required_web_config[@]}"; do
+            if [[ -z "${!name:-}" ]]; then
+              missing_web_config+=("$name")
+            fi
+          done
+          if (( ${#missing_web_config[@]} > 0 )); then
+            printf 'Missing required Dispatch hosted-web repository variables: %s\n' "${missing_web_config[*]}" >&2
+            exit 1
+          fi
+
+          router_url="$DISPATCH_WEB_ROUTER_URL"
+          latest_domain="$DISPATCH_WEB_LATEST_DOMAIN"
+          nightly_domain="$DISPATCH_WEB_NIGHTLY_DOMAIN"
           router_domain="${router_url#http://}"
           router_domain="${router_domain#https://}"
           router_domain="${router_domain%%/*}"
@@ -975,13 +1034,13 @@ jobs:
               --token "$VERCEL_TOKEN" \
               "${vercel_scope_args[@]}" \
               --build-env "APP_VERSION=${{ needs.preflight.outputs.version }}" \
-              --build-env "T3CODE_CLERK_PUBLISHABLE_KEY=${T3CODE_CLERK_PUBLISHABLE_KEY:-}" \
-              --build-env "T3CODE_CLERK_JWT_TEMPLATE=${T3CODE_CLERK_JWT_TEMPLATE:-}" \
-              --build-env "T3CODE_CLERK_CLI_OAUTH_CLIENT_ID=${T3CODE_CLERK_CLI_OAUTH_CLIENT_ID:-}" \
-              --build-env "T3CODE_RELAY_URL=${T3CODE_RELAY_URL:-}" \
-              --build-env "T3CODE_RELAY_CLIENT_OTLP_TRACES_URL=${T3CODE_RELAY_CLIENT_OTLP_TRACES_URL:-}" \
-              --build-env "T3CODE_RELAY_CLIENT_OTLP_TRACES_DATASET=${T3CODE_RELAY_CLIENT_OTLP_TRACES_DATASET:-}" \
-              --build-env "T3CODE_RELAY_CLIENT_OTLP_TRACES_TOKEN=${T3CODE_RELAY_CLIENT_OTLP_TRACES_TOKEN:-}" \
+              --build-env "DISPATCH_CLERK_PUBLISHABLE_KEY=${DISPATCH_CLERK_PUBLISHABLE_KEY:-}" \
+              --build-env "DISPATCH_CLERK_JWT_TEMPLATE=${DISPATCH_CLERK_JWT_TEMPLATE:-}" \
+              --build-env "DISPATCH_CLERK_CLI_OAUTH_CLIENT_ID=${DISPATCH_CLERK_CLI_OAUTH_CLIENT_ID:-}" \
+              --build-env "DISPATCH_RELAY_URL=${DISPATCH_RELAY_URL:-}" \
+              --build-env "DISPATCH_RELAY_CLIENT_OTLP_TRACES_URL=${DISPATCH_RELAY_CLIENT_OTLP_TRACES_URL:-${T3CODE_RELAY_CLIENT_OTLP_TRACES_URL:-}}" \
+              --build-env "DISPATCH_RELAY_CLIENT_OTLP_TRACES_DATASET=${DISPATCH_RELAY_CLIENT_OTLP_TRACES_DATASET:-${T3CODE_RELAY_CLIENT_OTLP_TRACES_DATASET:-}}" \
+              --build-env "DISPATCH_RELAY_CLIENT_OTLP_TRACES_TOKEN=${DISPATCH_RELAY_CLIENT_OTLP_TRACES_TOKEN:-${T3CODE_RELAY_CLIENT_OTLP_TRACES_TOKEN:-}}" \
               --build-env "VITE_HOSTED_APP_URL=$router_url" \
               --build-env "VITE_HOSTED_APP_CHANNEL=$channel_name"
           )"
@@ -1001,13 +1060,14 @@ jobs:
   deploy_marketing:
     name: Deploy marketing site
     needs: [preflight, release]
-    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.release.result == 'success' && needs.preflight.outputs.release_channel == 'nightly' }}
+    if: ${{ !failure() && !cancelled() && vars.DISPATCH_RELEASE_DEPLOY_MARKETING == 'true' && needs.preflight.result == 'success' && needs.release.result == 'success' && needs.preflight.outputs.release_channel == 'nightly' }}
     runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 10
     env:
       VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
       VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
       VERCEL_TEAM_SLUG: ${{ vars.VERCEL_TEAM_SLUG }}
+      DISPATCH_MARKETING_VERCEL_PROJECT_ID: ${{ vars.DISPATCH_MARKETING_VERCEL_PROJECT_ID }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -1037,12 +1097,12 @@ jobs:
             exit 1
           fi
 
-          VERCEL_PROJECT_ID="$(
-            curl --fail --silent --show-error \
-              --header "Authorization: Bearer $VERCEL_TOKEN" \
-              "https://api.vercel.com/v9/projects/t3code-marketing?teamId=$VERCEL_ORG_ID" \
-              | jq --exit-status --raw-output '.id'
-          )"
+          if [[ -z "${DISPATCH_MARKETING_VERCEL_PROJECT_ID:-}" ]]; then
+            echo "Missing required Dispatch marketing repository variable: DISPATCH_MARKETING_VERCEL_PROJECT_ID." >&2
+            exit 1
+          fi
+
+          VERCEL_PROJECT_ID="$DISPATCH_MARKETING_VERCEL_PROJECT_ID"
           export VERCEL_PROJECT_ID
 
           vp dlx vercel@53.1.1 deploy \
@@ -1137,11 +1197,11 @@ jobs:
       always() && !cancelled() &&
       needs.preflight.result == 'success' &&
       needs.preflight.outputs.release_channel != 'preview' &&
-      needs.relay_public_config.result == 'success' &&
       needs.release.result == 'success' &&
-      needs.deploy_web.result == 'success' &&
+      (needs.deploy_web.result == 'success' ||
+       (needs.deploy_web.result == 'skipped' && vars.DISPATCH_RELEASE_DEPLOY_WEB != 'true')) &&
       (needs.finalize.result == 'success' || needs.finalize.result == 'skipped')
-    needs: [preflight, relay_public_config, release, deploy_web, finalize]
+    needs: [preflight, release, deploy_web, finalize]
     runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 10
     steps:

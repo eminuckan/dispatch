@@ -147,6 +147,10 @@ it.effect("checkpoint capture skips untracked nested repositories without a comm
 
     yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
 
+    assert.strictEqual(
+      (yield* git(["show", "-s", "--format=%an|%ae|%cn|%ce", checkpointRef])).stdout,
+      "Dispatch|dispatch@localhost|Dispatch|dispatch@localhost\n",
+    );
     assert.strictEqual((yield* git(["show", `${checkpointRef}:file.txt`])).stdout, "unstaged\n");
     assert.strictEqual((yield* git(["show", `${checkpointRef}:untracked.txt`])).stdout, "new\n");
     assert.strictEqual((yield* git(["ls-tree", "-r", checkpointRef, "--", nested])).stdout, "");

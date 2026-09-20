@@ -284,7 +284,20 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
           ConfigProvider.layer(
             ConfigProvider.fromEnv({
               env: {
-                T3CODE_DESKTOP_UPDATE_REPOSITORY: "pingdotgg/t3code",
+                DISPATCH_DESKTOP_UPDATE_REPOSITORY: "eminuckan/dispatch",
+                T3CODE_DESKTOP_UPDATE_REPOSITORY: "legacy-owner/legacy-repo",
+                GITHUB_REPOSITORY: "github-owner/github-repo",
+              },
+            }),
+          ),
+        ),
+      );
+      const legacyConfig = yield* resolveGitHubPublishConfig("latest").pipe(
+        Effect.provide(
+          ConfigProvider.layer(
+            ConfigProvider.fromEnv({
+              env: {
+                T3CODE_DESKTOP_UPDATE_REPOSITORY: "legacy-owner/legacy-repo",
               },
             }),
           ),
@@ -295,7 +308,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
           ConfigProvider.layer(
             ConfigProvider.fromEnv({
               env: {
-                GITHUB_REPOSITORY: "pingdotgg/t3code",
+                GITHUB_REPOSITORY: "github-owner/github-repo",
               },
             }),
           ),
@@ -304,14 +317,20 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
 
       assert.deepStrictEqual(latestConfig, {
         provider: "github",
-        owner: "pingdotgg",
-        repo: "t3code",
+        owner: "eminuckan",
+        repo: "dispatch",
+        releaseType: "release",
+      });
+      assert.deepStrictEqual(legacyConfig, {
+        provider: "github",
+        owner: "legacy-owner",
+        repo: "legacy-repo",
         releaseType: "release",
       });
       assert.deepStrictEqual(nightlyConfig, {
         provider: "github",
-        owner: "pingdotgg",
-        repo: "t3code",
+        owner: "github-owner",
+        repo: "github-repo",
         releaseType: "prerelease",
         channel: "nightly",
       });
@@ -670,10 +689,13 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         iconSize: 120,
         iconTextSize: 12,
       });
-      // Linux must register the renderer schemes so the generated .desktop
-      // entry advertises MimeType=x-scheme-handler/t3code; for OAuth deep links.
+      // Linux must register both current and legacy renderer schemes so the
+      // generated .desktop entry advertises every supported OAuth deep link.
       assert.deepStrictEqual((linux.linux as Record<string, unknown>).protocols, [
-        { name: "T3 Code", schemes: ["t3code", "t3code-dev"] },
+        {
+          name: "Dispatch",
+          schemes: ["dispatch", "dispatch-dev", "t3code", "t3code-dev"],
+        },
       ]);
       assert.deepStrictEqual(mac.files, [...DESKTOP_FILE_EXCLUSIONS, ...MAC_FILE_EXCLUSIONS]);
       assert.deepStrictEqual(linux.files, [...DESKTOP_FILE_EXCLUSIONS, ...LINUX_FILE_EXCLUSIONS]);
@@ -860,7 +882,10 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
           Effect.provide(
             ConfigProvider.layer(
               ConfigProvider.fromEnv({
-                env: { T3CODE_DESKTOP_REUSE_RESOURCE_MONITOR: "true" },
+                env: {
+                  DISPATCH_DESKTOP_REUSE_RESOURCE_MONITOR: "true",
+                  T3CODE_DESKTOP_REUSE_RESOURCE_MONITOR: "false",
+                },
               }),
             ),
           ),
@@ -1756,27 +1781,32 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     });
 
     assert.deepStrictEqual(configuration, {
-      appId: "com.eminuckan.t3jev",
+      appId: "com.eminuckan.dispatch",
       teamId: "ABC1234567",
       rpDomains: ["example.clerk.accounts.dev"],
       provisioningProfilePath: "/tmp/t3code.provisionprofile",
     });
   });
 
-  it("normalizes explicit macOS passkey RP domains and renders required entitlements", () => {
+  it("prefers Dispatch macOS passkey envs and renders required entitlements", () => {
     const configuration = resolveMacPasskeySigningConfiguration({
-      T3CODE_APPLE_TEAM_ID: "ABC1234567",
-      T3CODE_MACOS_PROVISIONING_PROFILE: "/tmp/t3code.provisionprofile",
-      T3CODE_CLERK_PASSKEY_RP_DOMAINS:
+      DISPATCH_APPLE_TEAM_ID: "ABC1234567",
+      DISPATCH_MACOS_PROVISIONING_PROFILE: "/tmp/dispatch.provisionprofile",
+      DISPATCH_CLERK_PASSKEY_RP_DOMAINS:
         " Clerk.Example.com,example.clerk.accounts.dev,clerk.example.com ",
+      T3CODE_APPLE_TEAM_ID: "ZZZ9876543",
+      T3CODE_MACOS_PROVISIONING_PROFILE: "/tmp/legacy.provisionprofile",
+      T3CODE_CLERK_PASSKEY_RP_DOMAINS: "legacy.example.com",
     });
     const entitlements = renderMacPasskeyEntitlements(configuration);
 
+    assert.equal(configuration.teamId, "ABC1234567");
+    assert.equal(configuration.provisioningProfilePath, "/tmp/dispatch.provisionprofile");
     assert.deepStrictEqual(configuration.rpDomains, [
       "clerk.example.com",
       "example.clerk.accounts.dev",
     ]);
-    assert.include(entitlements, "<string>ABC1234567.com.eminuckan.t3jev</string>");
+    assert.include(entitlements, "<string>ABC1234567.com.eminuckan.dispatch</string>");
     assert.include(entitlements, "<string>webcredentials:clerk.example.com</string>");
     assert.include(entitlements, "<string>webcredentials:example.clerk.accounts.dev</string>");
     assert.include(entitlements, "<key>com.apple.security.cs.allow-jit</key>");
@@ -1793,21 +1823,21 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     };
 
     const missingProfileError = captureError({
-      T3CODE_APPLE_TEAM_ID: "ABC1234567",
-      T3CODE_CLERK_PASSKEY_RP_DOMAINS: "example.clerk.accounts.dev",
+      DISPATCH_APPLE_TEAM_ID: "ABC1234567",
+      DISPATCH_CLERK_PASSKEY_RP_DOMAINS: "example.clerk.accounts.dev",
     });
     assert.instanceOf(missingProfileError, MissingMacPasskeyProvisioningProfileError);
     assert.equal(
       missingProfileError.message,
-      "T3CODE_MACOS_PROVISIONING_PROFILE must point to an Associated Domains provisioning profile.",
+      "DISPATCH_MACOS_PROVISIONING_PROFILE must point to an Associated Domains provisioning profile.",
     );
 
     const unsafeDomain =
       "https://domain-user:domain-secret@example.clerk.accounts.dev/path?token=query-secret";
     const invalidDomainError = captureError({
-      T3CODE_APPLE_TEAM_ID: "ABC1234567",
-      T3CODE_MACOS_PROVISIONING_PROFILE: "/tmp/t3code.provisionprofile",
-      T3CODE_CLERK_PASSKEY_RP_DOMAINS: unsafeDomain,
+      DISPATCH_APPLE_TEAM_ID: "ABC1234567",
+      DISPATCH_MACOS_PROVISIONING_PROFILE: "/tmp/dispatch.provisionprofile",
+      DISPATCH_CLERK_PASSKEY_RP_DOMAINS: unsafeDomain,
     });
     assert.instanceOf(invalidDomainError, InvalidMacPasskeyRpDomainError);
     assert.equal(invalidDomainError.reason, "scheme-not-allowed");
@@ -1823,20 +1853,20 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     assert.throws(
       () =>
         resolveMacPasskeySigningConfiguration({
-          T3CODE_APPLE_TEAM_ID: "ABC1234567",
-          T3CODE_MACOS_PROVISIONING_PROFILE: "/tmp/t3code.provisionprofile",
-          T3CODE_CLERK_PASSKEY_RP_DOMAINS: "example.clerk.accounts.dev:8443",
+          DISPATCH_APPLE_TEAM_ID: "ABC1234567",
+          DISPATCH_MACOS_PROVISIONING_PROFILE: "/tmp/dispatch.provisionprofile",
+          DISPATCH_CLERK_PASSKEY_RP_DOMAINS: "example.clerk.accounts.dev:8443",
         }),
       /Invalid passkey RP domain/u,
     );
     const invalidPublishableKeyError = captureError({
-      T3CODE_APPLE_TEAM_ID: "ABC1234567",
-      T3CODE_MACOS_PROVISIONING_PROFILE: "/tmp/t3code.provisionprofile",
-      T3CODE_CLERK_PUBLISHABLE_KEY: "pk_test_%",
+      DISPATCH_APPLE_TEAM_ID: "ABC1234567",
+      DISPATCH_MACOS_PROVISIONING_PROFILE: "/tmp/dispatch.provisionprofile",
+      DISPATCH_CLERK_PUBLISHABLE_KEY: "pk_test_%",
     });
     assert.instanceOf(invalidPublishableKeyError, InvalidMacPasskeyPublishableKeyError);
     assert.ok(invalidPublishableKeyError.cause);
-    assert.equal(invalidPublishableKeyError.message, "T3CODE_CLERK_PUBLISHABLE_KEY is invalid.");
+    assert.equal(invalidPublishableKeyError.message, "DISPATCH_CLERK_PUBLISHABLE_KEY is invalid.");
     assert.notProperty(invalidPublishableKeyError, "publishableKey");
     assert.notInclude(invalidPublishableKeyError.message, "pk_test_%");
   });
@@ -1871,7 +1901,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       });
 
       const mac = config.mac as Record<string, unknown>;
-      assert.equal(config.appId, "com.eminuckan.t3jev");
+      assert.equal(config.appId, "com.eminuckan.dispatch");
       assert.equal(mac.entitlements, "/tmp/entitlements.mac.plist");
       assert.equal(mac.provisioningProfile, "/tmp/t3code.provisionprofile");
       assert.match(String(mac.sign), /[\\/]scripts[\\/]sign-macos\.ts$/);

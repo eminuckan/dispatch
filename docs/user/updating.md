@@ -1,65 +1,48 @@
-# Updating T3 Code
+# Updating Dispatch
 
-The app you use and the server running your agents can be on different machines.
-When a server is behind your web or desktop app, an update notice appears in the
-conversation and **Settings → Connections**. Update the machine named in that
-notice.
+Dispatch does not currently publish its own installer, package channel, or hosted release endpoint. For a source checkout, update from the canonical repository and rebuild the client or server you run.
 
 ## Before you update
 
-Server updates restart the connection and can interrupt active agents and
-terminal commands. Saved threads, settings, and project files remain.
+Updating or restarting a server can interrupt active agent turns and terminal commands. Saved threads, settings, and project files remain in the server's state directory.
 
-**Settings → General → Continue threads after restarts** is off by default.
-Enable it to resume supported active threads after an update, crash, or machine
-restart. Changes are saved to connected environments that support this setting;
-update older servers first. If a supported environment was offline or has a
-different value, use **Apply to all** in Settings after it connects.
-T3 Code must start again on that machine;
-the setting does not enable automatic startup. Terminal commands may still be
-interrupted, and threads without saved provider resume state need a new message.
-If you previously enabled continuation for updates, enable this setting once
-to allow recovery without a connected client.
+**Settings → General → Continue threads after restarts** is off by default. Enable it when you want supported active threads to resume after a restart. Terminal commands can still be interrupted, and a provider without saved resume state may need a new message after the server returns.
 
-## Update a connected server
+## Update a source checkout
 
-The offered action depends on how the server runs:
+Stop the Dispatch processes started from that checkout, then update the repository:
 
-| Action                     | What to do                                                                                                                                                                                      |
-| -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Update server**          | Keep the client open while it installs and reconnects. Supported background services update remotely. For a desktop-hosted server, this also closes and relaunches the desktop app on the host. |
-| **Update the desktop app** | Update the desktop app on the machine running the server, then reopen it if needed.                                                                                                             |
-| **Copy update command**    | Stop the command-line server on its host and relaunch with the copied command, keeping your usual startup options.                                                                              |
-
-On the host, run:
-
-```sh
-t3 update <client-version>
+```bash
+git pull --ff-only
+vp i
 ```
 
-Replace `<client-version>` with the version shown in the notice. The command
-asks before restarting the background service; if you decline, run
-`t3 service restart` when you are ready. For a server you started by hand,
-stop it and start it again afterwards with your usual options such as `--host`
-or `--tailscale-serve`.
+For development, start the client you use again:
 
-If you run the server with `npx` rather than an installed `t3`, there is
-nothing to update on the host: stop the server and relaunch it as
-`npx t3@<client-version>` with the same subcommand and options.
+```bash
+vp run dev
+```
 
-## If an update fails
+or:
 
-Keep the client open until it reconnects or reports a failure. A failed service
-update can roll back to the previous version. If the update still fails:
+```bash
+vp run dev:desktop
+```
 
-1. Retry the offered action once.
-2. Check that you updated the server's machine, not only the device you are using.
-3. For a command-line server, stop it and relaunch the exact version shown in the notice.
+For built server or desktop output, rebuild first:
 
-## Mobile updates
+```bash
+vp run build:desktop
+```
 
-Install App Store or Google Play releases as usual. The mobile app can also
-download updates in the background and apply them when you next leave the app.
-It saves drafts and queued messages before restarting. If you keep the app open
-for a long time, it may ask to install immediately; choosing **Later** leaves the
-update queued for the next suitable moment.
+Then restart the process or local artifact you normally use. If the server and client run on different machines, update the machine named by the version warning and keep both sides on compatible revisions.
+
+## Packaged update controls
+
+The source tree supports canonical `dispatch update` plus the legacy `t3 update` compatibility alias, along with background-service and client-driven update machinery. Those paths require a Dispatch-built release channel to be configured. Until Dispatch publishes that release channel, do not treat upstream packages or upstream update feeds as Dispatch updates.
+
+If you create and operate your own packaged Dispatch build, use the release configuration for that build and follow the update action shown by that client. A source checkout should continue to update through Git as described above.
+
+## Mobile builds
+
+This fork does not currently advertise a Dispatch App Store or Google Play release. Update a locally built mobile client from the same Dispatch checkout and rebuild it when its native runtime changes.
