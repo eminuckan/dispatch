@@ -42,11 +42,14 @@ class AgentActivityExpiryReceiver : BroadcastReceiver() {
 
 /** Handles data pushes natively so delivery does not depend on a running JS bridge. */
 object AgentNotifications {
-  private const val STORE = "t3-agent-notifications"
+  private const val STORE = "dispatch-agent-notifications"
+  private const val LEGACY_STORE = "t3-agent-notifications"
   private const val ACTIVITY_CHANNEL = "agent-activity"
   private const val ALERT_CHANNEL = "agent-alerts"
-  private const val ACTIVITY_TAG = "t3-agent-activity"
-  private const val ALERT_TAG = "t3-agent-alert"
+  private const val ACTIVITY_TAG = "dispatch-agent-activity"
+  private const val ALERT_TAG = "dispatch-agent-alert"
+  private const val LEGACY_ACTIVITY_TAG = "t3-agent-activity"
+  private const val LEGACY_ALERT_TAG = "t3-agent-alert"
   private const val ACTIVITY_ID = 73001
   private const val MAX_MESSAGE_AGE_MS = 10 * 60 * 1000L
   private const val RUNNING_LIFETIME_MS = 2 * 60 * 60 * 1000L
@@ -60,7 +63,7 @@ object AgentNotifications {
     scheme: String,
     ongoingEnabled: Boolean
   ) {
-    val prefs = context.getSharedPreferences(STORE, Context.MODE_PRIVATE)
+    val prefs = preferences(context)
     // JS identity is empty on a cold start. Compare the durable identity here
     // so reopening preserves cards, dismissal and replay history for this user.
     if (prefs.getString("userId", null) != userId ||
@@ -83,33 +86,31 @@ object AgentNotifications {
   fun clear(context: Context) {
     cancelActivity(context)
     context.getSharedPreferences(STORE, Context.MODE_PRIVATE).edit().clear().apply()
+    context.getSharedPreferences(LEGACY_STORE, Context.MODE_PRIVATE).edit().clear().apply()
     val manager = manager(context)
-    manager.activeNotifications.filter { it.tag == ACTIVITY_TAG || it.tag == ALERT_TAG }
+    manager.activeNotifications.filter {
+      it.tag == ACTIVITY_TAG || it.tag == ALERT_TAG ||
+        it.tag == LEGACY_ACTIVITY_TAG || it.tag == LEGACY_ALERT_TAG
+    }
       .forEach { manager.cancel(it.tag, it.id) }
   }
 
   @Synchronized
   fun dismiss(context: Context) {
-    context.getSharedPreferences(
-      STORE,
-      Context.MODE_PRIVATE
-    ).edit().putBoolean("dismissed", true).apply()
+    preferences(context).edit().putBoolean("dismissed", true).apply()
     cancelActivity(context)
   }
 
   @Synchronized
   fun expire(context: Context, now: Long = System.currentTimeMillis()) {
-    val expiresAt = context.getSharedPreferences(
-      STORE,
-      Context.MODE_PRIVATE
-    ).getLong("expiresAt", 0)
+    val expiresAt = preferences(context).getLong("expiresAt", 0)
     // An already-dispatched alarm must not remove a newer run's card.
     if (expiresAt > 0 && expiresAt <= now) cancelActivity(context)
   }
 
   @Synchronized
   fun receive(context: Context, data: Map<String, String>) {
-    val prefs = context.getSharedPreferences(STORE, Context.MODE_PRIVATE)
+    val prefs = preferences(context)
     val updatedAt = data["updated_at"]?.toLongOrNull() ?: return
     val registered = prefs.getBoolean("enabled", false) &&
       data["device_id"] == prefs.getString("deviceId", null) &&
@@ -247,6 +248,39 @@ object AgentNotifications {
       context.getSystemService(AlarmManager::class.java).cancel(expiryIntent(context))
       context.getSharedPreferences(STORE, Context.MODE_PRIVATE).edit().remove("expiresAt").apply()
     }
+  }
+
+  private fun preferences(context: Context): SharedPreferences {
+    val current = context.getSharedPreferences(STORE, Context.MODE_PRIVATE)
+    if (current.all.isNotEmpty()) return current
+
+    val legacy = context.getSharedPreferences(LEGACY_STORE, Context.MODE_PRIVATE)
+    val values = legacy.all
+    if (values.isEmpty()) return current
+
+    val editor = current.edit()
+    values.forEach { (key, value) ->
+      when (value) {
+        is Boolean -> editor.putBoolean(key, value)
+        is Float -> editor.putFloat(key, value)
+        is Int -> editor.putInt(key, value)
+        is Long -> editor.putLong(key, value)
+        is String -> editor.putString(key, value)
+        is Set<*> -> editor.putStringSet(key, value.filterIsInstance<String>().toSet())
+      }
+    }
+    editor.apply()
+    legacy.edit().clear().apply()
+    cancelLegacyNotifications(context)
+    return current
+  }
+
+  private fun cancelLegacyNotifications(context: Context) {
+    val manager = manager(context)
+    manager.cancel(LEGACY_ACTIVITY_TAG, ACTIVITY_ID)
+    manager.activeNotifications.filter {
+      it.tag == LEGACY_ACTIVITY_TAG || it.tag == LEGACY_ALERT_TAG
+    }.forEach { manager.cancel(it.tag, it.id) }
   }
 
   private fun manager(context: Context) = context.getSystemService(NotificationManager::class.java)

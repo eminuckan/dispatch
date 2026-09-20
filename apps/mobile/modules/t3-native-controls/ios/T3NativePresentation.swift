@@ -69,7 +69,7 @@ final class T3ContextSheetSizeView: ExpoView {
         configuredSheet = sheet
         appliedHeight = contentHeight
         let height = contentHeight
-        let identifier = UISheetPresentationController.Detent.Identifier("t3-context-content")
+        let identifier = UISheetPresentationController.Detent.Identifier("dispatch-context-content")
         sheet.animateChanges {
           sheet.detents = [.custom(identifier: identifier) { context in
             min(height, context.maximumDetentValue * 0.92)

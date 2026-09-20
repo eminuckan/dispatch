@@ -131,7 +131,7 @@ export function composerAttachmentInlineUri(
   return attachment.type === "image" ? (attachment.dataUrl ?? attachment.previewUri) : undefined;
 }
 
-const OWNED_PASTED_IMAGE_DIRECTORY = "t3-composer-paste";
+const OWNED_PASTED_IMAGE_DIRECTORIES = new Set(["dispatch-composer-paste", "t3-composer-paste"]);
 const ATTACHMENT_COPY_CHUNK_BYTES = 64 * 1024;
 
 export async function persistComposerAttachmentFile(
@@ -685,7 +685,8 @@ export function isOwnedPastedImageUri(uri: string): boolean {
     }
     const segments = url.pathname.split("/").filter(Boolean);
     return (
-      segments.at(-2) === OWNED_PASTED_IMAGE_DIRECTORY && segments.at(-1)?.endsWith(".png") === true
+      OWNED_PASTED_IMAGE_DIRECTORIES.has(segments.at(-2) ?? "") &&
+      segments.at(-1)?.endsWith(".png") === true
     );
   } catch {
     return false;

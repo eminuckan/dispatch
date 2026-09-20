@@ -12,15 +12,26 @@ interface HotAtomRuntimeEntry {
   readonly runtime: Atom.AtomRuntime<unknown, unknown>;
 }
 
-const hotAtomRuntimesKey = Symbol.for("t3.mobile.hot-atom-runtimes");
+const hotAtomRuntimesKey = Symbol.for("dispatch.mobile.hot-atom-runtimes");
+const legacyHotAtomRuntimesKey = Symbol.for("t3.mobile.hot-atom-runtimes");
 
 type HotAtomRuntimeGlobal = typeof globalThis & {
   [hotAtomRuntimesKey]?: Map<string, HotAtomRuntimeEntry>;
+  [legacyHotAtomRuntimesKey]?: Map<string, HotAtomRuntimeEntry>;
 };
 
 function hotAtomRuntimes(): Map<string, HotAtomRuntimeEntry> {
   const runtimeGlobal = globalThis as HotAtomRuntimeGlobal;
-  return (runtimeGlobal[hotAtomRuntimesKey] ??= new Map());
+  const current = runtimeGlobal[hotAtomRuntimesKey];
+  if (current !== undefined) return current;
+
+  const legacy = runtimeGlobal[legacyHotAtomRuntimesKey];
+  if (legacy !== undefined) {
+    runtimeGlobal[hotAtomRuntimesKey] = legacy;
+    return legacy;
+  }
+
+  return (runtimeGlobal[hotAtomRuntimesKey] = new Map());
 }
 
 export function hotSwappableAtomRuntime<R, E>(options: {

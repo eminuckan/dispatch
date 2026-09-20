@@ -156,8 +156,8 @@ export const ThreadListGroupHeader = memo(function ThreadListGroupHeader(props: 
         <Text
           className={
             compact
-              ? "flex-shrink text-base font-t3-bold tracking-[0.2px] text-foreground-muted"
-              : "flex-shrink text-sm font-t3-bold tracking-[0.2px] text-drawer-foreground-muted"
+              ? "flex-shrink text-base font-dispatch-bold tracking-[0.2px] text-foreground-muted"
+              : "flex-shrink text-sm font-dispatch-bold tracking-[0.2px] text-drawer-foreground-muted"
           }
           numberOfLines={1}
         >
@@ -166,8 +166,8 @@ export const ThreadListGroupHeader = memo(function ThreadListGroupHeader(props: 
         <Text
           className={
             compact
-              ? "flex-1 text-sm font-t3-medium text-foreground-tertiary"
-              : "flex-1 text-xs font-t3-medium text-drawer-foreground-muted"
+              ? "flex-1 text-sm font-dispatch-medium text-foreground-tertiary"
+              : "flex-1 text-xs font-dispatch-medium text-drawer-foreground-muted"
           }
         >
           {props.threadCount}
@@ -240,8 +240,8 @@ export const ThreadListShowMoreRow = memo(function ThreadListShowMoreRow(props: 
         <Text
           className={
             compact
-              ? "text-sm font-t3-medium text-foreground-muted"
-              : "text-xs font-t3-medium text-drawer-foreground-muted"
+              ? "text-sm font-dispatch-medium text-foreground-muted"
+              : "text-xs font-dispatch-medium text-drawer-foreground-muted"
           }
         >
           {label}
@@ -316,13 +316,13 @@ export const PendingTaskListRow = memo(function PendingTaskListRow(props: {
 
   const statusPill = isDraft ? (
     <View className="rounded-full bg-adaptive-amber-500-a12-a16 px-1.5 py-0.5">
-      <Text className="text-3xs font-t3-bold text-adaptive-amber-700-300">Draft</Text>
+      <Text className="text-3xs font-dispatch-bold text-adaptive-amber-700-300">Draft</Text>
     </View>
   ) : (
     <View className="rounded-full bg-subtle px-1.5 py-0.5">
       <Text
         className={cn(
-          "text-3xs font-t3-bold text-foreground-muted",
+          "text-3xs font-dispatch-bold text-foreground-muted",
           !compact && "text-drawer-foreground-muted",
         )}
       >
@@ -378,7 +378,7 @@ export const PendingTaskListRow = memo(function PendingTaskListRow(props: {
           <View className="flex-row items-center justify-between gap-2">
             <Text
               className={cn(
-                "flex-1 text-lg font-t3-bold text-foreground",
+                "flex-1 text-lg font-dispatch-bold text-foreground",
                 !compact && "text-drawer-foreground",
               )}
               numberOfLines={1}
@@ -428,7 +428,7 @@ export const PendingTaskListRow = memo(function PendingTaskListRow(props: {
       <View className="gap-[3px]">
         <View className="flex-row items-center justify-between gap-2">
           <Text
-            className="flex-1 text-base font-t3-medium text-drawer-foreground"
+            className="flex-1 text-base font-dispatch-medium text-drawer-foreground"
             numberOfLines={1}
           >
             {pendingTask.title}
@@ -591,7 +591,7 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
 
   const statusPill = status ? (
     <View className={`${status.pillClassName} rounded-full px-1.5 py-0.5`}>
-      <Text className={`text-3xs font-t3-bold ${status.textClassName}`}>{status.label}</Text>
+      <Text className={`text-3xs font-dispatch-bold ${status.textClassName}`}>{status.label}</Text>
     </View>
   ) : null;
 
@@ -647,7 +647,7 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
               />
             )}
             <Text
-              className={`${compact ? "text-sm" : "text-xs"} font-t3-medium ${pr.textClassName}`}
+              className={`${compact ? "text-sm" : "text-xs"} font-dispatch-medium ${pr.textClassName}`}
             >
               {pr.label}
             </Text>
@@ -689,7 +689,7 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
             <View className="flex-row items-center justify-between gap-2">
               <Text
                 className={cn(
-                  "flex-1 text-lg font-t3-bold",
+                  "flex-1 text-lg font-dispatch-bold",
                   visuallySelected
                     ? "text-thread-selected-foreground"
                     : compact
@@ -762,7 +762,7 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
           <View className="flex-row items-center justify-between gap-2">
             <Text
               className={cn(
-                "flex-1 text-base font-t3-medium",
+                "flex-1 text-base font-dispatch-medium",
                 visuallySelected
                   ? "text-thread-selected-foreground"
                   : compact

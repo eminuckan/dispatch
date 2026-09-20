@@ -147,15 +147,15 @@ export function GitConfirmSheet(props: GitConfirmSheetProps) {
             }
           >
             {Platform.OS !== "android" ? (
-              <Text className="text-xs font-t3-bold tracking-[1px] uppercase text-foreground-muted">
+              <Text className="text-xs font-dispatch-bold tracking-[1px] uppercase text-foreground-muted">
                 Confirm
               </Text>
             ) : null}
             <Text
               className={
                 Platform.OS === "android"
-                  ? "text-xl font-t3-medium"
-                  : "text-center text-3xl font-t3-bold"
+                  ? "text-xl font-dispatch-medium"
+                  : "text-center text-3xl font-dispatch-bold"
               }
             >
               {copy?.title ?? "Run action on default branch?"}

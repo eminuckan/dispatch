@@ -221,7 +221,7 @@ export function ComposerContextSheet(props: {
               <SymbolView name="terminal" size={20} tintColor={terminalTheme.palette[2]} />
             ) : null}
             <View className="min-w-0 flex-1">
-              <Text className="text-base font-t3-semibold text-foreground" numberOfLines={2}>
+              <Text className="text-base font-dispatch-semibold text-foreground" numberOfLines={2}>
                 {terminal?.terminalLabel ?? props.label}
               </Text>
               {terminal ? (

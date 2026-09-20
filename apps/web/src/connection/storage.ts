@@ -399,7 +399,7 @@ export const makeCatalogStore = Effect.fn("web.connectionStorage.makeCatalogStor
 
 const GITHUB_ROUTING_KEY_PREFIX = "dispatch:github-routing:";
 const LEGACY_GITHUB_ROUTING_KEY_PREFIX = "t3code:github-routing:";
-const GITHUB_ROUTING_CHANGED = "t3code:github-routing-changed";
+const GITHUB_ROUTING_CHANGED = "dispatch:github-routing-changed";
 const isStoredGitHubRoutingPermission = Schema.is(StoredGitHubRoutingPermission);
 const encodeStoredGitHubRoutingPermission = Schema.encodeSync(
   Schema.fromJsonString(StoredGitHubRoutingPermission),

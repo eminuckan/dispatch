@@ -41,6 +41,9 @@ import {
   resolveServerConfigValue,
   resolveServerWelcomeState,
   resolveServerUpdateProgressResult,
+  ServerUpdateProgressIncompleteError,
+  ServerUpdateResumeTimeoutError,
+  ServerUpdateTerminalError,
   serverUpdateStateForProgressEvent,
   serverUpdateStateForServerVersion,
   validateServerUpdateReadyEvent,
@@ -74,6 +77,23 @@ const TARGET = new PrimaryConnectionTarget({
   label: "Test environment",
   httpBaseUrl: "https://environment.example.test",
   wsBaseUrl: "wss://environment.example.test",
+});
+
+describe("server update errors", () => {
+  it("uses the Dispatch package identity in fallback messages", () => {
+    expect(
+      new ServerUpdateResumeTimeoutError({
+        environmentId: TARGET.environmentId,
+        targetVersion: "1.2.3",
+      }).message,
+    ).toBe("The server did not resume on dispatch@1.2.3.");
+    expect(new ServerUpdateProgressIncompleteError({ targetVersion: "1.2.3" }).message).toBe(
+      "The dispatch@1.2.3 update ended before the server accepted the restart.",
+    );
+    expect(
+      new ServerUpdateTerminalError({ targetVersion: "1.2.3", status: "failed" }).message,
+    ).toBe("The dispatch@1.2.3 update failed.");
+  });
 });
 
 function session(client: WsRpcProtocolClient): RpcSession {

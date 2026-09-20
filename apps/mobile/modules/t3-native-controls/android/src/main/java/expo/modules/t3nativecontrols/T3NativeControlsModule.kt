@@ -56,13 +56,15 @@ class T3NativeControlsModule : Module() {
     }
 
     Function("getShowcaseScene") {
-      val storedScene = appContext.reactContext
-        ?.filesDir
-        ?.resolve("t3-showcase-scene")
-        ?.takeIf { it.isFile }
-        ?.readText()
-        ?.trim()
-        ?.takeIf { it.isNotEmpty() }
+      val storedScene = appContext.reactContext?.filesDir?.let { filesDir ->
+        listOf("dispatch-showcase-scene", "t3-showcase-scene").firstNotNullOfOrNull { filename ->
+          filesDir.resolve(filename)
+            .takeIf { it.isFile }
+            ?.readText()
+            ?.trim()
+            ?.takeIf { it.isNotEmpty() }
+        }
+      }
       storedScene ?: appContext.currentActivity?.intent?.getStringExtra("showcaseScene")
     }
 
@@ -79,7 +81,7 @@ class T3NativeControlsModule : Module() {
     Function("markShowcaseReady") { scene: String ->
       appContext.reactContext
         ?.filesDir
-        ?.resolve("t3-showcase-ready")
+        ?.resolve("dispatch-showcase-ready")
         ?.writeText(scene)
     }
   }

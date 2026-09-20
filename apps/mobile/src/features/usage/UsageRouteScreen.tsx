@@ -345,7 +345,7 @@ function ChartCard(props: {
         <Text className="text-sm text-foreground-muted">
           {metric === "cost" ? "Raw token cost" : "Processed tokens"}
         </Text>
-        <Text className="text-4xl font-t3-bold tabular-nums text-foreground">
+        <Text className="text-4xl font-dispatch-bold tabular-nums text-foreground">
           {metric === "cost" ? `${formatUsd(merged.costUsd)}*` : formatTokens(merged.totalTokens)}
         </Text>
         <Text className="text-sm text-foreground-muted">
@@ -512,7 +512,9 @@ function MetricCell(props: {
   return (
     <View className="w-1/2 gap-0.5 p-4">
       <Text className="text-sm text-foreground-muted">{props.label}</Text>
-      <Text className="text-xl font-t3-medium tabular-nums text-foreground">{props.value}</Text>
+      <Text className="text-xl font-dispatch-medium tabular-nums text-foreground">
+        {props.value}
+      </Text>
       <Text className="text-xs text-foreground-tertiary">{props.detail}</Text>
     </View>
   );

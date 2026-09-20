@@ -104,8 +104,8 @@ export function GitBranchesSheet(_props: GitBranchesSheetProps) {
             <Text
               className={
                 Platform.OS === "android"
-                  ? "text-foreground text-base font-t3-medium"
-                  : "text-foreground-secondary text-2xs font-t3-bold tracking-[1px] uppercase"
+                  ? "text-foreground text-base font-dispatch-medium"
+                  : "text-foreground-secondary text-2xs font-dispatch-bold tracking-[1px] uppercase"
               }
             >
               New branch
@@ -143,8 +143,8 @@ export function GitBranchesSheet(_props: GitBranchesSheetProps) {
             <Text
               className={
                 Platform.OS === "android"
-                  ? "text-foreground text-base font-t3-medium"
-                  : "text-foreground-secondary text-2xs font-t3-bold tracking-[1px] uppercase"
+                  ? "text-foreground text-base font-dispatch-medium"
+                  : "text-foreground-secondary text-2xs font-dispatch-bold tracking-[1px] uppercase"
               }
             >
               New worktree
@@ -196,8 +196,8 @@ export function GitBranchesSheet(_props: GitBranchesSheetProps) {
             <Text
               className={
                 Platform.OS === "android"
-                  ? "px-4 pb-1 pt-3 text-foreground-secondary text-sm font-t3-medium"
-                  : "text-foreground-secondary text-2xs font-t3-bold tracking-[1px] uppercase"
+                  ? "px-4 pb-1 pt-3 text-foreground-secondary text-sm font-dispatch-medium"
+                  : "text-foreground-secondary text-2xs font-dispatch-bold tracking-[1px] uppercase"
               }
             >
               Existing branches
@@ -262,7 +262,7 @@ export function GitBranchesSheet(_props: GitBranchesSheetProps) {
                   <Text
                     className={cn(
                       "text-foreground text-base",
-                      Platform.OS === "android" ? "font-t3-medium" : "font-t3-bold",
+                      Platform.OS === "android" ? "font-dispatch-medium" : "font-dispatch-bold",
                     )}
                   >
                     {branch.name}

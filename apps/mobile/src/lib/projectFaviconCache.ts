@@ -46,7 +46,7 @@ export async function downscaleProjectFavicon(
   for (const size of [PROJECT_FAVICON_THUMBNAIL_SIZE, PROJECT_FAVICON_THUMBNAIL_SIZE / 2]) {
     signal.throwIfAborted();
     const decoded = await Image.loadAsync(image.url, { maxWidth: size, maxHeight: size });
-    const cacheKey = `t3-favicon-thumbnail:${size}:${image.url}`;
+    const cacheKey = `dispatch-favicon-thumbnail:${size}:${image.url}`;
     try {
       signal.throwIfAborted();
       if (decoded.width > size || decoded.height > size) {

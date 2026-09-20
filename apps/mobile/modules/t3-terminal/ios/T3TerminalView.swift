@@ -244,7 +244,7 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate {
 
   var terminalKey: String = "" {
     didSet {
-      accessibilityIdentifier = "t3-terminal-\(terminalKey)"
+      accessibilityIdentifier = "dispatch-terminal-\(terminalKey)"
       if oldValue != terminalKey {
         resetSurface()
       }
@@ -733,7 +733,7 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate {
     guard !themeConfig.isEmpty else { return nil }
     let configContents = themeConfig
     let url = URL(fileURLWithPath: NSTemporaryDirectory())
-      .appendingPathComponent("t3-terminal-theme-\(appearance.rawValue).ghostty")
+      .appendingPathComponent("dispatch-terminal-theme-\(appearance.rawValue).ghostty")
 
     do {
       if let existing = try? String(contentsOf: url, encoding: .utf8), existing == configContents {

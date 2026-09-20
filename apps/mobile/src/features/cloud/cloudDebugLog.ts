@@ -1,8 +1,12 @@
 export function isCloudDebugEnabled(): boolean {
+  const debugGlobal = globalThis as {
+    __DISPATCH_CLOUD_DEBUG__?: boolean;
+    __T3_CLOUD_DEBUG__?: boolean;
+  };
   return (
     (typeof __DEV__ !== "undefined" && __DEV__) ||
     (typeof globalThis !== "undefined" &&
-      (globalThis as { __T3_CLOUD_DEBUG__?: boolean }).__T3_CLOUD_DEBUG__ === true)
+      (debugGlobal.__DISPATCH_CLOUD_DEBUG__ ?? debugGlobal.__T3_CLOUD_DEBUG__) === true)
   );
 }
 
@@ -11,8 +15,8 @@ export function cloudDebugLog(event: string, data?: Record<string, unknown>): vo
     return;
   }
   if (data) {
-    console.log(`[t3-cloud] ${event}`, data);
+    console.log(`[dispatch-cloud] ${event}`, data);
   } else {
-    console.log(`[t3-cloud] ${event}`);
+    console.log(`[dispatch-cloud] ${event}`);
   }
 }

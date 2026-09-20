@@ -7,7 +7,7 @@ const native = vi.hoisted(() => ({
     height: options.maxHeight,
     release: vi.fn(),
   })),
-  write: vi.fn(async () => {}),
+  write: vi.fn(async (_image: unknown, _cacheKey: string) => {}),
   path: vi.fn(async () => "/cache/thumbnail"),
   read: vi.fn(),
   remove: vi.fn(),
@@ -50,6 +50,10 @@ describe("mobile project icon thumbnails", () => {
     const thumbnail = await downscaleProjectFavicon(image, new AbortController().signal);
     expect(thumbnail).toBe(`data:image/png;base64,${png}`);
     expect(native.load.mock.calls.map(([, options]) => options.maxWidth)).toEqual([96, 48]);
+    expect(native.write.mock.calls.map(([, cacheKey]) => cacheKey)).toEqual([
+      `dispatch-favicon-thumbnail:96:${image.url}`,
+      `dispatch-favicon-thumbnail:48:${image.url}`,
+    ]);
     expect(native.remove).toHaveBeenCalledTimes(2);
     for (const call of native.load.mock.results)
       expect((await call.value).release).toHaveBeenCalledOnce();

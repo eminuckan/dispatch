@@ -129,8 +129,8 @@ function SectionTitle(props: { readonly children: string }) {
     <Text
       className={
         Platform.OS === "android"
-          ? "px-4 text-sm font-t3-medium text-primary-text"
-          : "px-1 text-2xs font-t3-bold tracking-[0.7px] uppercase text-foreground-muted"
+          ? "px-4 text-sm font-dispatch-medium text-primary-text"
+          : "px-1 text-2xs font-dispatch-bold tracking-[0.7px] uppercase text-foreground-muted"
       }
     >
       {props.children}
@@ -223,7 +223,7 @@ function ListRow(props: {
           {props.icon}
         </View>
         <View className="flex-1 gap-0.5">
-          <Text className="text-base leading-snug font-t3-bold">{props.title}</Text>
+          <Text className="text-base leading-snug font-dispatch-bold">{props.title}</Text>
           {props.subtitle ? (
             <Text className="text-sm leading-snug text-foreground-muted" numberOfLines={2}>
               {props.subtitle}
@@ -261,7 +261,7 @@ function PrimaryActionButton(props: {
       {props.loading ? (
         <ActivityIndicator colorClassName={String("accent-primary-foreground")} />
       ) : (
-        <Text className="text-base font-t3-bold text-primary-foreground">{props.label}</Text>
+        <Text className="text-base font-dispatch-bold text-primary-foreground">{props.label}</Text>
       )}
     </Pressable>
   );
@@ -439,7 +439,7 @@ function EmptyEnvironmentState() {
 
   return (
     <View className="items-center gap-3 rounded-2xl bg-card px-5 py-8">
-      <Text className="text-center text-lg font-t3-bold">Environment unavailable</Text>
+      <Text className="text-center text-lg font-dispatch-bold">Environment unavailable</Text>
       <Text className="text-center text-sm leading-normal text-foreground-muted">
         Start or reconnect an environment before adding a project.
       </Text>
@@ -447,7 +447,7 @@ function EmptyEnvironmentState() {
         onPress={() => navigation.dispatch(StackActions.replace("ConnectionsNew"))}
         className="mt-1 rounded-full bg-primary px-4 py-2.5 active:opacity-70"
       >
-        <Text className="text-sm font-t3-bold text-primary-foreground">Add environment</Text>
+        <Text className="text-sm font-dispatch-bold text-primary-foreground">Add environment</Text>
       </Pressable>
     </View>
   );
@@ -1072,7 +1072,7 @@ export function AddProjectDestinationScreen(props: {
       {error ? <ErrorBanner message={error} /> : null}
       {repositoryTitle ? (
         <View className="rounded-[24px] bg-card px-4 py-3">
-          <Text className="text-base font-t3-bold">{repositoryTitle}</Text>
+          <Text className="text-base font-dispatch-bold">{repositoryTitle}</Text>
           <Text className="mt-0.5 text-xs text-foreground-muted" numberOfLines={2}>
             {remoteUrl}
           </Text>

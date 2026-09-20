@@ -46,6 +46,42 @@ function runtimeLayerWithRelease(
 }
 
 describe("hotSwappableAtomRuntime", () => {
+  it("adopts the legacy HMR runtime map before writing the Dispatch symbol", () => {
+    vi.stubGlobal("__DEV__", true);
+    const canonicalKey = Symbol.for("dispatch.mobile.hot-atom-runtimes");
+    const legacyKey = Symbol.for("t3.mobile.hot-atom-runtimes");
+    const previousCanonical = Reflect.get(globalThis, canonicalKey);
+    const previousLegacy = Reflect.get(globalThis, legacyKey);
+    const legacyMap = new Map();
+    const registry = AtomRegistry.make();
+
+    Reflect.deleteProperty(globalThis, canonicalKey);
+    Reflect.set(globalThis, legacyKey, legacyMap);
+    try {
+      const runtime = hotSwappableAtomRuntime({
+        id: "legacy-runtime",
+        hotModule: { accept() {} },
+        registry,
+        layer: runtimeLayer("first", []),
+      });
+      const replacement = hotSwappableAtomRuntime({
+        id: "legacy-runtime",
+        hotModule: { accept() {} },
+        registry,
+        layer: runtimeLayer("second", []),
+      });
+
+      expect(Reflect.get(globalThis, canonicalKey)).toBe(legacyMap);
+      expect(replacement).toBe(runtime);
+    } finally {
+      registry.dispose();
+      if (previousCanonical === undefined) Reflect.deleteProperty(globalThis, canonicalKey);
+      else Reflect.set(globalThis, canonicalKey, previousCanonical);
+      if (previousLegacy === undefined) Reflect.deleteProperty(globalThis, legacyKey);
+      else Reflect.set(globalThis, legacyKey, previousLegacy);
+    }
+  });
+
   it("rebuilds a mounted runtime in place without disturbing unrelated subscribers", () => {
     vi.stubGlobal("__DEV__", true);
     const registry = AtomRegistry.make();

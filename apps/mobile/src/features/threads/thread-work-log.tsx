@@ -825,7 +825,7 @@ const ThreadWorkLogRow = memo(function ThreadWorkLogRow(
               <Text
                 className={cn(
                   "min-w-0 flex-1 text-sm text-foreground-muted",
-                  iconIsDestructive && "font-t3-medium text-adaptive-rose-600-400",
+                  iconIsDestructive && "font-dispatch-medium text-adaptive-rose-600-400",
                 )}
                 numberOfLines={expanded ? undefined : 1}
               >
@@ -847,7 +847,7 @@ const ThreadWorkLogRow = memo(function ThreadWorkLogRow(
 
           <View className="shrink-0 flex-row items-center gap-px">
             {props.copied ? (
-              <Text className="pr-1 font-t3-medium text-3xs text-adaptive-emerald-600-400">
+              <Text className="pr-1 font-dispatch-medium text-3xs text-adaptive-emerald-600-400">
                 Copied
               </Text>
             ) : null}
@@ -1054,7 +1054,7 @@ export const ThreadAgentSpawnCard = memo(function ThreadAgentSpawnCard(props: {
           <View className="min-w-0 flex-1 gap-0.5">
             <Text
               key={props.rowSizing.textSizeKey}
-              className="font-t3-medium text-sm text-foreground"
+              className="font-dispatch-medium text-sm text-foreground"
               numberOfLines={1}
             >
               {summary.title}

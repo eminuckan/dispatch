@@ -5,7 +5,7 @@ import type { SharingOptions } from "expo-sharing";
 import { beginForegroundHandoff } from "./foreground-handoff";
 import { uuidv4 } from "./uuid";
 
-const ATTACHMENT_DOWNLOAD_DIRECTORY = "t3-attachment-downloads";
+const ATTACHMENT_DOWNLOAD_DIRECTORY = "dispatch-attachment-downloads";
 const DOWNLOAD_RETENTION_MS = 24 * 60 * 60_000;
 const DOWNLOAD_DIRECTORY_NAME = /^(\d+)-[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/i;
 const activeDirectories = new Set<string>();

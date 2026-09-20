@@ -63,7 +63,7 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
     set(value) {
       if (field == value) return
       field = value
-      contentDescription = "t3-terminal-$value"
+      contentDescription = "dispatch-terminal-$value"
       recreateTerminal()
     }
 

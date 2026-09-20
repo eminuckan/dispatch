@@ -191,7 +191,10 @@ function CacheEnvironmentRow(props: {
         onPress={props.onClear}
         className="rounded-full px-3 py-2 disabled:opacity-40"
       >
-        <Text className="font-t3-medium tabular-nums text-danger-foreground" numberOfLines={1}>
+        <Text
+          className="font-dispatch-medium tabular-nums text-danger-foreground"
+          numberOfLines={1}
+        >
           Clear {formatBytes(props.environment.payloadBytes)}
         </Text>
       </Pressable>

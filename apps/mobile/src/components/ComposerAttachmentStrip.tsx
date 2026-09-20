@@ -104,7 +104,7 @@ export function ComposerAttachmentThumbnail(props: ComposerAttachmentThumbnailPr
  * persisted URI renders meanwhile, which is correct everywhere but after a
  * container move.
  */
-const PREVIEW_CACHE_DIRECTORY = "t3-composer-previews";
+const PREVIEW_CACHE_DIRECTORY = "dispatch-composer-previews";
 
 /**
  * Fabric re-parses an image source URL on every layout pass of the node, and a

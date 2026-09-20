@@ -271,7 +271,7 @@ async function uploadFileBytes(
   }
   const file =
     fileUri === undefined
-      ? new File(Paths.cache, `t3-upload-${uuidv4()}`)
+      ? new File(Paths.cache, `dispatch-upload-${uuidv4()}`)
       : new File(resolveOwnedComposerAttachmentFileUri(fileUri, Paths.document.uri) ?? fileUri);
   try {
     if (fileUri === undefined && inlineDataUrl !== undefined) {

@@ -136,16 +136,21 @@ describe("native pasted image cleanup", () => {
   it("recognizes only files created in the native composer paste directory", () => {
     expect(
       isOwnedPastedImageUri(
+        "file:///private/var/mobile/Containers/Data/Application/app/tmp/dispatch-composer-paste/id.png",
+      ),
+    ).toBe(true);
+    expect(
+      isOwnedPastedImageUri(
         "file:///private/var/mobile/Containers/Data/Application/app/tmp/t3-composer-paste/id.png",
       ),
     ).toBe(true);
     expect(isOwnedPastedImageUri("file:///private/var/mobile/photos/id.png")).toBe(false);
-    expect(isOwnedPastedImageUri("https://example.com/t3-composer-paste/id.png")).toBe(false);
+    expect(isOwnedPastedImageUri("https://example.com/dispatch-composer-paste/id.png")).toBe(false);
   });
 
   it("converts owned files to data-backed previews and deletes the source", async () => {
     const uri =
-      "file:///private/var/mobile/Containers/Data/Application/app/tmp/t3-composer-paste/id.png";
+      "file:///private/var/mobile/Containers/Data/Application/app/tmp/dispatch-composer-paste/id.png";
     files.set(uri, { base64: "aGVsbG8=", deleted: false });
 
     const attachments = await convertPastedImagesToAttachments({
@@ -164,9 +169,9 @@ describe("native pasted image cleanup", () => {
 
   it("deletes rejected and overflow owned files without deleting user-owned files", async () => {
     const rejected =
-      "file:///private/var/mobile/Containers/Data/Application/app/tmp/t3-composer-paste/bad.png";
+      "file:///private/var/mobile/Containers/Data/Application/app/tmp/dispatch-composer-paste/bad.png";
     const overflow =
-      "file:///private/var/mobile/Containers/Data/Application/app/tmp/t3-composer-paste/overflow.png";
+      "file:///private/var/mobile/Containers/Data/Application/app/tmp/dispatch-composer-paste/overflow.png";
     const userOwned = "file:///private/var/mobile/photos/library.png";
     files.set(rejected, { base64: "", deleted: false });
     files.set(overflow, { base64: "aGVsbG8=", deleted: false });
@@ -196,7 +201,7 @@ describe("native pasted image cleanup", () => {
       name: "pasted-text.txt",
       mimeType: "text/plain;charset=utf-8",
       sizeBytes: new TextEncoder().encode(text).byteLength,
-      fileUri: "file:///documents/t3-composer-attachments/attachment-id-pasted-text.txt",
+      fileUri: "file:///documents/dispatch-composer-attachments/attachment-id-pasted-text.txt",
       source: { _tag: "pasted-text" },
     });
     expect(files.get(attachment.fileUri)?.text).toBe(text);

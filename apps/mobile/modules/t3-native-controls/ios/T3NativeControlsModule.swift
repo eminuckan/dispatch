@@ -73,10 +73,13 @@ public final class T3NativeControlsModule: Module {
     }
 
     Function("getShowcaseScene") { () -> String? in
-      let scenePath = NSHomeDirectory() + "/Library/Caches/T3ShowcaseScene"
-      if let storedScene = try? String(contentsOfFile: scenePath, encoding: .utf8)
-        .trimmingCharacters(in: .whitespacesAndNewlines), !storedScene.isEmpty {
-        return storedScene
+      let scenePaths = ["DispatchShowcaseScene", "T3ShowcaseScene"]
+      for filename in scenePaths {
+        let scenePath = NSHomeDirectory() + "/Library/Caches/" + filename
+        if let storedScene = try? String(contentsOfFile: scenePath, encoding: .utf8)
+          .trimmingCharacters(in: .whitespacesAndNewlines), !storedScene.isEmpty {
+          return storedScene
+        }
       }
       let arguments = ProcessInfo.processInfo.arguments
       guard
@@ -152,7 +155,7 @@ public final class T3NativeControlsModule: Module {
     }
 
     Function("markShowcaseReady") { (scene: String) in
-      let readyPath = NSHomeDirectory() + "/Library/Caches/T3ShowcaseReadyScene"
+      let readyPath = NSHomeDirectory() + "/Library/Caches/DispatchShowcaseReadyScene"
       try? scene.write(toFile: readyPath, atomically: true, encoding: .utf8)
     }
   }

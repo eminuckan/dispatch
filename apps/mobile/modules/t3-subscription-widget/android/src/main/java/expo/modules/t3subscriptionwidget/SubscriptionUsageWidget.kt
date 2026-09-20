@@ -39,7 +39,8 @@ class SubscriptionUsageWidget : AppWidgetProvider() {
   }
 
   companion object {
-    const val PREFERENCES = "t3_subscription_widget"
+    const val PREFERENCES = "dispatch_subscription_widget"
+    private const val LEGACY_PREFERENCES = "t3_subscription_widget"
     private const val EXPIRE = "expo.modules.t3subscriptionwidget.EXPIRE"
 
     private fun expiryIntent(context: Context): PendingIntent = PendingIntent.getBroadcast(
@@ -56,8 +57,7 @@ class SubscriptionUsageWidget : AppWidgetProvider() {
     }
 
     private fun update(context: Context, manager: AppWidgetManager, id: Int) {
-      val saved = context.getSharedPreferences(PREFERENCES, 0).getString("snapshot", null)
-      val snapshot = runCatching { JSONObject(saved.orEmpty()) }.getOrNull()
+      val snapshot = savedSnapshot(context)
       val views = RemoteViews(context.packageName, R.layout.t3_subscription_widget)
       openAppIntent(context, id, snapshot)?.let {
         views.setOnClickPendingIntent(R.id.t3_widget_root, it)
@@ -116,6 +116,20 @@ class SubscriptionUsageWidget : AppWidgetProvider() {
         alarms.set(AlarmManager.RTC, nextExpiry, expiryIntent(context))
       }
       manager.updateAppWidget(id, views)
+    }
+
+    private fun savedSnapshot(context: Context): JSONObject? {
+      val current = context.getSharedPreferences(PREFERENCES, 0)
+      current.getString("snapshot", null)?.let { saved ->
+        return runCatching { JSONObject(saved) }.getOrNull()
+      }
+
+      val legacy = context.getSharedPreferences(LEGACY_PREFERENCES, 0)
+      val saved = legacy.getString("snapshot", null) ?: return null
+      val snapshot = runCatching { JSONObject(saved) }.getOrNull() ?: return null
+      current.edit().putString("snapshot", saved).apply()
+      legacy.edit().remove("snapshot").apply()
+      return snapshot
     }
 
     private fun openAppIntent(context: Context, id: Int, snapshot: JSONObject?): PendingIntent? {
