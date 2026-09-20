@@ -1,4 +1,4 @@
-import { normalizeProjectPathForComparison } from "@t3tools/shared/path";
+import { normalizeProjectPathForComparison } from "@dispatch/shared/path";
 
 export type FirstRunDecision = "pending" | "app" | "wizard";
 

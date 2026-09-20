@@ -7,8 +7,8 @@ import type {
   TeamPolicy,
   TeamModelProfile,
   ServerProvider,
-} from "@t3tools/contracts";
-import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+} from "@dispatch/contracts";
+import { squashAtomCommandFailure } from "@dispatch/client-runtime/state/runtime";
 import { randomUUID } from "../../lib/utils";
 import { deriveProviderInstanceEntries } from "../../providerInstances";
 import { useEnvironmentQuery } from "../../state/query";

@@ -1,6 +1,6 @@
 import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
-import { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
+import { EnvironmentId, ProjectId, ThreadId } from "@dispatch/contracts";
 
 import { ATTACHMENT_ONLY_BOOTSTRAP_PROMPT } from "./composerPromptHistory";
 import { clearStartedTeamDraftIfUnchanged, useTeamRoutingState } from "./TeamRoutingPreview";
@@ -24,7 +24,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("@effect/atom-react", () => ({ useAtomValue: () => ({ teamRouting: true }) }));
-vi.mock("@t3tools/client-runtime/state/runtime", () => ({
+vi.mock("@dispatch/client-runtime/state/runtime", () => ({
   squashAtomCommandFailure: (failure: { cause?: unknown }) => failure.cause ?? new Error("failed"),
 }));
 vi.mock("../../state/server", () => ({
@@ -65,7 +65,7 @@ vi.mock("../../state/query", () => ({
     refresh: vi.fn(),
   }),
 }));
-vi.mock("@t3tools/client-runtime/state/team-draft", () => ({
+vi.mock("@dispatch/client-runtime/state/team-draft", () => ({
   createTeamDraftCoordinator: (options: { publish: (value: unknown) => void }) => ({
     schedule: (draft: Record<string, unknown>) => {
       mocks.scheduledDrafts.push(draft);

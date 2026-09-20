@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import { subscriptionRoutingPolicy } from "./teamProfileDefaults";
-import { ProviderInstanceId, type TeamPolicy } from "@t3tools/contracts";
+import { ProviderInstanceId, type TeamPolicy } from "@dispatch/contracts";
 
 describe("routing profile defaults", () => {
   it("clears legacy estimates without changing routing permissions or mutating a running snapshot", () => {

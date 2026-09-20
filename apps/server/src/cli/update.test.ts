@@ -9,7 +9,7 @@ import {
   HostProcessInvokedAs,
   HostProcessPlatform,
   HostProcessWorkingDirectory,
-} from "@t3tools/shared/hostProcess";
+} from "@dispatch/shared/hostProcess";
 
 import { repointLauncher, resolveLauncherPath, resolveUpdateReleaseBaseUrl } from "./update.ts";
 

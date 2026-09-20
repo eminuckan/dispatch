@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import { ProjectId, ProviderInstanceId, ThreadId, type TeamRun } from "@t3tools/contracts";
+import { ProjectId, ProviderInstanceId, ThreadId, type TeamRun } from "@dispatch/contracts";
 import {
   acceptPlan,
   readyTasks,

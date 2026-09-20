@@ -5,8 +5,8 @@ import * as Layer from "effect/Layer";
 import { Argument, Command } from "effect/unstable/cli";
 import * as CliError from "effect/unstable/cli/CliError";
 
-import * as NetService from "@t3tools/shared/Net";
-import { applyDispatchEnvironmentAliases } from "@t3tools/shared/dispatchEnv";
+import * as NetService from "@dispatch/shared/Net";
+import { applyDispatchEnvironmentAliases } from "@dispatch/shared/dispatchEnv";
 import packageJson from "../package.json" with { type: "json" };
 import { authCommand } from "./cli/auth.ts";
 import { appCommand } from "./cli/app.ts";

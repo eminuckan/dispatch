@@ -5,7 +5,7 @@ import {
   type AttachmentCreateUploadUrlInput,
   AttachmentUploadSigningKeyError,
   type ChatAttachment,
-} from "@t3tools/contracts";
+} from "@dispatch/contracts";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";

@@ -19,7 +19,7 @@ import {
   type TeamRecoveryAdvice,
   type TeamRun,
   type ServerProvider,
-} from "@t3tools/contracts";
+} from "@dispatch/contracts";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";

@@ -3,7 +3,7 @@ import {
   HostProcessExecutablePath,
   HostProcessPlatform,
   HostProcessUserId,
-} from "@t3tools/shared/hostProcess";
+} from "@dispatch/shared/hostProcess";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -20,7 +20,7 @@ import {
   CLI_RELEASE_BASE_URL_ENV,
   CLI_RELEASE_BASE_URL_LEGACY_ENV,
   resolveCliReleaseBaseUrlEnv,
-} from "@t3tools/shared/cliRelease";
+} from "@dispatch/shared/cliRelease";
 
 import * as ProcessRunner from "../processRunner.ts";
 import {

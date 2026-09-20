@@ -6,7 +6,7 @@ import {
   TeamPolicy,
   TeamRun,
   type TeamExecutionTurn,
-} from "@t3tools/contracts";
+} from "@dispatch/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";

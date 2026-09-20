@@ -30,7 +30,7 @@ const APP_PROTOCOL_SCHEMES = isDevelopment
 const LAUNCHER_VERSION = 19;
 const developmentMacIconPngPath = NodePath.join(repoRoot, "assets", "dispatch", "icon-1024.png");
 const productionMacIconPngPath = NodePath.join(repoRoot, "assets", "dispatch", "icon-1024.png");
-// oxlint-disable-next-line t3code/no-global-process-runtime -- Standalone launcher script has no Effect runtime.
+// oxlint-disable-next-line dispatch/no-global-process-runtime -- Standalone launcher script has no Effect runtime.
 const hostPlatform = NodeOS.platform();
 
 function setPlistString(plistPath, key, value) {

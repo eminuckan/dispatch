@@ -1,4 +1,4 @@
-import type { EnvironmentId, SidebarThreadSortOrder } from "@t3tools/contracts";
+import type { EnvironmentId, SidebarThreadSortOrder } from "@dispatch/contracts";
 import type { HomeProjectSortOrder } from "./homeThreadList";
 import type {
   HomeListFilterMenuEnvironment,

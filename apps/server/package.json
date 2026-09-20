@@ -39,12 +39,12 @@
     "yauzl": "^3.4.0"
   },
   "devDependencies": {
+    "@dispatch/contracts": "workspace:*",
+    "@dispatch/shared": "workspace:*",
+    "@dispatch/ssh": "workspace:*",
+    "@dispatch/tailscale": "workspace:*",
+    "@dispatch/web": "workspace:*",
     "@effect/vitest": "catalog:",
-    "@t3tools/contracts": "workspace:*",
-    "@t3tools/shared": "workspace:*",
-    "@t3tools/ssh": "workspace:*",
-    "@t3tools/tailscale": "workspace:*",
-    "@t3tools/web": "workspace:*",
     "@types/node": "catalog:",
     "@types/yauzl": "^3.4.0",
     "effect-acp": "workspace:*",

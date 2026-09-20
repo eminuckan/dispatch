@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
-import type { TeamAssessment, TeamDraft } from "@t3tools/contracts";
+import type { TeamAssessment, TeamDraft } from "@dispatch/contracts";
 import { createTeamDraftCoordinator } from "./teamDraft.ts";
 const draft: TeamDraft = {
   draftId: "a",

@@ -5,7 +5,7 @@ import {
   ThreadId,
   ProviderInstanceId,
   type TeamThreadView,
-} from "@t3tools/contracts";
+} from "@dispatch/contracts";
 import type { TimelineEntry } from "../../session-logic";
 import { teamConversationEntries, teamTurnLabel } from "./teamConversation.logic";
 type MessageTimelineEntry = Extract<TimelineEntry, { kind: "message" }>;

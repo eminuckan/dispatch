@@ -6,13 +6,13 @@ import type {
   ScopedProjectRef,
   ServerConfig,
   ServerProvider,
-} from "@t3tools/contracts";
-import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
+} from "@dispatch/contracts";
+import { scopeProjectRef, scopeThreadRef } from "@dispatch/client-runtime/environment";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
-} from "@t3tools/client-runtime/state/runtime";
-import { CommandId, ProviderDriverKind, ThreadId } from "@t3tools/contracts";
+} from "@dispatch/client-runtime/state/runtime";
+import { CommandId, ProviderDriverKind, ThreadId } from "@dispatch/contracts";
 import * as Schema from "effect/Schema";
 import {
   ArrowRightIcon,

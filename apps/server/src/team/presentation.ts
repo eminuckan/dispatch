@@ -1,5 +1,5 @@
-import type { TeamRun, TeamThreadView } from "@t3tools/contracts";
-import { isTeamProtocolRole, teamProtocolSummary } from "@t3tools/shared/teamProtocolPresentation";
+import type { TeamRun, TeamThreadView } from "@dispatch/contracts";
+import { isTeamProtocolRole, teamProtocolSummary } from "@dispatch/shared/teamProtocolPresentation";
 
 export function teamThreadView(run: TeamRun | null): TeamThreadView | null {
   if (!run?.execution) return null;

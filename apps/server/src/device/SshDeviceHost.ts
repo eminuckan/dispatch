@@ -3,10 +3,10 @@ import {
   type DeviceHostSummary,
   DevicePlatformAvailability,
   type SshDeviceHostConfig,
-} from "@t3tools/contracts";
-import { runSshCommand, baseSshArgs, resolveSshCommand } from "@t3tools/ssh/command";
-import * as NetService from "@t3tools/shared/Net";
-import { waitForHttpReady } from "@t3tools/shared/httpReadiness";
+} from "@dispatch/contracts";
+import { runSshCommand, baseSshArgs, resolveSshCommand } from "@dispatch/ssh/command";
+import * as NetService from "@dispatch/shared/Net";
+import { waitForHttpReady } from "@dispatch/shared/httpReadiness";
 import * as Exit from "effect/Exit";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";

@@ -1,7 +1,7 @@
 import * as NodeCrypto from "node:crypto";
 import * as NodeURL from "node:url";
 
-import type { ChatAttachment, ProviderApprovalDecision, RuntimeMode } from "@t3tools/contracts";
+import type { ChatAttachment, ProviderApprovalDecision, RuntimeMode } from "@dispatch/contracts";
 import {
   type AgentInfo,
   type CommandInfo,
@@ -30,10 +30,10 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { isWindowsCommandNotFound } from "../processRunner.ts";
 import { collectStreamAsString } from "./providerSnapshot.ts";
-import * as NetService from "@t3tools/shared/Net";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
-import { compareSemverVersions, parseSemver } from "@t3tools/shared/semver";
-import { resolveSpawnCommand } from "@t3tools/shared/shell";
+import * as NetService from "@dispatch/shared/Net";
+import { HostProcessPlatform } from "@dispatch/shared/hostProcess";
+import { compareSemverVersions, parseSemver } from "@dispatch/shared/semver";
+import { resolveSpawnCommand } from "@dispatch/shared/shell";
 const encodeUnknownJsonStringExit = Schema.encodeUnknownExit(Schema.fromJsonString(Schema.Unknown));
 
 export const MINIMUM_OPENCODE_VERSION = "2.0.0";

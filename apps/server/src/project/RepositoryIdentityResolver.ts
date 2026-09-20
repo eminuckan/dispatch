@@ -1,8 +1,8 @@
-import type { RepositoryIdentity, SourceControlProviderError } from "@t3tools/contracts";
+import type { RepositoryIdentity, SourceControlProviderError } from "@dispatch/contracts";
 import {
   detectSourceControlProviderFromGitRemoteUrl,
   normalizeGitRemoteUrl,
-} from "@t3tools/shared/git";
+} from "@dispatch/shared/git";
 import * as Cache from "effect/Cache";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";

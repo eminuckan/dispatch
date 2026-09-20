@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import { ProviderInstanceId, type TeamPolicy } from "@t3tools/contracts";
+import { ProviderInstanceId, type TeamPolicy } from "@dispatch/contracts";
 import {
   classify,
   defaultTeamPolicy,

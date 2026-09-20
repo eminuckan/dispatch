@@ -6,7 +6,7 @@ import type {
   ResourceTelemetryAggregate,
   ResourceTelemetryProcess,
   ResourceTelemetryProcessCategory,
-} from "@t3tools/contracts";
+} from "@dispatch/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 

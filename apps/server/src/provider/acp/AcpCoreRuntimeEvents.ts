@@ -10,7 +10,7 @@ import {
   type RuntimeRequestId,
   type ThreadId,
   type TurnId,
-} from "@t3tools/contracts";
+} from "@dispatch/contracts";
 
 import {
   type AcpPermissionRequest,

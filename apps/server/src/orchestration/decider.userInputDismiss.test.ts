@@ -7,7 +7,7 @@ import {
   ApprovalRequestId,
   type OrchestrationReadModel,
   type OrchestrationThreadActivity,
-} from "@t3tools/contracts";
+} from "@dispatch/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";

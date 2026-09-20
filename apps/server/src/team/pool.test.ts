@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import { ProviderInstanceId, ProviderDriverKind, type ServerProvider } from "@t3tools/contracts";
+import { ProviderInstanceId, ProviderDriverKind, type ServerProvider } from "@dispatch/contracts";
 import { eligiblePolicy, poolCandidates, quotaExhausted } from "./pool.ts";
 import { defaultTeamPolicy } from "./routing.ts";
 const provider: ServerProvider = {

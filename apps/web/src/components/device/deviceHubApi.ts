@@ -1,6 +1,6 @@
-import { withDeviceHubQuery } from "@t3tools/client-runtime/state/deviceHubAccess";
-import type { DeviceHubAccess } from "@t3tools/client-runtime/state/deviceHubAccess";
-import type { DevicePlatform } from "@t3tools/contracts";
+import { withDeviceHubQuery } from "@dispatch/client-runtime/state/deviceHubAccess";
+import type { DeviceHubAccess } from "@dispatch/client-runtime/state/deviceHubAccess";
+import type { DevicePlatform } from "@dispatch/contracts";
 
 /**
  * Read-only hub endpoints the Tools drawer consumes directly: the accessibility

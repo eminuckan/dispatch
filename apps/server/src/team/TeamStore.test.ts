@@ -10,7 +10,7 @@ import {
   ThreadId,
   type TeamExecutionTurn,
   type TeamRun,
-} from "@t3tools/contracts";
+} from "@dispatch/contracts";
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import { make } from "./TeamStore.ts";
 import { defaultTeamPolicy } from "./routing.ts";

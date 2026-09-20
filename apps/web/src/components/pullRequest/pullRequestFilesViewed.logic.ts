@@ -1,4 +1,4 @@
-import type { PullRequestFileViewedState, PullRequestFilesViewedResult } from "@t3tools/contracts";
+import type { PullRequestFileViewedState, PullRequestFilesViewedResult } from "@dispatch/contracts";
 
 /** What the host last said about each file, by path. Absent means the host said nothing. */
 export type FileViewedStates = ReadonlyMap<string, PullRequestFileViewedState>;

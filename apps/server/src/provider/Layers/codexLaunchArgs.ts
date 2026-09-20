@@ -1,4 +1,4 @@
-import { tokenizeCliArgs } from "@t3tools/shared/cliArgs";
+import { tokenizeCliArgs } from "@dispatch/shared/cliArgs";
 
 const DISPATCH_CODEX_LAUNCH_ARGS_ENV = "DISPATCH_CODEX_LAUNCH_ARGS";
 const T3CODE_CODEX_LAUNCH_ARGS_ENV = "T3CODE_CODEX_LAUNCH_ARGS";

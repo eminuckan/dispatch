@@ -1,4 +1,4 @@
-import { TeamError, type TeamRun, type TeamTask } from "@t3tools/contracts";
+import { TeamError, type TeamRun, type TeamTask } from "@dispatch/contracts";
 import * as Schema from "effect/Schema";
 
 export const PlanProposal = Schema.Struct({

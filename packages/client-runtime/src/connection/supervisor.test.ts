@@ -1,5 +1,5 @@
-import { AuthStandardClientScopes, EnvironmentId } from "@t3tools/contracts";
-import { RelayClientTracer } from "@t3tools/shared/relayTracing";
+import { AuthStandardClientScopes, EnvironmentId } from "@dispatch/contracts";
+import { RelayClientTracer } from "@dispatch/shared/relayTracing";
 import { describe, expect, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";

@@ -1,10 +1,10 @@
-import { teamAgentDisplayName } from "@t3tools/shared/teamAgentNames";
-import type { TeamThreadView } from "@t3tools/contracts";
+import { teamAgentDisplayName } from "@dispatch/shared/teamAgentNames";
+import type { TeamThreadView } from "@dispatch/contracts";
 import {
   isTeamProtocolRole,
   looksLikeTeamProtocol,
   teamProtocolSummary,
-} from "@t3tools/shared/teamProtocolPresentation";
+} from "@dispatch/shared/teamProtocolPresentation";
 import type { TimelineEntry } from "../../session-logic";
 
 // Exact managed-thread membership lets us hide only scheduler prompts while
@@ -75,7 +75,7 @@ export function teamConversationEntries(
 }
 
 export function teamAgentName(
-  run: Pick<import("@t3tools/contracts").TeamThreadView, "id" | "leadThreadId" | "turns">,
+  run: Pick<import("@dispatch/contracts").TeamThreadView, "id" | "leadThreadId" | "turns">,
   threadId: string,
 ): string {
   return teamAgentDisplayName(
@@ -86,8 +86,8 @@ export function teamAgentName(
 }
 
 export function teamTurnLabel(
-  run: import("@t3tools/contracts").TeamThreadView,
-  turn: import("@t3tools/contracts").TeamThreadView["turns"][number],
+  run: import("@dispatch/contracts").TeamThreadView,
+  turn: import("@dispatch/contracts").TeamThreadView["turns"][number],
 ): string {
   if (turn.status === "reserved") return "queued";
   if (turn.status !== "settled")

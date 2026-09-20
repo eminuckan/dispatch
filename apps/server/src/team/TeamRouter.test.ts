@@ -5,7 +5,7 @@ import {
   type ServerProvider,
   type TeamPolicy,
   TeamError,
-} from "@t3tools/contracts";
+} from "@dispatch/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";

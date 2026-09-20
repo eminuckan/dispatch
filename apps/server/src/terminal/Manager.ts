@@ -38,10 +38,10 @@ import {
   ClaudeSettings,
   CodexSettings,
   ProviderInstanceId,
-} from "@t3tools/contracts";
-import { makeKeyedCoalescingWorker } from "@t3tools/shared/KeyedCoalescingWorker";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
-import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
+} from "@dispatch/contracts";
+import { makeKeyedCoalescingWorker } from "@dispatch/shared/KeyedCoalescingWorker";
+import { HostProcessPlatform } from "@dispatch/shared/hostProcess";
+import { getTerminalLabel } from "@dispatch/shared/terminalLabels";
 import * as DateTime from "effect/DateTime";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";

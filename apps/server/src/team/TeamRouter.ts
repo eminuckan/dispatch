@@ -5,7 +5,7 @@ import {
   type TeamAssessment,
   type TeamPolicy,
   type TeamRecoveryInput,
-} from "@t3tools/contracts";
+} from "@dispatch/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";

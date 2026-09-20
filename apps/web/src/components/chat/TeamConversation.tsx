@@ -1,12 +1,12 @@
 import { useAtomCommand } from "../../state/use-atom-command";
-import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { squashAtomCommandFailure } from "@dispatch/client-runtime/state/runtime";
 import { useRightPanelStore } from "../../rightPanelStore";
 import { Link } from "@tanstack/react-router";
 import type { TimelineEntry } from "../../session-logic";
 import { teamConversationEntries, teamAgentName, teamTurnLabel } from "./teamConversation.logic";
 import { useEffect, useState, type ReactNode } from "react";
 import { ChevronRightIcon, RefreshCwIcon } from "lucide-react";
-import type { EnvironmentId, TeamThreadView, ThreadId } from "@t3tools/contracts";
+import type { EnvironmentId, TeamThreadView, ThreadId } from "@dispatch/contracts";
 import { teamEnvironment } from "../../state/team";
 import { useEnvironmentQuery } from "../../state/query";
 import { Button } from "../ui/button";

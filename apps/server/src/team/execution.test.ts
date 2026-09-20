@@ -7,7 +7,7 @@ import {
   ThreadId,
   type TeamRun,
   type TeamExecutionTurn,
-} from "@t3tools/contracts";
+} from "@dispatch/contracts";
 import { admitExecutionTurn, LeadReview, parseProposal } from "./execution.ts";
 import { defaultTeamPolicy } from "./routing.ts";
 const selection = { instanceId: ProviderInstanceId.make("codex"), model: "allowed" };

@@ -1,4 +1,4 @@
-import type { ProviderInteractionMode } from "@t3tools/contracts";
+import type { ProviderInteractionMode } from "@dispatch/contracts";
 import { buildRuntimeInstructions } from "./RuntimeInstructions.ts";
 
 const DISPATCH_BROWSER_TOOL_INSTRUCTIONS = `

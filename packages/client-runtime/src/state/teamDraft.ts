@@ -1,4 +1,4 @@
-import type { TeamAssessment, TeamDraft } from "@t3tools/contracts";
+import type { TeamAssessment, TeamDraft } from "@dispatch/contracts";
 
 /** Owns only preview work. It cannot create sessions, worktrees or provider turns. */
 export function createTeamDraftCoordinator(options: {

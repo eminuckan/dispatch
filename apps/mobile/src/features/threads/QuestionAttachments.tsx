@@ -6,7 +6,7 @@ import {
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   type ApprovalRequestId,
   type UserInputQuestion,
-} from "@t3tools/contracts";
+} from "@dispatch/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { Alert, View } from "react-native";
 import { useEffect, useRef, useState } from "react";

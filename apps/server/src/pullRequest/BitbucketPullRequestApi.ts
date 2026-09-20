@@ -19,7 +19,7 @@ import type {
   PullRequestReviewThread,
   PullRequestReviewVerdict,
   PullRequestReviewerCandidateList,
-} from "@t3tools/contracts";
+} from "@dispatch/contracts";
 
 import * as BitbucketApi from "../sourceControl/BitbucketApi.ts";
 import { parseDiffFileRevisions } from "./bitbucketDiffRevisions.ts";

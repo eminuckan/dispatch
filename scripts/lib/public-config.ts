@@ -3,7 +3,7 @@ import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 import * as NodeUtil from "node:util";
-import { withDispatchEnvironmentAliases } from "@t3tools/shared/dispatchEnv";
+import { withDispatchEnvironmentAliases } from "@dispatch/shared/dispatchEnv";
 
 export interface DispatchPublicConfig {
   readonly clerkPublishableKey: string | undefined;

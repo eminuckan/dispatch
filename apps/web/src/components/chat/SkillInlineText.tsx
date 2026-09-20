@@ -1,6 +1,6 @@
 import { Children, cloneElement, isValidElement, type ReactNode } from "react";
-import type { ServerProviderSkill } from "@t3tools/contracts";
-import { formatProviderSkillDisplayName } from "@t3tools/client-runtime/providerSkills";
+import type { ServerProviderSkill } from "@dispatch/contracts";
+import { formatProviderSkillDisplayName } from "@dispatch/client-runtime/providerSkills";
 
 import {
   CHAT_INLINE_CHIP_CLASS_NAME,

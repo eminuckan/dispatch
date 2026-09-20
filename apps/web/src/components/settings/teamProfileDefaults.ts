@@ -1,4 +1,4 @@
-import type { TeamPolicy } from "@t3tools/contracts";
+import type { TeamPolicy } from "@dispatch/contracts";
 
 export const routingTierLabels = {
   economy: "Routine tasks",

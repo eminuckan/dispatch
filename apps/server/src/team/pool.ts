@@ -1,4 +1,4 @@
-import type { ServerProvider, TeamModelProfile, TeamPolicy } from "@t3tools/contracts";
+import type { ServerProvider, TeamModelProfile, TeamPolicy } from "@dispatch/contracts";
 
 /** A reported exhausted window remains blocking until the provider reports replenishment. */
 export function quotaExhausted(provider: ServerProvider, model: string): boolean {

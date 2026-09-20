@@ -1,4 +1,4 @@
-import type { EnvironmentId } from "@t3tools/contracts";
+import type { EnvironmentId } from "@dispatch/contracts";
 import { useEffect, useState } from "react";
 
 /** Wait through brief outages before offering to switch off the active environment. */

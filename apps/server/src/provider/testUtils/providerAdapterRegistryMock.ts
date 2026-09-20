@@ -8,7 +8,7 @@ import {
   defaultInstanceIdForDriver,
   ProviderDriverKind,
   type ProviderInstanceId,
-} from "@t3tools/contracts";
+} from "@dispatch/contracts";
 import * as Effect from "effect/Effect";
 import * as PubSub from "effect/PubSub";
 

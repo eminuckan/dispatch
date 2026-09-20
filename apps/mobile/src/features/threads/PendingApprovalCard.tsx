@@ -3,7 +3,7 @@ import type {
   ApprovalRequestId,
   ProviderApprovalDecision,
   ProviderApprovalOption,
-} from "@t3tools/contracts";
+} from "@dispatch/contracts";
 import { View } from "react-native";
 
 import { AppText as Text } from "../../components/AppText";

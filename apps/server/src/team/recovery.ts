@@ -1,4 +1,4 @@
-import type { TeamPolicy, TeamRecoveryAdvice, TeamRecoveryInput } from "@t3tools/contracts";
+import type { TeamPolicy, TeamRecoveryAdvice, TeamRecoveryInput } from "@dispatch/contracts";
 import * as Schema from "effect/Schema";
 import { Choice, JEV_MODEL, tierRank, validChoice } from "./routing.ts";
 

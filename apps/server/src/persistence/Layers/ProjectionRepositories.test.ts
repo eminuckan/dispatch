@@ -4,7 +4,7 @@ import {
   TurnId,
   ProviderInstanceId,
   OrchestrationProposedPlanId,
-} from "@t3tools/contracts";
+} from "@dispatch/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";

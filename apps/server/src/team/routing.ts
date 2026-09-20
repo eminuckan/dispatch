@@ -6,7 +6,7 @@ import {
   type TeamTier,
   type ServerProvider,
   type TeamPlanningHints,
-} from "@t3tools/contracts";
+} from "@dispatch/contracts";
 import * as Schema from "effect/Schema";
 
 const Probability = Schema.Finite.check(Schema.isBetween({ minimum: 0, maximum: 1 }));

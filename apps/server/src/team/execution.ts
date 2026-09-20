@@ -1,4 +1,4 @@
-import { TeamError, type TeamExecutionTurn, type TeamRun } from "@t3tools/contracts";
+import { TeamError, type TeamExecutionTurn, type TeamRun } from "@dispatch/contracts";
 import * as Schema from "effect/Schema";
 
 export const LeadReview = Schema.Struct({

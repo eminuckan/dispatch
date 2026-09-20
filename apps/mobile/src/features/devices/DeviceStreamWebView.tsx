@@ -1,4 +1,4 @@
-import deviceStreamScript from "@t3tools/mobile-device-stream";
+import deviceStreamScript from "@dispatch/mobile-device-stream";
 import { useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type Ref } from "react";
 import { Platform } from "react-native";
 import { WebView } from "react-native-webview";

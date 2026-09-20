@@ -7,8 +7,8 @@ import {
   type ProjectId,
   type ProviderInteractionMode,
   type RuntimeMode,
-} from "@t3tools/contracts";
-import { assistantCitationsToPlainText } from "@t3tools/shared/assistantCitations";
+} from "@dispatch/contracts";
+import { assistantCitationsToPlainText } from "@dispatch/shared/assistantCitations";
 
 import type { UploadedMobileAttachment } from "./attachmentUpload";
 

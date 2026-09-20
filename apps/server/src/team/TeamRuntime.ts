@@ -1,6 +1,6 @@
 import { usableModel } from "./pool.ts";
-import { teamAgentDisplayName } from "@t3tools/shared/teamAgentNames";
-import { isTeamProtocolRole } from "@t3tools/shared/teamProtocolPresentation";
+import { teamAgentDisplayName } from "@dispatch/shared/teamAgentNames";
+import { isTeamProtocolRole } from "@dispatch/shared/teamProtocolPresentation";
 import { teamThreadView } from "./presentation.ts";
 import {
   isOrchestrationCommandRejection,
@@ -19,7 +19,7 @@ import {
   type TeamExecutionTurn,
   type TeamModelProfile,
   type TeamPeerMessage,
-} from "@t3tools/contracts";
+} from "@dispatch/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";

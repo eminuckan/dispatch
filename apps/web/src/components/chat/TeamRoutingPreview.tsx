@@ -1,14 +1,14 @@
 import { useAtomValue } from "@effect/atom-react";
-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { scopeThreadRef } from "@dispatch/client-runtime/environment";
 import { serverEnvironment } from "../../state/server";
 import { Switch } from "../ui/switch";
 import { useNavigate } from "@tanstack/react-router";
-import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { squashAtomCommandFailure } from "@dispatch/client-runtime/state/runtime";
 import { useRightPanelStore } from "../../rightPanelStore";
 import { randomUUID } from "../../lib/utils";
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
-import type { ChatAttachment, EnvironmentId, ProjectId, TeamAssessment } from "@t3tools/contracts";
-import { createTeamDraftCoordinator } from "@t3tools/client-runtime/state/team-draft";
+import type { ChatAttachment, EnvironmentId, ProjectId, TeamAssessment } from "@dispatch/contracts";
+import { createTeamDraftCoordinator } from "@dispatch/client-runtime/state/team-draft";
 import { teamEnvironment } from "../../state/team";
 import { useEnvironmentQuery } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";

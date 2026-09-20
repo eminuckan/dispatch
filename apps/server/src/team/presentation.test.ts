@@ -7,7 +7,7 @@ import {
   ThreadId,
   type TeamRun,
   type TeamExecutionTurn,
-} from "@t3tools/contracts";
+} from "@dispatch/contracts";
 import { teamThreadView } from "./presentation.ts";
 import { defaultTeamPolicy } from "./routing.ts";
 const profile = {

@@ -9,7 +9,7 @@ import {
   HostProcessEnvironment,
   HostProcessExecutablePath,
   HostProcessPlatform,
-} from "@t3tools/shared/hostProcess";
+} from "@dispatch/shared/hostProcess";
 import * as Effect from "effect/Effect";
 import * as Data from "effect/Data";
 import * as Exit from "effect/Exit";

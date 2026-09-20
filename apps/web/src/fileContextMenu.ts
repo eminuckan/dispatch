@@ -10,7 +10,7 @@ import {
   type ContextMenuItem,
   type EditorId,
   type EnvironmentId,
-} from "@t3tools/contracts";
+} from "@dispatch/contracts";
 import { useCallback, useMemo } from "react";
 
 import { resolveDiffPathForWorkspace } from "./diffFileActions";

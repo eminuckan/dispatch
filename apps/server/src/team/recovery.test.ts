@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import { ProviderInstanceId, type TeamPolicy, type TeamRecoveryInput } from "@t3tools/contracts";
+import { ProviderInstanceId, type TeamPolicy, type TeamRecoveryInput } from "@dispatch/contracts";
 import { defaultTeamPolicy } from "./routing.ts";
 import { recoveryAdvice, type RecoveryResponse } from "./recovery.ts";
 const profile = (id: string, model: string, effort: string, tier: "economy" | "capable") => ({

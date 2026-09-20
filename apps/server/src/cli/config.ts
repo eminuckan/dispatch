@@ -1,7 +1,7 @@
-import * as NetService from "@t3tools/shared/Net";
-import { OtlpHeadersFromString, OtlpProtocol } from "@t3tools/shared/observability";
-import { parsePersistedServerObservabilitySettings } from "@t3tools/shared/serverSettings";
-import { DesktopBackendBootstrap, PortSchema } from "@t3tools/contracts";
+import * as NetService from "@dispatch/shared/Net";
+import { OtlpHeadersFromString, OtlpProtocol } from "@dispatch/shared/observability";
+import { parsePersistedServerObservabilitySettings } from "@dispatch/shared/serverSettings";
+import { DesktopBackendBootstrap, PortSchema } from "@dispatch/contracts";
 import * as Config from "effect/Config";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";

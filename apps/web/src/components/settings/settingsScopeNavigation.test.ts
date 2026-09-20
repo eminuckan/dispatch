@@ -1,4 +1,4 @@
-import { EnvironmentId, ProviderInstanceId } from "@t3tools/contracts";
+import { EnvironmentId, ProviderInstanceId } from "@dispatch/contracts";
 import {
   createMemoryHistory,
   createRootRoute,

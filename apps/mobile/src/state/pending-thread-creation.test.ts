@@ -6,7 +6,7 @@ import {
   ProjectId,
   ProviderInstanceId,
   ThreadId,
-} from "@t3tools/contracts";
+} from "@dispatch/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
