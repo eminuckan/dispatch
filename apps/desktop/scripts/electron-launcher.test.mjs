@@ -30,8 +30,13 @@ describe("electron development launcher", () => {
     );
     assert.include(
       environmentScript,
-      "if [ -z \"${T3CODE_OTLP_PROTOCOL:-}\" ]; then export T3CODE_OTLP_PROTOCOL='http/protobuf'; fi",
+      "if [ -z \"${DISPATCH_OTLP_PROTOCOL:-}\" ]; then export DISPATCH_OTLP_PROTOCOL='http/protobuf'; fi",
     );
+    assert.include(
+      environmentScript,
+      "if [ -z \"${DISPATCH_HOME:-}\" ]; then export DISPATCH_HOME='/tmp/t3'; fi",
+    );
+    assert.notInclude(environmentScript, "export T3CODE_HOME=");
     assert.notInclude(environmentScript, "\nexport VITE_DEV_SERVER_URL=");
   });
 
