@@ -1,3 +1,4 @@
+// @effect-diagnostics globalTimers:off -- Browser draft debouncing lives outside an Effect runtime and owns its cancellation synchronously.
 import type { TeamAssessment, TeamDraft } from "@dispatch/contracts";
 
 /** Owns only preview work. It cannot create sessions, worktrees or provider turns. */
@@ -8,11 +9,11 @@ export function createTeamDraftCoordinator(options: {
   delayMs?: number;
 }) {
   let generation = 0;
-  let timer: ReturnType<typeof setTimeout> | undefined;
+  let timer: ReturnType<typeof globalThis.setTimeout> | undefined;
   let disposed = false;
   const invalidate = () => {
     generation++;
-    clearTimeout(timer);
+    globalThis.clearTimeout(timer);
     timer = undefined;
     options.publish(null);
   };
@@ -21,7 +22,7 @@ export function createTeamDraftCoordinator(options: {
       invalidate();
       if (disposed || composing || !draft.prompt.trim()) return;
       const expected = generation;
-      timer = setTimeout(() => {
+      timer = globalThis.setTimeout(() => {
         void options.assess(draft).then(
           (result) => {
             if (
