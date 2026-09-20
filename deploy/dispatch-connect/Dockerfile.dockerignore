@@ -17,6 +17,5 @@ native
 packages
 scripts
 packaging
-patches
 oxlint-plugin-dispatch
 infra/relay

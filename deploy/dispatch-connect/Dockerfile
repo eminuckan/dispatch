@@ -9,6 +9,7 @@ RUN corepack enable && corepack prepare pnpm@11.10.0 --activate
 WORKDIR /workspace
 
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml tsconfig.base.json ./
+COPY patches patches
 COPY infra/connect/package.json infra/connect/package.json
 
 RUN pnpm install --frozen-lockfile --prod --ignore-scripts --filter @dispatch/connect...
