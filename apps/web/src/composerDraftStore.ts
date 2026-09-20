@@ -70,7 +70,12 @@ import {
 import { create } from "zustand";
 import { persist, type PersistStorage, type StorageValue } from "zustand/middleware";
 import { useShallow } from "zustand/react/shallow";
-import { createDeferredStorage, createMemoryStorage } from "./lib/storage";
+import {
+  createDeferredStorage,
+  createMemoryStorage,
+  createMigratingStorage,
+  resolveStorage,
+} from "./lib/storage";
 import { getDefaultServerModel } from "./providerModels";
 import { replaceComposerContextReferences } from "@dispatch/shared/composerContextReferences";
 import { UnifiedSettings } from "@dispatch/contracts/settings";
@@ -81,7 +86,7 @@ const isReviewCommentContext = Schema.is(ReviewCommentContextSchema);
 const isSnapShotSource = Schema.is(SnapShotSource);
 const isPreviewAnnotationPayload = Schema.is(PreviewAnnotationPayloadSchema);
 
-export const COMPOSER_DRAFT_STORAGE_KEY = "t3code:composer-drafts:v1";
+export const COMPOSER_DRAFT_STORAGE_KEY = "dispatch:composer-drafts:v1";
 const COMPOSER_DRAFT_STORAGE_VERSION = 9;
 const DraftThreadEnvModeSchema = Schema.Literals(["local", "worktree"]);
 export type DraftThreadEnvMode = typeof DraftThreadEnvModeSchema.Type;
@@ -97,7 +102,9 @@ type ComposerPersistState =
   | PersistedComposerDraftStoreState;
 
 const composerDebouncedStorage = createDeferredStorage<StorageValue<ComposerPersistState>>(
-  typeof localStorage !== "undefined" ? localStorage : createMemoryStorage(),
+  createMigratingStorage(
+    resolveStorage(typeof localStorage !== "undefined" ? localStorage : createMemoryStorage()),
+  ),
   (value) =>
     JSON.stringify({
       state:

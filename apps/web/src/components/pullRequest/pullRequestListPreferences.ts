@@ -7,6 +7,7 @@ import {
   PullRequestListFilters,
   PullRequestListState,
 } from "@dispatch/contracts";
+import { readMigratedStorageItem, writeMigratedStorageItem } from "../../lib/storage";
 
 export const PullRequestListSort = Schema.Literals([
   "ready",
@@ -62,8 +63,18 @@ const PullRequestListPreferencesSchema = Schema.Struct({
 const decodePullRequestListPreferences = Schema.decodeUnknownOption(
   PullRequestListPreferencesSchema,
 );
-const PULL_REQUEST_LIST_PREFERENCES_STORAGE_KEY = "t3.pullRequests.preferences";
-type PreferenceStorage = Pick<Storage, "getItem" | "setItem">;
+const PULL_REQUEST_LIST_PREFERENCES_STORAGE_KEY = "dispatch.pullRequests.preferences";
+const LEGACY_PULL_REQUEST_LIST_PREFERENCES_STORAGE_KEY = "t3.pullRequests.preferences";
+type PreferenceStorage = Pick<Storage, "getItem" | "setItem"> &
+  Partial<Pick<Storage, "removeItem">>;
+
+function completePreferenceStorage(storage: PreferenceStorage) {
+  return {
+    getItem: (key: string) => storage.getItem(key),
+    setItem: (key: string, value: string) => storage.setItem(key, value),
+    removeItem: (key: string) => storage.removeItem?.(key),
+  };
+}
 
 function resolvePreferenceStorage(
   storage: PreferenceStorage | undefined,
@@ -95,9 +106,15 @@ export function readPullRequestListPreferences(
   storage?: PreferenceStorage,
 ): PullRequestListPreferences {
   try {
-    const raw = resolvePreferenceStorage(storage)?.getItem(
-      PULL_REQUEST_LIST_PREFERENCES_STORAGE_KEY,
-    );
+    const resolved = resolvePreferenceStorage(storage);
+    const raw =
+      resolved === undefined
+        ? null
+        : readMigratedStorageItem(
+            completePreferenceStorage(resolved),
+            PULL_REQUEST_LIST_PREFERENCES_STORAGE_KEY,
+            [LEGACY_PULL_REQUEST_LIST_PREFERENCES_STORAGE_KEY],
+          );
     if (!raw) return DEFAULT_PULL_REQUEST_LIST_PREFERENCES;
     const decoded = decodePullRequestListPreferences(JSON.parse(raw));
     return decoded._tag === "Some"
@@ -113,10 +130,15 @@ export function writePullRequestListPreferences(
   storage?: PreferenceStorage,
 ): void {
   try {
-    resolvePreferenceStorage(storage)?.setItem(
-      PULL_REQUEST_LIST_PREFERENCES_STORAGE_KEY,
-      JSON.stringify(preferences),
-    );
+    const resolved = resolvePreferenceStorage(storage);
+    if (resolved !== undefined) {
+      writeMigratedStorageItem(
+        completePreferenceStorage(resolved),
+        PULL_REQUEST_LIST_PREFERENCES_STORAGE_KEY,
+        JSON.stringify(preferences),
+        [LEGACY_PULL_REQUEST_LIST_PREFERENCES_STORAGE_KEY],
+      );
+    }
   } catch {
     // Storage can be full or denied; the URL remains the source of truth for this visit.
   }

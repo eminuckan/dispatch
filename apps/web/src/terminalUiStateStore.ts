@@ -9,7 +9,7 @@ import { parseScopedThreadKey, scopedThreadKey } from "@dispatch/client-runtime/
 import { type ScopedThreadRef } from "@dispatch/contracts";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
-import { resolveStorage } from "./lib/storage";
+import { createMigratingStorage, resolveStorage } from "./lib/storage";
 import {
   DEFAULT_THREAD_TERMINAL_HEIGHT,
   DEFAULT_THREAD_TERMINAL_ID,
@@ -27,7 +27,7 @@ interface ThreadTerminalUiState {
 }
 
 // Keep the old storage key so existing drawer layout preferences migrate.
-const TERMINAL_UI_STATE_STORAGE_KEY = "t3code:terminal-state:v1";
+const TERMINAL_UI_STATE_STORAGE_KEY = "dispatch:terminal-state:v1";
 
 interface PersistedTerminalUiStateStoreState {
   terminalUiStateByThreadKey?: Record<string, ThreadTerminalUiState>;
@@ -55,7 +55,9 @@ export function migratePersistedTerminalUiStateStoreState(
 }
 
 function createTerminalUiStateStorage() {
-  return resolveStorage(typeof window !== "undefined" ? window.localStorage : undefined);
+  return createMigratingStorage(
+    resolveStorage(typeof window !== "undefined" ? window.localStorage : undefined),
+  );
 }
 
 function normalizeTerminalIds(terminalIds: string[]): string[] {

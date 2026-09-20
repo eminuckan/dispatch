@@ -90,6 +90,49 @@ describe("makeCatalogBackend", () => {
 });
 
 describe("browser GitHub routing permissions", () => {
+  it.effect("adopts legacy routing permissions into the Dispatch key", () =>
+    Effect.gen(function* () {
+      const values = new Map<string, string>();
+      const localStorage: Storage = {
+        get length() {
+          return values.size;
+        },
+        key: (index) => [...values.keys()][index] ?? null,
+        getItem: (key) => values.get(key) ?? null,
+        setItem: (key, value) => {
+          values.set(key, value);
+        },
+        removeItem: (key) => {
+          values.delete(key);
+        },
+        clear: () => values.clear(),
+      };
+      const browser = Object.assign(new EventTarget(), { localStorage });
+      const entry = {
+        target: new PrimaryConnectionTarget({
+          environmentId: EnvironmentId.make("legacy"),
+          label: "Legacy",
+          httpBaseUrl: "http://localhost:3000",
+          wsBaseUrl: "ws://localhost:3000",
+        }),
+        profile: Option.none(),
+        enabled: true,
+      };
+      const permissions = makeBrowserGitHubRoutingPermissions(browser);
+      yield* permissions.set(entry, "read-write");
+      const canonicalKey = "dispatch:github-routing:legacy";
+      const legacyKey = "t3code:github-routing:legacy";
+      const raw = values.get(canonicalKey);
+      expect(raw).toBeDefined();
+      values.delete(canonicalKey);
+      values.set(legacyKey, raw!);
+
+      expect(yield* makeBrowserGitHubRoutingPermissions(browser).get(entry)).toBe("read-write");
+      expect(values.get(canonicalKey)).toBe(raw);
+      expect(values.has(legacyKey)).toBe(false);
+    }),
+  );
+
   it.effect("revokes across runtimes before storage events and resists stale catalog writes", () =>
     Effect.gen(function* () {
       const values = new Map<string, string>();

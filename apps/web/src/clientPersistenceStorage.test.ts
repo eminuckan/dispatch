@@ -39,7 +39,7 @@ afterEach(() => {
 
 describe("clientPersistenceStorage", () => {
   it("persists client settings in browser storage", async () => {
-    getTestWindow();
+    const testWindow = getTestWindow();
     const { readBrowserClientSettings, writeBrowserClientSettings } =
       await import("./clientPersistenceStorage");
     const settings = {
@@ -50,30 +50,45 @@ describe("clientPersistenceStorage", () => {
     writeBrowserClientSettings(settings);
 
     expect(readBrowserClientSettings()).toEqual(settings);
+    expect(testWindow.localStorage.getItem("dispatch:client-settings:v1")).not.toBeNull();
+    expect(testWindow.localStorage.getItem("t3code:client-settings:v1")).toBeNull();
+  });
+
+  it("migrates legacy client settings to the Dispatch key", async () => {
+    const testWindow = getTestWindow();
+    const settings = { ...DEFAULT_CLIENT_SETTINGS, timestampFormat: "12-hour" as const };
+    testWindow.localStorage.setItem("t3code:client-settings:v1", JSON.stringify(settings));
+    const { readBrowserClientSettings } = await import("./clientPersistenceStorage");
+
+    expect(readBrowserClientSettings()).toEqual(settings);
+    expect(testWindow.localStorage.getItem("dispatch:client-settings:v1")).toBe(
+      JSON.stringify(settings),
+    );
+    expect(testWindow.localStorage.getItem("t3code:client-settings:v1")).toBeNull();
   });
 
   it.each(["not-json", '{"wordWrap":"invalid"}'])(
     "does not treat invalid saved settings as absent: %s",
     async (value) => {
       const testWindow = getTestWindow();
-      testWindow.localStorage.setItem("t3code:client-settings:v1", value);
+      testWindow.localStorage.setItem("dispatch:client-settings:v1", value);
       const { readBrowserClientSettings } = await import("./clientPersistenceStorage");
 
       expect(() => readBrowserClientSettings()).toThrow(
         expect.objectContaining({
           _tag: "LocalStorageOperationError",
           operation: "decode",
-          storageKey: "t3code:client-settings:v1",
+          storageKey: "dispatch:client-settings:v1",
         }),
       );
-      expect(testWindow.localStorage.getItem("t3code:client-settings:v1")).toBe(value);
+      expect(testWindow.localStorage.getItem("dispatch:client-settings:v1")).toBe(value);
     },
   );
 
   it("preserves saved settings across a transient read failure", async () => {
     const testWindow = getTestWindow();
     const settings = { ...DEFAULT_CLIENT_SETTINGS, timestampFormat: "12-hour" as const };
-    testWindow.localStorage.setItem("t3code:client-settings:v1", JSON.stringify(settings));
+    testWindow.localStorage.setItem("dispatch:client-settings:v1", JSON.stringify(settings));
     const write = vi.spyOn(testWindow.localStorage, "setItem");
     const failure = new Error("storage unavailable");
     vi.spyOn(testWindow.localStorage, "getItem").mockImplementationOnce(() => {
@@ -85,7 +100,7 @@ describe("clientPersistenceStorage", () => {
       expect.objectContaining({
         _tag: "LocalStorageOperationError",
         operation: "read",
-        storageKey: "t3code:client-settings:v1",
+        storageKey: "dispatch:client-settings:v1",
         cause: failure,
       }),
     );
@@ -96,7 +111,7 @@ describe("clientPersistenceStorage", () => {
   it("defaults word wrap on and discards obsolete wrapping preferences", async () => {
     const testWindow = getTestWindow();
     testWindow.localStorage.setItem(
-      "t3code:client-settings:v1",
+      "dispatch:client-settings:v1",
       JSON.stringify({
         chatWordWrap: false,
         diffWordWrap: false,
@@ -119,7 +134,7 @@ describe("clientPersistenceStorage", () => {
     const { readBrowserClientSettings, writeBrowserClientSettings } =
       await import("./clientPersistenceStorage");
 
-    testWindow.localStorage.setItem("t3code:client-settings:v1", JSON.stringify({}));
+    testWindow.localStorage.setItem("dispatch:client-settings:v1", JSON.stringify({}));
     expect(readBrowserClientSettings()?.diffFilesCollapsed).toBe(true);
 
     writeBrowserClientSettings({ ...DEFAULT_CLIENT_SETTINGS, diffFilesCollapsed: true });
@@ -135,7 +150,7 @@ describe("clientPersistenceStorage", () => {
       await import("./clientPersistenceStorage");
 
     expect(readBrowserClientSettings()).toBeNull();
-    testWindow.localStorage.setItem("t3code:client-settings:v1", JSON.stringify({}));
+    testWindow.localStorage.setItem("dispatch:client-settings:v1", JSON.stringify({}));
     expect(readBrowserClientSettings()?.diffLayout).toBe("stacked");
 
     writeBrowserClientSettings({ ...DEFAULT_CLIENT_SETTINGS, diffLayout: "split" });

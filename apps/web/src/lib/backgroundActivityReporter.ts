@@ -19,9 +19,10 @@ import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 
+import { readMigratedStorageItem, writeMigratedStorageItem } from "./storage";
 import { randomUUID } from "./utils";
 
-const CLIENT_ID_STORAGE_KEY = "t3.backgroundActivity.clientId";
+const CLIENT_ID_STORAGE_KEY = "dispatch.backgroundActivity.clientId";
 const REPORT_INTERVAL_MS = 25_000;
 const LEASE_TTL_MS = 45_000;
 const RECENT_INTERACTION_WINDOW_MS = LEASE_TTL_MS;
@@ -63,10 +64,14 @@ function stableScopeKey(environmentId: EnvironmentId, scope: BackgroundScope): s
 
 function getClientId(): string {
   try {
-    const existing = window.localStorage.getItem(CLIENT_ID_STORAGE_KEY);
+    const existing = readMigratedStorageItem(window.localStorage, CLIENT_ID_STORAGE_KEY, [
+      "t3.backgroundActivity.clientId",
+    ]);
     if (existing) return existing;
     const next = randomUUID();
-    window.localStorage.setItem(CLIENT_ID_STORAGE_KEY, next);
+    writeMigratedStorageItem(window.localStorage, CLIENT_ID_STORAGE_KEY, next, [
+      "t3.backgroundActivity.clientId",
+    ]);
     return next;
   } catch {
     return "ephemeral-browser-client";

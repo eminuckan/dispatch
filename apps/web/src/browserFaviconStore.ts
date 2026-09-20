@@ -24,9 +24,9 @@ import {
   isValidFaviconCapturedAt,
   migratePersistedBrowserFaviconState,
 } from "./browserFaviconLogic";
-import { createMemoryStorage, type StateStorage } from "./lib/storage";
+import { createMemoryStorage, createMigratingStorage, type StateStorage } from "./lib/storage";
 
-const BROWSER_FAVICON_STORAGE_KEY = "t3code:browser-favicons:v1";
+const BROWSER_FAVICON_STORAGE_KEY = "dispatch:browser-favicons:v1";
 const MAX_PENDING_ORIGINS_PER_THREAD = 10;
 const MAX_PENDING_THREADS = 20;
 const MAX_REGISTERED_THREADS = 100;
@@ -89,7 +89,7 @@ export function resolveBrowserFaviconStorage(): StateStorage {
   } catch {
     return fallback;
   }
-  return {
+  return createMigratingStorage({
     getItem: (name) => {
       if (shadowedNames.has(name)) return fallback.getItem(name);
       try {
@@ -116,7 +116,7 @@ export function resolveBrowserFaviconStorage(): StateStorage {
         shadowedNames.add(name);
       }
     },
-  };
+  });
 }
 
 export const useBrowserFaviconStore = create<BrowserFaviconStoreState>()(

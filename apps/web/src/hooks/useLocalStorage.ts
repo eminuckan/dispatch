@@ -2,6 +2,12 @@ import * as Schema from "effect/Schema";
 import * as Record from "effect/Record";
 import { useCallback, useMemo, useSyncExternalStore } from "react";
 
+import {
+  readMigratedStorageItem,
+  removeMigratedStorageItem,
+  writeMigratedStorageItem,
+} from "../lib/storage";
+
 export class LocalStorageOperationError extends Schema.TaggedError<LocalStorageOperationError>()(
   "LocalStorageOperationError",
   {
@@ -34,7 +40,7 @@ const getStorage = (): Storage =>
 
 const read = (key: string) => {
   try {
-    return getStorage().getItem(key);
+    return readMigratedStorageItem(getStorage(), key);
   } catch (cause) {
     throw new LocalStorageOperationError({ operation: "read", storageKey: key, cause });
   }
@@ -64,7 +70,7 @@ export const getLocalStorageItem = <T, E>(key: string, schema: Schema.Codec<T, E
 export const setLocalStorageItem = <T, E>(key: string, value: T, schema: Schema.Codec<T, E>) => {
   const valueToSet = encode(key, schema, value);
   try {
-    getStorage().setItem(key, valueToSet);
+    writeMigratedStorageItem(getStorage(), key, valueToSet);
   } catch (cause) {
     throw new LocalStorageOperationError({ operation: "write", storageKey: key, cause });
   }
@@ -72,7 +78,7 @@ export const setLocalStorageItem = <T, E>(key: string, value: T, schema: Schema.
 
 export const removeLocalStorageItem = (key: string) => {
   try {
-    getStorage().removeItem(key);
+    removeMigratedStorageItem(getStorage(), key);
   } catch (cause) {
     throw new LocalStorageOperationError({ operation: "remove", storageKey: key, cause });
   }

@@ -8,7 +8,7 @@ import { normalizePreviewUrl } from "@dispatch/shared/preview";
 import { readPreparedConnection } from "~/state/session";
 
 import { isLocalLoopbackHost, normalizeHostname } from "./browser/browserTargetResolver";
-import { resolveStorage } from "./lib/storage";
+import { createMigratingStorage, resolveStorage } from "./lib/storage";
 
 export type BrowserHistoryEntry = { url: string; lastVisitedAt: number; title?: string };
 
@@ -138,7 +138,7 @@ export function migratePersistedBrowserHistoryState(persistedState: unknown): {
   return { byProjectKey: evictExcessProjects(byProjectKey) };
 }
 
-const BROWSER_HISTORY_STORAGE_KEY = "t3code:browser-history:v1";
+const BROWSER_HISTORY_STORAGE_KEY = "dispatch:browser-history:v1";
 
 const PENDING_MAX_PER_THREAD = 10;
 const PENDING_MAX_THREADS = 20;
@@ -280,7 +280,9 @@ export const useBrowserHistoryStore = create<BrowserHistoryStoreState>()(
       name: BROWSER_HISTORY_STORAGE_KEY,
       version: 1,
       storage: createJSONStorage(() =>
-        resolveStorage(typeof window !== "undefined" ? window.localStorage : undefined),
+        createMigratingStorage(
+          resolveStorage(typeof window !== "undefined" ? window.localStorage : undefined),
+        ),
       ),
       partialize: (state) => ({
         byProjectKey: state.byProjectKey,

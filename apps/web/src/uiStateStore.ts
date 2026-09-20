@@ -2,8 +2,9 @@ import { Debouncer } from "@tanstack/react-pacer";
 import type { PullRequestMergeMethod } from "@dispatch/contracts";
 import { create } from "zustand";
 import { normalizeProjectPathForComparison } from "./lib/projectPaths";
+import { readMigratedStorageItem, writeMigratedStorageItem } from "./lib/storage";
 
-export const PERSISTED_STATE_KEY = "t3code:ui-state:v1";
+export const PERSISTED_STATE_KEY = "dispatch:ui-state:v1";
 // Version 1 stored card visibility, not folder expansion.
 const THREAD_CHANGED_FILES_EXPANSION_VERSION = 2;
 const LEGACY_PERSISTED_STATE_KEYS = [
@@ -70,8 +71,6 @@ const initialState: UiState = {
 
 const LEGACY_PROJECT_CWD_PREFERENCE_PREFIX = "legacy-project-cwd:";
 const LEGACY_PROJECT_EXPANSION_DEFAULT_KEY = "legacy-project-expansion-default";
-let legacyKeysCleanedUp = false;
-
 export function legacyProjectCwdPreferenceKey(cwd: string): string {
   return `${LEGACY_PROJECT_CWD_PREFERENCE_PREFIX}${normalizeProjectPathForComparison(cwd)}`;
 }
@@ -166,17 +165,12 @@ function readPersistedState(): UiState {
     return initialState;
   }
   try {
-    const raw = window.localStorage.getItem(PERSISTED_STATE_KEY);
-    if (!raw) {
-      for (const legacyKey of LEGACY_PERSISTED_STATE_KEYS) {
-        const legacyRaw = window.localStorage.getItem(legacyKey);
-        if (!legacyRaw) {
-          continue;
-        }
-        return parsePersistedState(JSON.parse(legacyRaw) as PersistedUiState);
-      }
-      return initialState;
-    }
+    const raw = readMigratedStorageItem(
+      window.localStorage,
+      PERSISTED_STATE_KEY,
+      LEGACY_PERSISTED_STATE_KEYS,
+    );
+    if (!raw) return initialState;
     return parsePersistedState(JSON.parse(raw) as PersistedUiState);
   } catch {
     return initialState;
@@ -221,7 +215,8 @@ export function persistState(state: UiState): void {
         ([key]) => key !== LEGACY_PROJECT_EXPANSION_DEFAULT_KEY,
       ),
     );
-    window.localStorage.setItem(
+    writeMigratedStorageItem(
+      window.localStorage,
       PERSISTED_STATE_KEY,
       JSON.stringify({
         projectExpandedById,
@@ -233,13 +228,8 @@ export function persistState(state: UiState): void {
         threadChangedFilesExpandedById: state.threadChangedFilesExpandedById,
         pullRequestMergeMethod: state.pullRequestMergeMethod,
       } satisfies PersistedUiState),
+      LEGACY_PERSISTED_STATE_KEYS,
     );
-    if (!legacyKeysCleanedUp) {
-      legacyKeysCleanedUp = true;
-      for (const legacyKey of LEGACY_PERSISTED_STATE_KEYS) {
-        window.localStorage.removeItem(legacyKey);
-      }
-    }
   } catch {
     // Ignore quota/storage errors to avoid breaking chat UX.
   }

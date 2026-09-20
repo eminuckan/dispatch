@@ -6,9 +6,9 @@ import {
   PersistedComposerFileAttachment,
   PersistedComposerImageAttachment,
 } from "./composerDraftStore";
-import { createMemoryStorage, type StateStorage } from "./lib/storage";
+import { createMemoryStorage, createMigratingStorage, type SyncStateStorage } from "./lib/storage";
 
-export const PROMPT_STASH_STORAGE_KEY = "t3code:prompt-stash:v2";
+export const PROMPT_STASH_STORAGE_KEY = "dispatch:prompt-stash:v2";
 /**
  * v1 bucketed entries into per-provider-instance queues and stored a model
  * selection with each prompt. The stash is provider-agnostic now, so the old
@@ -137,7 +137,7 @@ export function partitionStashAttachments(
  * vanish on reload, and callers clear the composer on the strength of a
  * successful stash, so they must be told the difference.
  */
-function resolveBaseStorage(): { storage: StateStorage; durable: boolean } {
+function resolveBaseStorage(): { storage: SyncStateStorage; durable: boolean } {
   try {
     if (typeof localStorage !== "undefined") {
       return { storage: localStorage, durable: true };
@@ -148,7 +148,8 @@ function resolveBaseStorage(): { storage: StateStorage; durable: boolean } {
   return { storage: createMemoryStorage(), durable: false };
 }
 
-const { storage: baseStashStorage, durable: storageIsDurable } = resolveBaseStorage();
+const { storage: rawBaseStashStorage, durable: storageIsDurable } = resolveBaseStorage();
+const baseStashStorage = createMigratingStorage(rawBaseStashStorage);
 
 /**
  * Persists the queue, immediately rather than debounced. Stashing is a

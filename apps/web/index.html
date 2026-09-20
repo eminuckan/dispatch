@@ -14,10 +14,33 @@
       (() => {
         const LIGHT_BACKGROUND = "#ffffff";
         const DARK_BACKGROUND = "#0a0a0a";
-        const CUSTOM_THEMES_STORAGE_KEY = "t3code:themes:v1";
-        const THEME_FOLLOW_SYSTEM_STORAGE_KEY = "t3code:theme-follow-system";
-        const THEME_APPEARANCE_MODE_STORAGE_KEY = "t3code:theme-appearance-mode";
-        const THEME_HALVES_STORAGE_KEY = "t3code:theme-halves:v1";
+        const CUSTOM_THEMES_STORAGE_KEY = "dispatch:themes:v1";
+        const THEME_FOLLOW_SYSTEM_STORAGE_KEY = "dispatch:theme-follow-system";
+        const THEME_APPEARANCE_MODE_STORAGE_KEY = "dispatch:theme-appearance-mode";
+        const THEME_HALVES_STORAGE_KEY = "dispatch:theme-halves:v1";
+        const readDispatchStorageItem = (key) => {
+          const value = window.localStorage.getItem(key);
+          if (value !== null) return value;
+          const legacyKey = key.startsWith("dispatch:")
+            ? `t3code:${key.slice("dispatch:".length)}`
+            : key.startsWith("dispatch.")
+              ? `t3code.${key.slice("dispatch.".length)}`
+              : null;
+          if (legacyKey === null) return null;
+          const legacyValue = window.localStorage.getItem(legacyKey);
+          if (legacyValue === null) return null;
+          try {
+            window.localStorage.setItem(key, legacyValue);
+            try {
+              window.localStorage.removeItem(legacyKey);
+            } catch {
+              // The canonical copy is already durable.
+            }
+          } catch {
+            // Keep serving the legacy value if storage is temporarily read-only.
+          }
+          return legacyValue;
+        };
         const SPLASH_COLORS = {
           light: {
             background: "#ffffff",
@@ -204,9 +227,7 @@
         const findCustomTheme = (themeId) => {
           if (RESERVED_THEME_IDS.includes(themeId)) return null;
           try {
-            const parsed = JSON.parse(
-              window.localStorage.getItem(CUSTOM_THEMES_STORAGE_KEY) ?? "null",
-            );
+            const parsed = JSON.parse(readDispatchStorageItem(CUSTOM_THEMES_STORAGE_KEY) ?? "null");
             if (!Array.isArray(parsed)) return null;
             return (
               parsed.find((value) => isStoredCustomTheme(value) && value.id === themeId) ?? null
@@ -217,7 +238,7 @@
         };
 
         try {
-          const storedTheme = window.localStorage.getItem("t3code:theme");
+          const storedTheme = readDispatchStorageItem("dispatch:theme");
           const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
           // Older builds stored the dark T3 Chat palette as its own theme id
           // and every maintainer theme under a t3- prefix; keep those
@@ -252,10 +273,8 @@
           const isThemed = isKnownTheme && themeModes !== null;
           const baseAppearance = customTheme ? customTheme.appearance : "light";
           const systemMode = prefersDark ? "dark" : "light";
-          const storedAppearanceMode = window.localStorage.getItem(
-            THEME_APPEARANCE_MODE_STORAGE_KEY,
-          );
-          const storedFollowSystem = window.localStorage.getItem(THEME_FOLLOW_SYSTEM_STORAGE_KEY);
+          const storedAppearanceMode = readDispatchStorageItem(THEME_APPEARANCE_MODE_STORAGE_KEY);
+          const storedFollowSystem = readDispatchStorageItem(THEME_FOLLOW_SYSTEM_STORAGE_KEY);
           // Mirrors the runtime's getThemePreferenceMode fallback: a bare
           // "light"/"dark" preference names its own mode.
           const preferenceMode =
@@ -277,7 +296,7 @@
           let halfCustomTheme = null;
           try {
             const halvesRaw = JSON.parse(
-              window.localStorage.getItem(THEME_HALVES_STORAGE_KEY) ?? "null",
+              readDispatchStorageItem(THEME_HALVES_STORAGE_KEY) ?? "null",
             );
             const candidate = isRecord(halvesRaw) ? halvesRaw[wantedMode] : null;
             if (typeof candidate === "string") {

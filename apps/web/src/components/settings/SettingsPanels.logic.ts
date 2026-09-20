@@ -18,6 +18,7 @@ import {
 } from "@dispatch/shared/backgroundActivitySettings";
 import * as Duration from "effect/Duration";
 import * as Equal from "effect/Equal";
+import { readMigratedStorageItem, writeMigratedStorageItem } from "../../lib/storage";
 
 export function isProjectGroupingEnabled(mode: SidebarProjectGroupingMode): boolean {
   return mode !== "separate";
@@ -31,11 +32,12 @@ export function projectGroupingModeFromToggle(
   return lastEnabledMode === "repository_path" ? "repository_path" : "repository";
 }
 
-const LAST_ENABLED_PROJECT_GROUPING_MODE_KEY = "t3code:last-enabled-project-grouping-mode";
+const LAST_ENABLED_PROJECT_GROUPING_MODE_KEY = "dispatch:last-enabled-project-grouping-mode";
 
 export function readLastEnabledProjectGroupingMode(): SidebarProjectGroupingMode {
   try {
-    return localStorage.getItem(LAST_ENABLED_PROJECT_GROUPING_MODE_KEY) === "repository_path"
+    return readMigratedStorageItem(localStorage, LAST_ENABLED_PROJECT_GROUPING_MODE_KEY) ===
+      "repository_path"
       ? "repository_path"
       : "repository";
   } catch {
@@ -46,7 +48,7 @@ export function readLastEnabledProjectGroupingMode(): SidebarProjectGroupingMode
 export function rememberEnabledProjectGroupingMode(mode: SidebarProjectGroupingMode): void {
   if (mode === "separate") return;
   try {
-    localStorage.setItem(LAST_ENABLED_PROJECT_GROUPING_MODE_KEY, mode);
+    writeMigratedStorageItem(localStorage, LAST_ENABLED_PROJECT_GROUPING_MODE_KEY, mode);
   } catch {
     // Storage can be unavailable in restricted browser contexts.
   }

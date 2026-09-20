@@ -17,7 +17,7 @@ import {
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
-import { resolveStorage } from "./lib/storage";
+import { createMigratingStorage, resolveStorage } from "./lib/storage";
 
 const RIGHT_PANEL_KINDS = [
   "diff",
@@ -87,7 +87,7 @@ export type RightPanelSurface =
   | { id: "pull-requests"; kind: "pull-requests" }
   | { id: "agents"; kind: "agents" };
 
-const RIGHT_PANEL_STORAGE_KEY = "t3code:right-panel-state:v2";
+const RIGHT_PANEL_STORAGE_KEY = "dispatch:right-panel-state:v2";
 // v9 removed the "plan" surface kind (plans render inline in the transcript).
 // v10 keys pull-request surfaces by reference instead of a singleton tab.
 // v11 stops persisting the pull-request list's shared panel, so a restart opens the page fresh.
@@ -866,7 +866,9 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
       name: RIGHT_PANEL_STORAGE_KEY,
       version: RIGHT_PANEL_STORAGE_VERSION,
       storage: createJSONStorage(() =>
-        resolveStorage(typeof window !== "undefined" ? window.localStorage : undefined),
+        createMigratingStorage(
+          resolveStorage(typeof window !== "undefined" ? window.localStorage : undefined),
+        ),
       ),
       partialize: (state) => ({
         byThreadKey: Object.fromEntries(

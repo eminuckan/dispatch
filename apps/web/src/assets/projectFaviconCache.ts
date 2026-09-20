@@ -4,8 +4,10 @@ import {
   PROJECT_FAVICON_MAX_DATA_URL_LENGTH,
   PROJECT_FAVICON_THUMBNAIL_SIZE,
 } from "@dispatch/client-runtime/project-favicon-cache";
+import { migrateLegacyIndexedDatabase } from "../lib/indexedDbMigration";
 
-const DATABASE_NAME = "t3code:project-favicons";
+const DATABASE_NAME = "dispatch:project-favicons";
+const LEGACY_DATABASE_NAME = "t3code:project-favicons";
 const DATABASE_VERSION = 2;
 const STORE_NAME = "images";
 let database: Promise<IDBDatabase> | undefined;
@@ -21,7 +23,13 @@ function openDatabase() {
         request.result.createObjectStore(STORE_NAME);
       }
     });
-    request.addEventListener("success", () => resolve(request.result));
+    request.addEventListener("success", () => {
+      const database = request.result;
+      void migrateLegacyIndexedDatabase(database, LEGACY_DATABASE_NAME, [STORE_NAME]).then(
+        () => resolve(database),
+        () => resolve(database),
+      );
+    });
     request.addEventListener("error", () => reject(request.error));
     request.addEventListener("blocked", () => reject(new Error("Project icon cache is blocked.")));
   }));

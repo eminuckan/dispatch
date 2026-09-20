@@ -42,8 +42,15 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import { projectFaviconCache } from "../assets/projectFaviconCache";
+import { migrateLegacyIndexedDatabase } from "../lib/indexedDbMigration";
+import {
+  readMigratedStorageItem,
+  removeMigratedStorageItem,
+  writeMigratedStorageItem,
+} from "../lib/storage";
 
-const DATABASE_NAME = "t3code:connection-runtime";
+const DATABASE_NAME = "dispatch:connection-runtime";
+const LEGACY_DATABASE_NAME = "t3code:connection-runtime";
 const DATABASE_VERSION = 4;
 const CATALOG_STORE_NAME = "catalog";
 const SHELL_STORE_NAME = "shell";
@@ -163,7 +170,20 @@ const openDatabase = Effect.fn("web.connectionStorage.openDatabase")(function* (
       resume(Effect.fail(catalogError("open", request.error ?? "Unknown IndexedDB error")));
     });
     request.addEventListener("success", () => {
-      resume(Effect.succeed(request.result));
+      const database = request.result;
+      void migrateLegacyIndexedDatabase(database, LEGACY_DATABASE_NAME, [
+        CATALOG_STORE_NAME,
+        SHELL_STORE_NAME,
+        THREAD_STORE_NAME,
+        SERVER_CONFIG_STORE_NAME,
+        VCS_REFS_STORE_NAME,
+      ]).then(
+        () => resume(Effect.succeed(database)),
+        (cause) => {
+          database.close();
+          resume(Effect.fail(catalogError("migrate", cause)));
+        },
+      );
     });
   });
 });
@@ -377,7 +397,8 @@ export const makeCatalogStore = Effect.fn("web.connectionStorage.makeCatalogStor
   return { read, update } satisfies CatalogStore;
 });
 
-const GITHUB_ROUTING_KEY_PREFIX = "t3code:github-routing:";
+const GITHUB_ROUTING_KEY_PREFIX = "dispatch:github-routing:";
+const LEGACY_GITHUB_ROUTING_KEY_PREFIX = "t3code:github-routing:";
 const GITHUB_ROUTING_CHANGED = "t3code:github-routing-changed";
 const isStoredGitHubRoutingPermission = Schema.is(StoredGitHubRoutingPermission);
 const encodeStoredGitHubRoutingPermission = Schema.encodeSync(
@@ -390,7 +411,7 @@ export function makeBrowserGitHubRoutingPermissions(
 ) {
   const read = (key: string): StoredGitHubRoutingPermission | null => {
     try {
-      const raw = browser.localStorage.getItem(key);
+      const raw = readMigratedStorageItem(browser.localStorage, key);
       const value: unknown = raw === null ? null : JSON.parse(raw);
       return isStoredGitHubRoutingPermission(value) &&
         key === `${GITHUB_ROUTING_KEY_PREFIX}${value.environmentId}`
@@ -402,16 +423,19 @@ export function makeBrowserGitHubRoutingPermissions(
   };
   const readAll = (): ReadonlyArray<StoredGitHubRoutingPermission> => {
     try {
-      const values: StoredGitHubRoutingPermission[] = [];
+      const values = new Map<string, StoredGitHubRoutingPermission>();
       const storage = browser.localStorage;
-      for (let index = 0; index < storage.length; index++) {
-        const key = storage.key(index);
-        if (key?.startsWith(GITHUB_ROUTING_KEY_PREFIX)) {
-          const value = read(key);
-          if (value !== null) values.push(value);
-        }
+      const keys = Array.from({ length: storage.length }, (_, index) => storage.key(index));
+      for (const key of keys) {
+        if (key === null) continue;
+        const canonicalKey = key.startsWith(LEGACY_GITHUB_ROUTING_KEY_PREFIX)
+          ? `${GITHUB_ROUTING_KEY_PREFIX}${key.slice(LEGACY_GITHUB_ROUTING_KEY_PREFIX.length)}`
+          : key;
+        if (!canonicalKey.startsWith(GITHUB_ROUTING_KEY_PREFIX)) continue;
+        const value = read(canonicalKey);
+        if (value !== null) values.set(value.environmentId, value);
       }
-      return values;
+      return [...values.values()];
     } catch {
       return [];
     }
@@ -420,8 +444,13 @@ export function makeBrowserGitHubRoutingPermissions(
     Effect.try({
       try: () => {
         const key = `${GITHUB_ROUTING_KEY_PREFIX}${environmentId}`;
-        if (value === null) browser.localStorage.removeItem(key);
-        else browser.localStorage.setItem(key, encodeStoredGitHubRoutingPermission(value));
+        if (value === null) removeMigratedStorageItem(browser.localStorage, key);
+        else
+          writeMigratedStorageItem(
+            browser.localStorage,
+            key,
+            encodeStoredGitHubRoutingPermission(value),
+          );
         browser.dispatchEvent(new Event(GITHUB_ROUTING_CHANGED));
       },
       catch: (cause) => catalogError("save GitHub routing permissions in", cause),
@@ -438,7 +467,13 @@ export function makeBrowserGitHubRoutingPermissions(
           const listener = (event: Event) => {
             if (event.type === "storage") {
               const key = (event as StorageEvent).key;
-              if (key !== null && !key?.startsWith(GITHUB_ROUTING_KEY_PREFIX)) return;
+              if (
+                key !== null &&
+                !key.startsWith(GITHUB_ROUTING_KEY_PREFIX) &&
+                !key.startsWith(LEGACY_GITHUB_ROUTING_KEY_PREFIX)
+              ) {
+                return;
+              }
             }
             Queue.offerUnsafe(queue, readAll());
           };

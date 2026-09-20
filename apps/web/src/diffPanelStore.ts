@@ -3,7 +3,7 @@ import type { ScopedThreadRef, TurnId } from "@dispatch/contracts";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
-import { resolveStorage } from "./lib/storage";
+import { createMigratingStorage, resolveStorage } from "./lib/storage";
 
 export type DiffPanelSelection =
   | { kind: "branch"; baseRef: string | null }
@@ -117,10 +117,12 @@ export const useDiffPanelStore = create<DiffPanelStoreState>()(
         }),
     }),
     {
-      name: "t3code:diff-panel-state:v1",
+      name: "dispatch:diff-panel-state:v1",
       version: 1,
       storage: createJSONStorage(() =>
-        resolveStorage(typeof window !== "undefined" ? window.localStorage : undefined),
+        createMigratingStorage(
+          resolveStorage(typeof window !== "undefined" ? window.localStorage : undefined),
+        ),
       ),
       partialize: (state) => ({
         byThreadKey: state.byThreadKey,

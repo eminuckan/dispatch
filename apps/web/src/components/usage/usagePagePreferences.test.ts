@@ -2,9 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 
 import { readUsagePagePreferences, saveUsagePagePreferences } from "./usagePagePreferences";
 
-const key = "t3code:usage-page-preferences:v1";
+const key = "dispatch:usage-page-preferences:v1";
 let values: Map<string, string>;
-let storage: Pick<Storage, "getItem" | "setItem">;
+let storage: Pick<Storage, "getItem" | "setItem" | "removeItem">;
 
 beforeEach(() => {
   values = new Map();
@@ -12,6 +12,9 @@ beforeEach(() => {
     getItem: (key) => values.get(key) ?? null,
     setItem: (key, value) => {
       values.set(key, value);
+    },
+    removeItem: (key) => {
+      values.delete(key);
     },
   };
   vi.stubGlobal("window", { localStorage: storage });
@@ -33,6 +36,17 @@ describe("Usage page preferences", () => {
       saveUsagePagePreferences({ metric, windowDays });
       expect(readUsagePagePreferences()).toEqual({ metric, windowDays });
     }
+  });
+
+  it("adopts the legacy preference key", () => {
+    values.set(
+      "t3code:usage-page-preferences:v1",
+      JSON.stringify({ metric: "tokens", windowDays: 7 }),
+    );
+
+    expect(readUsagePagePreferences()).toEqual({ metric: "tokens", windowDays: 7 });
+    expect(values.get(key)).toBe(JSON.stringify({ metric: "tokens", windowDays: 7 }));
+    expect(values.has("t3code:usage-page-preferences:v1")).toBe(false);
   });
 
   it.each([

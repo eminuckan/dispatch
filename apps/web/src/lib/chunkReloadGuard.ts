@@ -3,7 +3,7 @@
 // reload picks up the fresh index.html. A sessionStorage flag keeps a
 // persistent failure from becoming a reload loop, and a successful boot clears
 // it so the next stale deploy gets its own single reload.
-const CHUNK_RELOAD_GUARD_KEY = "t3code:chunk-load-reloaded";
+const CHUNK_RELOAD_GUARD_KEY = "dispatch:chunk-load-reloaded";
 
 /**
  * Called from the `vite:preloadError` listener. Reloads at most once per
@@ -17,8 +17,8 @@ export function reloadOnceForChunkLoadError(
   let alreadyReloaded: boolean;
   try {
     const storage = getStorage();
-    alreadyReloaded = storage.getItem(CHUNK_RELOAD_GUARD_KEY) === "1";
-    if (!alreadyReloaded) storage.setItem(CHUNK_RELOAD_GUARD_KEY, "1");
+    alreadyReloaded = readMigratedStorageItem(storage, CHUNK_RELOAD_GUARD_KEY) === "1";
+    if (!alreadyReloaded) writeMigratedStorageItem(storage, CHUNK_RELOAD_GUARD_KEY, "1");
   } catch {
     // Without storage the guard cannot survive a reload, so a persistent
     // failure would loop forever. Let the error surface instead.
@@ -32,8 +32,13 @@ export function reloadOnceForChunkLoadError(
 /** Clears the guard after a successful boot so a later stale deploy can reload again. */
 export function clearChunkReloadGuard(getStorage: () => Storage = () => window.sessionStorage) {
   try {
-    getStorage().removeItem(CHUNK_RELOAD_GUARD_KEY);
+    removeMigratedStorageItem(getStorage(), CHUNK_RELOAD_GUARD_KEY);
   } catch {
     // Blocked storage never held the flag.
   }
 }
+import {
+  readMigratedStorageItem,
+  removeMigratedStorageItem,
+  writeMigratedStorageItem,
+} from "./storage";
