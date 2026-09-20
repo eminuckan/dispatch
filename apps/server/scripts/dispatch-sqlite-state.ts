@@ -53,7 +53,7 @@ export class SqliteStateDatabaseMissingError extends Schema.TaggedError<SqliteSt
   },
 ) {
   override get message(): string {
-    return `Database does not exist at '${this.databasePath}'. Start T3 once to run migrations.`;
+    return `Database does not exist at '${this.databasePath}'. Start Dispatch once to run migrations.`;
   }
 }
 
@@ -62,7 +62,7 @@ export class SqliteStateSharedHomeMutationError extends Schema.TaggedError<Sqlit
   {},
 ) {
   override get message(): string {
-    return "Refusing to mutate the shared ~/.t3 database. Use an isolated --base-dir.";
+    return "Refusing to mutate a shared Dispatch or legacy database. Use an isolated --base-dir.";
   }
 }
 
@@ -124,7 +124,7 @@ export interface RunSqliteStateInput {
 }
 
 export interface RunSqliteStateOptions {
-  readonly sharedHome?: string | undefined;
+  readonly sharedHomes?: ReadonlyArray<string> | undefined;
 }
 
 const resolveSqlSource = Effect.fn("resolveSqliteStateSqlSource")(function* (
@@ -181,7 +181,13 @@ export const runSqliteState = Effect.fn("runSqliteState")(function* (
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const baseDir = path.resolve(input.baseDir);
-  const sharedHome = path.resolve(options.sharedHome ?? path.join(NodeOS.homedir(), ".t3"));
+  const sharedHomes = (
+    options.sharedHomes ?? [
+      path.join(NodeOS.homedir(), ".dispatch"),
+      path.join(NodeOS.homedir(), ".t3"),
+      path.join(NodeOS.homedir(), ".t3-jev"),
+    ]
+  ).map((home) => path.resolve(home));
   const databasePath = path.join(baseDir, "userdata", "state.sqlite");
   const source = yield* resolveSqlSource(input.sql, input.file);
 
@@ -189,11 +195,13 @@ export const runSqliteState = Effect.fn("runSqliteState")(function* (
     return yield* new SqliteStateDatabaseMissingError({ databasePath });
   }
   if (input.operation === "exec") {
-    const [canonicalBaseDir, canonicalSharedHome] = yield* Effect.all([
-      fs.realPath(baseDir),
-      fs.realPath(sharedHome).pipe(Effect.orElseSucceed(() => sharedHome)),
-    ]);
-    if (canonicalBaseDir === canonicalSharedHome) {
+    const canonicalBaseDir = yield* fs.realPath(baseDir);
+    const canonicalSharedHomes = yield* Effect.all(
+      sharedHomes.map((sharedHome) =>
+        fs.realPath(sharedHome).pipe(Effect.orElseSucceed(() => sharedHome)),
+      ),
+    );
+    if (canonicalSharedHomes.includes(canonicalBaseDir)) {
       return yield* new SqliteStateSharedHomeMutationError();
     }
   }
@@ -245,14 +253,14 @@ export const runSqliteState = Effect.fn("runSqliteState")(function* (
   );
 });
 
-const t3SqliteStateCommand = Command.make(
-  "t3-sqlite-state",
+const dispatchSqliteStateCommand = Command.make(
+  "dispatch-sqlite-state",
   {
     operation: Argument.Literals("operation", SqliteStateOperation.literals).pipe(
       Argument.withDescription("Run a read-only query or a backed-up fixture mutation."),
     ),
     baseDir: Flag.String("base-dir").pipe(
-      Flag.withDescription("Explicit T3 base directory containing userdata/state.sqlite."),
+      Flag.withDescription("Explicit Dispatch base directory containing userdata/state.sqlite."),
     ),
     sql: Flag.String("sql").pipe(
       Flag.optional,
@@ -272,12 +280,12 @@ const t3SqliteStateCommand = Command.make(
     }).pipe(Effect.flatMap(encodeSqliteStateResult), Effect.flatMap(Console.log)),
 ).pipe(
   Command.withDescription(
-    "Inspect or seed an isolated T3 SQLite database with automatic backups for writes.",
+    "Inspect or seed an isolated Dispatch SQLite database with automatic backups for writes.",
   ),
 );
 
 if (import.meta.main) {
-  Command.run(t3SqliteStateCommand, { version: "0.0.0" }).pipe(
+  Command.run(dispatchSqliteStateCommand, { version: "0.0.0" }).pipe(
     Effect.provide(NodeServices.layer),
     NodeRuntime.runMain,
   );
