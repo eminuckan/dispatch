@@ -48,9 +48,10 @@ do not follow this replacement rule.
 
 ### Reusable dev credential
 
-Web development environments can accept one `T3CODE_DEV_AUTH_TOKEN` across
+Web development environments can accept one `DISPATCH_DEV_AUTH_TOKEN` across
 worktrees and ports on one hostname. The token and startup URLs that contain it
-grant administrative access. Desktop and non-development servers ignore it. See
+grant administrative access. Desktop and non-development servers ignore it. The
+legacy `T3CODE_DEV_AUTH_TOKEN` name remains accepted for compatibility. See
 the [development runbook](../operations/development.md#reusable-dev-credential)
 for setup.
 

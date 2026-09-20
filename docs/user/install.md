@@ -45,7 +45,7 @@ For the Electron desktop client:
 vp run dev:desktop
 ```
 
-The development runner prints the local address or pairing URL to open. Keep the checkout and its generated `.t3` development state separate from any live upstream installation.
+The development runner prints the local address or pairing URL to open. Fresh linked worktrees keep isolated development state under `.dispatch`; an existing worktree-local `.t3` is adopted in place for compatibility. Keep that development state separate from any live installation.
 
 ## Build from source
 

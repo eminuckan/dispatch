@@ -18,7 +18,7 @@ node apps/server/dist/bin.mjs serve
 
 For unattended use, run that command under the process manager you already use on the host. Keep its working directory on the Dispatch checkout and preserve the same user account and state directory between restarts. Update a source checkout through Git as described in [Updating Dispatch](./updating.md).
 
-The default state paths still use the upstream-compatible `.t3` name. Changing those persisted identifiers is separate from the Dispatch product name.
+Fresh Dispatch installs use `~/.dispatch` for state. Existing `~/.t3` or `~/.t3-jev` homes can still be adopted in place for compatibility, so upgraded installations may continue to show a legacy path.
 
 ## Packaged Dispatch launcher
 

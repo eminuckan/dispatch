@@ -77,7 +77,7 @@ The most common defect in this repo is a change that works on the path you teste
 ## Dev servers
 
 - `vp i` installs. Worktrees get this from the t3.json setup script; if module resolution looks broken, it probably did not run.
-- `vp run dev` starts server and web. In a worktree, state defaults to that worktree's gitignored `.t3`, which deliberately outranks ambient `DISPATCH_HOME` / legacy `T3CODE_HOME` so you cannot land on shared state by accident. An explicit `--home-dir` still wins.
+- `vp run dev` starts server and web. In a fresh linked worktree, state defaults to that worktree's gitignored `.dispatch`; an existing worktree-local `.t3` is adopted in place for compatibility. An explicit `--home-dir` wins, followed by `DISPATCH_HOME`, then the worktree home, then legacy `T3CODE_HOME`.
 - Ports derive from the worktree path and are stable across restarts, but read the real ones from the `[dev-runner]` line since occupied ports shift.
 - Sharing over the tailnet is three steps: run `vp run dev --share` in the background, wait for the `pairingUrl:` line in its output, then give that full URL to an unpaired browser. Do not wire up `tailscale serve` by hand, open the URL yourself, or consume the user's pairing link. A browser with the reusable dev cookie can use the bare origin. If a normal one-time token was consumed, mint a fresh one with `node apps/server/src/bin.ts pair`. It carries standard scopes, while the startup URL carries admin scopes needed for Connections settings.
 - To reuse web dev auth across worktrees, configure one fixed `DISPATCH_DEV_AUTH_TOKEN` in the main checkout's gitignored `.env`; the legacy `T3CODE_DEV_AUTH_TOKEN` alias remains supported. The compatibility `t3.json` setup links that file into worktrees. Never commit or publish the token or a startup URL. See [Reusable dev credential](docs/operations/development.md#reusable-dev-credential).
@@ -85,16 +85,16 @@ The most common defect in this repo is a change that works on the path you teste
 
 ## Test data
 
-An empty database is a bad test. Seed your worktree's local `.t3` compatibility state with a snapshot of real data instead of pointing at live state:
+An empty database is a bad test. Seed your worktree's local `.dispatch` state with a snapshot of real data instead of pointing at live state:
 
-- Snapshot from the developer's actual live home only when needed. Depending on migration history that can be `~/.dispatch`, `~/.t3-jev`, or `~/.t3`. Worktree state lives at `<worktree>/.t3/userdata`.
+- Snapshot from the developer's actual live home only when needed. Depending on migration history that can be `~/.dispatch`, `~/.t3-jev`, or `~/.t3`. Fresh worktree state lives at `<worktree>/.dispatch/userdata`; if that worktree already has only legacy `.t3` state, Dispatch adopts it in place.
 - Snapshot the database with `VACUUM INTO`, which is safe even while a server has the source open and yields one consistent file:
 
   ```bash
-  mkdir -p .t3/userdata
-  rm -f .t3/userdata/state.sqlite*  # VACUUM INTO refuses to overwrite
+  mkdir -p .dispatch/userdata
+  rm -f .dispatch/userdata/state.sqlite*  # VACUUM INTO refuses to overwrite
   # Set LIVE_STATE_SQLITE to the actual live state.sqlite path first.
-  bun -e "new (require('bun:sqlite').Database)(process.env.LIVE_STATE_SQLITE, { readonly: true }).run(\"VACUUM INTO '.t3/userdata/state.sqlite'\")"
+  bun -e "new (require('bun:sqlite').Database)(process.env.LIVE_STATE_SQLITE, { readonly: true }).run(\"VACUUM INTO '.dispatch/userdata/state.sqlite'\")"
   ```
 
   A plain `cp` is only safe when no server has the source open, and must bring the `-wal` and `-shm` siblings along. A live file copy is a corrupt copy.
