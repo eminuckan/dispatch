@@ -183,6 +183,31 @@ export function readThreadShell(ref: ScopedThreadRef): EnvironmentThreadShell | 
   return appAtomRegistry.get(environmentThreadShells.threadShellAtom(ref));
 }
 
+/** Resolves once a newly-created server thread reaches the shell projection. */
+export function waitForThreadShell(ref: ScopedThreadRef, timeoutMs = 10_000): Promise<boolean> {
+  if (readThreadShell(ref) !== null) return Promise.resolve(true);
+
+  return new Promise((resolve) => {
+    let settled = false;
+    let unsubscribe: (() => void) | null = null;
+    const finish = (result: boolean) => {
+      if (settled) return;
+      settled = true;
+      globalThis.clearTimeout(timeout);
+      unsubscribe?.();
+      resolve(result);
+    };
+    const timeout = globalThis.setTimeout(() => finish(false), timeoutMs);
+    unsubscribe = appAtomRegistry.subscribe(
+      environmentThreadShells.threadShellAtom(ref),
+      (shell) => {
+        if (shell !== null) finish(true);
+      },
+    );
+    if (readThreadShell(ref) !== null) finish(true);
+  });
+}
+
 /** Whether the environment's server understands thread.settle/unsettle.
     False for pre-settlement servers (capability defaults false on decode),
     so clients under version skew fall back instead of erroring. */

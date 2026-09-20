@@ -82,7 +82,7 @@ export function ThreadRouteView({ target }: { target: ThreadRouteTarget }) {
   const serverThreadDetail = useThreadDetail(serverThreadRef);
   const serverThreadStatus = useThreadStatus(serverThreadRef);
   const environmentThreadRefs = useEnvironmentThreadRefs(serverThreadRef?.environmentId ?? null);
-  const bootstrapComplete = shell.data?.snapshot._tag === "Some";
+  const shellAuthoritative = shell.data?.status === "live";
   const draftThread = useComposerDraftStore((store) =>
     serverThreadRef ? store.getDraftThreadByRef(serverThreadRef) : null,
   );
@@ -109,7 +109,7 @@ export function ThreadRouteView({ target }: { target: ThreadRouteTarget }) {
     serverThreadRef ? store.hasDraftThreadsInEnvironment(serverThreadRef.environmentId) : false,
   );
   const renderState = resolveThreadRouteRenderState({
-    bootstrapComplete,
+    shellAuthoritative,
     serverThreadShellExists: serverThreadShell !== null,
     serverThreadDetailExists: serverThreadDetail !== null,
     serverThreadDetailDeleted: serverThreadStatus === "deleted",
@@ -158,7 +158,7 @@ export function ThreadRouteView({ target }: { target: ThreadRouteTarget }) {
   }, [canonicalThreadRef, draftSession, navigate, target.kind]);
 
   useEffect(() => {
-    if (target.kind !== "server" || !bootstrapComplete) {
+    if (target.kind !== "server" || !shellAuthoritative) {
       return;
     }
     // Navigation already resolved onto this path, so a drop aimed here
@@ -171,7 +171,7 @@ export function ThreadRouteView({ target }: { target: ThreadRouteTarget }) {
         void navigate({ to: "/", replace: true });
       }
     }
-  }, [bootstrapComplete, environmentHasAnyThreads, navigate, renderState, target]);
+  }, [environmentHasAnyThreads, navigate, renderState, shellAuthoritative, target]);
 
   useEffect(() => {
     if (target.kind !== "server" || !serverThreadStarted || !draftThread) {

@@ -1,9 +1,51 @@
 import { teamAgentDisplayName } from "@t3tools/shared/teamAgentNames";
 import type { TimelineEntry } from "../../session-logic";
 
-// Only explicit user follow-ups and their associated turns enter the chat surface.
-// A paged-in assistant fragment without its initiating message stays out until identified.
-export function teamFollowUpEntries(
+function structuredTeamReply(text: string): string | null {
+  const trimmed = text.trim();
+  if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return text;
+  let value: unknown;
+  try {
+    value = JSON.parse(trimmed);
+  } catch {
+    // Managed protocol JSON streams through partial states. Do not flash raw
+    // scheduler syntax while the final object is still being assembled.
+    return null;
+  }
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  if (
+    (record.action === "accept" || record.action === "correct") &&
+    typeof record.summary === "string" &&
+    Array.isArray(record.checks)
+  ) {
+    return record.summary.trim() || null;
+  }
+  if (
+    typeof record.rationale === "string" &&
+    Array.isArray(record.acceptance) &&
+    Array.isArray(record.tasks)
+  ) {
+    const objectives = record.tasks.flatMap((task) => {
+      if (typeof task !== "object" || task === null || !("objective" in task)) return [];
+      const objective = (task as Record<string, unknown>).objective;
+      return typeof objective === "string" ? [objective.trim()] : [];
+    });
+    const sections = [record.rationale.trim()];
+    if (objectives.length > 0)
+      sections.push(
+        `**Planlanan işler**\n${objectives.map((objective) => `- ${objective}`).join("\n")}`,
+      );
+    return sections.filter(Boolean).join("\n\n") || null;
+  }
+  if (typeof record.summary === "string") return record.summary.trim() || null;
+  return null;
+}
+
+// Exact managed-thread membership lets us hide only scheduler prompts while
+// preserving the provider's real reasoning/tool/message stream in the normal
+// chat timeline. Structured scheduler replies are rendered as human text.
+export function teamConversationEntries(
   entries: ReadonlyArray<TimelineEntry>,
   coordinationIds: ReadonlyArray<string>,
 ): TimelineEntry[] {
@@ -11,27 +53,25 @@ export function teamFollowUpEntries(
   // Reserved runtime message IDs can arrive before the next ledger refresh.
   // This guard runs only after exact managed-thread membership has been confirmed.
   const isCoordination = (id: string) => internal.has(id) || id.startsWith("team-");
-  const publicTurns = new Set(
-    entries.flatMap((entry) =>
-      entry.kind === "message" &&
-      entry.message.role === "user" &&
-      !isCoordination(entry.message.id) &&
-      entry.message.turnId
-        ? [entry.message.turnId]
-        : [],
-    ),
-  );
-  return entries.filter((entry) => {
-    if (entry.kind === "message" && entry.message.role === "user")
-      return !isCoordination(entry.message.id);
-    const turnId =
-      entry.kind === "message"
-        ? entry.message.turnId
-        : entry.kind === "work"
-          ? entry.entry.turnId
-          : entry.proposedPlan.turnId;
-    return turnId != null && publicTurns.has(turnId);
-  });
+  const visible: TimelineEntry[] = [];
+  for (const entry of entries) {
+    if (entry.kind !== "message") {
+      visible.push(entry);
+      continue;
+    }
+    if (entry.message.role === "user") {
+      if (!isCoordination(entry.message.id)) visible.push(entry);
+      continue;
+    }
+    const rendered = structuredTeamReply(entry.message.text);
+    if (rendered === null) continue;
+    visible.push(
+      rendered === entry.message.text
+        ? entry
+        : { ...entry, message: { ...entry.message, text: rendered } },
+    );
+  }
+  return visible;
 }
 
 export function teamAgentName(

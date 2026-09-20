@@ -135,6 +135,52 @@ function fixture(failAcknowledgement = false, driver = "codex") {
       }),
     );
   };
+  const failStart = (
+    command: Extract<OrchestrationCommand, { type: "thread.turn.start" }>,
+    detail: string,
+  ) => {
+    threads.set(
+      command.threadId,
+      decodeThread({
+        id: command.threadId,
+        projectId: initial.projectId,
+        title: "Managed",
+        modelSelection: profile.selection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: "team/test",
+        worktreePath: "/isolated",
+        createdAt: date,
+        updatedAt: date,
+        deletedAt: null,
+        latestTurn: null,
+        messages: [
+          {
+            id: command.message.messageId,
+            role: "user",
+            text: command.message.text,
+            turnId: null,
+            streaming: false,
+            createdAt: date,
+            updatedAt: date,
+          },
+        ],
+        activities: [
+          {
+            id: "provider-start-failed",
+            tone: "error",
+            kind: "provider.turn.start.failed",
+            summary: "Provider turn start failed",
+            payload: { requestId: command.message.messageId, detail },
+            turnId: null,
+            createdAt: date,
+          },
+        ],
+        checkpoints: [],
+        session: null,
+      }),
+    );
+  };
   const layers = Layer.mergeAll(
     Layer.mock(TeamRouter)({
       assess: (draft) =>
@@ -190,6 +236,29 @@ function fixture(failAcknowledgement = false, driver = "codex") {
       getThreadDetailById: (id) => Effect.succeed(Option.fromUndefinedOr(threads.get(id))),
     }),
     Layer.mock(ProjectionTurnRepository)({
+      listByThreadId: ({ threadId }) => {
+        const thread = threads.get(threadId);
+        const latest = thread?.latestTurn;
+        if (!latest) return Effect.succeed([]);
+        return Effect.succeed([
+          {
+            threadId,
+            turnId: latest.turnId,
+            pendingMessageId: requests.get(latest.turnId) ?? null,
+            sourceProposedPlanThreadId: null,
+            sourceProposedPlanId: null,
+            assistantMessageId: latest.assistantMessageId,
+            state: latest.state,
+            requestedAt: latest.requestedAt,
+            startedAt: latest.startedAt,
+            completedAt: latest.completedAt,
+            checkpointTurnCount: null,
+            checkpointRef: null,
+            checkpointStatus: null,
+            checkpointFiles: [],
+          },
+        ]);
+      },
       getByTurnId: ({ threadId, turnId }) =>
         Effect.succeed(
           Option.some({
@@ -225,7 +294,7 @@ function fixture(failAcknowledgement = false, driver = "codex") {
         }),
     }),
   );
-  return { commands, complete, layers, checks };
+  return { commands, complete, failStart, layers, checks };
 }
 it.effect(
   "dispatches a durable plan once and matches completion through the canonical request receipt",
@@ -275,6 +344,31 @@ it.effect("pause retains in-flight reservations and resume never replays a dispa
     yield* runtime.control({ id: paused.id, revision: paused.revision, action: "resume" });
     yield* runtime.tick();
     expect(f.commands).toHaveLength(1);
+  }).pipe(Effect.provide(SqlitePersistenceMemory));
+});
+
+it.effect("settles a dispatched managed turn from its exact provider start failure receipt", () => {
+  const f = fixture();
+  return Effect.gen(function* () {
+    const store = yield* Store.make;
+    yield* store.create(initial);
+    const runtime = yield* make.pipe(
+      Effect.provideService(Store.TeamStore, store),
+      Effect.provide(f.layers),
+    );
+    yield* runtime.tick();
+    const command = f.commands[0]!;
+    if (command.type !== "thread.turn.start") throw new Error("Expected turn");
+    f.failStart(command, "writer collision");
+    yield* runtime.tick();
+    const run = yield* store.get(initial.id);
+    expect(run.execution?.turns[0]).toMatchObject({
+      status: "settled",
+      succeeded: false,
+      result: "writer collision",
+    });
+    expect(run.status).toBe("paused");
+    expect(run.execution?.notice).toContain("Lead planning failed");
   }).pipe(Effect.provide(SqlitePersistenceMemory));
 });
 

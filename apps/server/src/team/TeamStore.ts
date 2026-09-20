@@ -19,11 +19,41 @@ const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const persistenceError = () =>
   new TeamError({ code: "persistence", message: "Team state could not be read or committed." });
 const decodeRunValue = Schema.decodeUnknownEffect(TeamRun);
+const decodeUnknownJson = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
 const isTeamError = Schema.is(TeamError);
+
+function normalizeLegacyRun(value: unknown): unknown {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return value;
+  const run = value as Record<string, unknown>;
+  const execution = run.execution;
+  if (typeof execution !== "object" || execution === null || Array.isArray(execution)) return value;
+  const executionRecord = execution as Record<string, unknown>;
+  if (!Array.isArray(executionRecord.turns)) return value;
+
+  let changed = false;
+  const turns = executionRecord.turns.map((turn) => {
+    if (
+      typeof turn !== "object" ||
+      turn === null ||
+      Array.isArray(turn) ||
+      (turn as Record<string, unknown>).role !== "consult"
+    ) {
+      return turn;
+    }
+    changed = true;
+    return { ...(turn as Record<string, unknown>), role: "review" };
+  });
+  if (!changed) return value;
+  return { ...run, execution: { ...executionRecord, turns } };
+}
+
+const decodeRunPayload = (payload: string) =>
+  decodeUnknownJson(payload).pipe(Effect.map(normalizeLegacyRun), Effect.flatMap(decodeRunValue));
+
 export const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const decodePolicy = Schema.decodeUnknownEffect(Schema.fromJsonString(TeamPolicy));
-  const decodeRun = Schema.decodeUnknownEffect(Schema.fromJsonString(TeamRun));
+  const decodeRun = decodeRunPayload;
   const getPolicy = Effect.gen(function* () {
     const rows = yield* sql<{ payload: string }>`SELECT payload FROM team_policy WHERE id = 1`;
     return rows[0] ? yield* decodePolicy(rows[0].payload) : defaultTeamPolicy;

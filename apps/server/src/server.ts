@@ -12,6 +12,7 @@ import {
   type RepositoryIdentity,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
+import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -809,7 +810,7 @@ const makeServerLayer = Layer.unwrap(
       cloudDesiredLinkReconcileLayer,
     );
 
-    return serverApplicationLayer.pipe(
+    const applicationLayer = serverApplicationLayer.pipe(
       Layer.provideMerge(runtimeServicesLive),
       Layer.provide(activationLayer),
       Layer.provideMerge(serverRelayBrokerTracingLayer),
@@ -820,8 +821,29 @@ const makeServerLayer = Layer.unwrap(
       Layer.provide(VcsProcess.layer),
       Layer.provideMerge(PlatformServicesLive),
     );
+
+    // Keep the same receiver layer visible at the top level so the server
+    // lifetime can follow the desktop supervisor pipe. Effect's layer memo
+    // reuses this exact layer instance, avoiding a second reader on fd4.
+    return Layer.merge(applicationLayer, DesktopTelemetryReceiverLayerLive);
   }),
 );
 
 // The CLI supplies configuration.
-export const runServer = Layer.launch(makeServerLayer);
+export const runServer = Effect.scoped(
+  Effect.gen(function* () {
+    const config = yield* ServerConfig.ServerConfig;
+    const services = yield* Layer.build(makeServerLayer);
+
+    if (config.mode !== "desktop" || config.desktopTelemetryFd === undefined) {
+      return yield* Effect.never;
+    }
+
+    const desktopTelemetry = Context.get(
+      services,
+      DesktopTelemetryReceiver.DesktopTelemetryReceiver,
+    );
+    yield* desktopTelemetry.awaitSupervisorDisconnect;
+    yield* Effect.logInfo("Desktop supervisor disconnected; shutting down embedded server");
+  }),
+);

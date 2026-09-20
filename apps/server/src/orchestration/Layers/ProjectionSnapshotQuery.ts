@@ -2,6 +2,9 @@ import {
   AgentSessionImportSource,
   ApprovalRequestId,
   ChatAttachment,
+  CommandId,
+  EventId,
+  OrchestrationEventMetadata,
   OrchestrationMessageContext,
   CheckpointRef,
   IsoDateTime,
@@ -31,6 +34,7 @@ import {
   ProjectId,
   ThreadLinkedPullRequest,
   ThreadTitleState,
+  ThreadTurnStartRequestedPayload,
   ThreadId,
   ThreadPullRequestSnapshot,
   ThreadPullRequestStack,
@@ -119,6 +123,17 @@ const ProjectionThreadMessageDbRowSchema = ProjectionThreadMessage.mapFields(
 const ProjectionTurnStartMessageDbRowSchema = ProjectionThreadMessageDbRowSchema.mapFields(
   Struct.assign({ hasOtherUserMessages: Schema.Number }),
 );
+const PendingTurnStartEventDbRowSchema = Schema.Struct({
+  sequence: NonNegativeInt,
+  eventId: EventId,
+  aggregateId: ThreadId,
+  occurredAt: IsoDateTime,
+  commandId: Schema.NullOr(CommandId),
+  causationEventId: Schema.NullOr(EventId),
+  correlationId: Schema.NullOr(CommandId),
+  metadata: Schema.fromJsonString(OrchestrationEventMetadata),
+  payload: Schema.fromJsonString(ThreadTurnStartRequestedPayload),
+});
 const ProjectionThreadProposedPlanDbRowSchema = ProjectionThreadProposedPlan;
 const ProjectionThreadPullRequestDbRowSchema = ProjectionThreadPullRequest.mapFields(
   Struct.assign({
@@ -1369,6 +1384,33 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       FROM projection_thread_messages
       WHERE thread_id = ${threadId} AND message_id = ${messageId}
       LIMIT 1
+    `,
+  });
+
+  const listPendingTurnStartEventRows = SqlSchema.findAll({
+    Request: Schema.Void,
+    Result: PendingTurnStartEventDbRowSchema,
+    execute: () => sql`
+      SELECT
+        events.sequence AS "sequence",
+        events.event_id AS "eventId",
+        events.stream_id AS "aggregateId",
+        events.occurred_at AS "occurredAt",
+        events.command_id AS "commandId",
+        events.causation_event_id AS "causationEventId",
+        events.correlation_id AS "correlationId",
+        events.metadata_json AS "metadata",
+        events.payload_json AS "payload"
+      FROM projection_turns AS pending
+      INNER JOIN orchestration_events AS events
+        ON events.aggregate_kind = 'thread'
+        AND events.stream_id = pending.thread_id
+        AND events.event_type = 'thread.turn-start-requested'
+        AND json_extract(events.payload_json, '$.messageId') = pending.pending_message_id
+      WHERE pending.turn_id IS NULL
+        AND pending.state = 'pending'
+        AND pending.pending_message_id IS NOT NULL
+      ORDER BY events.sequence ASC
     `,
   });
 
@@ -3345,6 +3387,32 @@ pending_approval_requests AS (
     }));
   });
 
+  const listPendingTurnStartEvents: ProjectionSnapshotQueryShape["listPendingTurnStartEvents"] =
+    () =>
+      listPendingTurnStartEventRows(undefined).pipe(
+        Effect.mapError(
+          toPersistenceSqlOrDecodeError(
+            "ProjectionSnapshotQuery.listPendingTurnStartEvents:query",
+            "ProjectionSnapshotQuery.listPendingTurnStartEvents:decodeRows",
+          ),
+        ),
+        Effect.map((rows) =>
+          rows.map((row) => ({
+            sequence: row.sequence,
+            eventId: row.eventId,
+            aggregateKind: "thread" as const,
+            aggregateId: row.aggregateId,
+            occurredAt: row.occurredAt,
+            commandId: row.commandId,
+            causationEventId: row.causationEventId,
+            correlationId: row.correlationId,
+            metadata: row.metadata,
+            type: "thread.turn-start-requested" as const,
+            payload: row.payload,
+          })),
+        ),
+      );
+
   // Contiguous turn range bounding a windowed detail read; undefined loads the
   // full thread. Resolved from a window request inside the snapshot
   // transaction (see getThreadDetailSnapshot).
@@ -3808,6 +3876,7 @@ pending_approval_requests AS (
     getThreadShellById,
     getThreadRuntimeContext,
     getTurnStartMessage,
+    listPendingTurnStartEvents,
     getThreadDetailById,
     getThreadDetailSnapshot,
   } satisfies ProjectionSnapshotQueryShape;

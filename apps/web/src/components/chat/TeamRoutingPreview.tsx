@@ -1,4 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { serverEnvironment } from "../../state/server";
 import { Switch } from "../ui/switch";
 import { useNavigate } from "@tanstack/react-router";
@@ -11,6 +12,7 @@ import { createTeamDraftCoordinator } from "@t3tools/client-runtime/state/team-d
 import { teamEnvironment } from "../../state/team";
 import { useEnvironmentQuery } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { waitForThreadShell } from "../../state/entities";
 
 const RoutingContext = createContext<ReturnType<typeof useTeamRoutingState> | null>(null);
 export const useComposerRouting = () => useContext(RoutingContext);
@@ -168,32 +170,42 @@ export function useTeamRoutingState({
     setStartError(null);
     const key = JSON.stringify([scopeKey, prompt, assessment.fingerprint]);
     if (command.current?.key !== key) command.current = { key, id: randomUUID() };
-    const response = await start({
-      environmentId,
-      input: {
-        commandId: command.current.id,
-        projectId,
-        fingerprint: assessment.fingerprint,
-        draft: {
-          draftId: assessment.draftId,
-          revision: assessment.revision,
-          policyRevision: assessment.policyRevision,
-          prompt,
-          hasAttachments,
+    try {
+      const response = await start({
+        environmentId,
+        input: {
+          commandId: command.current.id,
+          projectId,
+          fingerprint: assessment.fingerprint,
+          draft: {
+            draftId: assessment.draftId,
+            revision: assessment.revision,
+            policyRevision: assessment.policyRevision,
+            prompt,
+            hasAttachments,
+          },
         },
-      },
-    });
-    starting.current = false;
-    setPending(false);
-    if (response._tag === "Failure") {
-      const error = squashAtomCommandFailure(response);
-      setStartError(error instanceof Error ? error.message : "Could not start orchestration.");
-      return;
-    }
-    if (response.value.execution) {
-      const threadId = response.value.execution.leadThreadId;
-      useRightPanelStore.getState().open({ environmentId, threadId }, "agents");
-      await navigate({ to: "/$environmentId/$threadId", params: { environmentId, threadId } });
+      });
+      if (response._tag === "Failure") {
+        const error = squashAtomCommandFailure(response);
+        setStartError(error instanceof Error ? error.message : "Could not start orchestration.");
+        return;
+      }
+      if (response.value.execution) {
+        const threadId = response.value.execution.leadThreadId;
+        const ready = await waitForThreadShell(scopeThreadRef(environmentId, threadId));
+        if (!ready) {
+          setStartError(
+            "Team started, but its lead thread is still syncing. Try opening it again.",
+          );
+          return;
+        }
+        useRightPanelStore.getState().open({ environmentId, threadId }, "agents");
+        await navigate({ to: "/$environmentId/$threadId", params: { environmentId, threadId } });
+      }
+    } finally {
+      starting.current = false;
+      setPending(false);
     }
   }
   return {

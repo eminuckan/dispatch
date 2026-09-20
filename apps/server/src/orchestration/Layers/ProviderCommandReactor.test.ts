@@ -1997,6 +1997,34 @@ describe("ProviderCommandReactor", () => {
     expect(thread?.titleRegeneration).toBeNull();
   });
 
+  it("recovers a persisted pending turn start that was accepted before reactor startup", async () => {
+    const harness = await createHarness({ deferReactorStart: true });
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-pending-before-reactor-start"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("message-pending-before-reactor-start"),
+          role: "user",
+          text: "Continue after restart.",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: "2026-01-01T00:00:02.000Z",
+      }),
+    );
+
+    expect(harness.sendTurn).not.toHaveBeenCalled();
+    expect(await harness.readPendingTurnStarts()).toEqual([{ threadId: "thread-1" }]);
+
+    await harness.startReactor();
+    await harness.drain();
+
+    expect(harness.sendTurn).toHaveBeenCalledTimes(1);
+  });
+
   it("continues clearing startup title regeneration state after one completion fails", async () => {
     const harness = await createHarness({
       titleRegenerationBeforeStart: "two",

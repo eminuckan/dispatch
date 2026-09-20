@@ -7,7 +7,7 @@ import {
   type TeamThreadView,
 } from "@t3tools/contracts";
 import type { TimelineEntry } from "../../session-logic";
-import { teamFollowUpEntries, teamTurnLabel } from "./teamConversation.logic";
+import { teamConversationEntries, teamTurnLabel } from "./teamConversation.logic";
 function message(
   id: string,
   role: "user" | "assistant",
@@ -29,22 +29,29 @@ function message(
     },
   };
 }
-it("hides coordination turns while preserving explicit user follow-ups including JSON", () => {
+it("hides coordination prompts while keeping normal managed assistant output and follow-ups", () => {
   const entries = [
     message("internal", "user", "a", "hidden prompt"),
-    message("review", "assistant", "a", '{"action":"accept"}'),
+    message("progress", "assistant", "a", "Worker testlerini inceliyorum."),
     message("user", "user", "b", "Explain this JSON"),
-    message("answer", "assistant", "b", '{"action":"accept"}'),
+    message("answer", "assistant", "b", "Normal follow-up answer"),
   ];
-  expect(teamFollowUpEntries(entries, ["internal"]).map((e) => e.id)).toEqual(["user", "answer"]);
+  expect(teamConversationEntries(entries, ["internal"]).map((e) => e.id)).toEqual([
+    "progress",
+    "user",
+    "answer",
+  ]);
 });
-it("does not reveal unidentified fragments or queued internal messages", () => {
+it("keeps assistant/work history visible but hides queued internal messages", () => {
   const entries = [
     message("orphan", "assistant", "a", "hidden"),
     message("internal", "user", null, "queued control"),
     message("followup", "user", null, "my queued question"),
   ];
-  expect(teamFollowUpEntries(entries, ["internal"]).map((e) => e.id)).toEqual(["followup"]);
+  expect(teamConversationEntries(entries, ["internal"]).map((e) => e.id)).toEqual([
+    "orphan",
+    "followup",
+  ]);
 });
 it("keeps tool work attached to a user follow-up", () => {
   const entries: TimelineEntry[] = [
@@ -62,16 +69,50 @@ it("keeps tool work attached to a user follow-up", () => {
       },
     },
   ];
-  expect(teamFollowUpEntries(entries, []).map((e) => e.id)).toEqual(["user", "work"]);
+  expect(teamConversationEntries(entries, []).map((e) => e.id)).toEqual(["user", "work"]);
 });
 
-it("keeps a newly dispatched coordination turn hidden before the ledger refresh arrives", () => {
+it("keeps a newly dispatched coordination turn and incomplete protocol hidden before ledger refresh", () => {
   const entries = [
     message("team-new-reservation", "user", "new-turn", "hidden contract"),
     message("new-answer", "assistant", "new-turn", '{"action":"accept"}'),
     message("manual", "user", "manual-turn", "Explain"),
   ];
-  expect(teamFollowUpEntries(entries, []).map((entry) => entry.id)).toEqual(["manual"]);
+  expect(teamConversationEntries(entries, []).map((entry) => entry.id)).toEqual(["manual"]);
+});
+
+it("renders managed review protocol JSON as a normal assistant message", () => {
+  const entries = [
+    message("team-review", "user", null, "hidden review contract"),
+    message(
+      "review-result",
+      "assistant",
+      "review-turn",
+      '{"action":"accept","summary":"Altı ölçüt karşılandı.","checks":[{"criterionIndex":0}]}',
+    ),
+  ];
+  const visible = teamConversationEntries(entries, ["team-review"]);
+  expect(visible).toHaveLength(1);
+  expect(visible[0]?.kind).toBe("message");
+  if (visible[0]?.kind === "message")
+    expect(visible[0].message.text).toBe("Altı ölçüt karşılandı.");
+});
+
+it("renders managed planning JSON without exposing the protocol object", () => {
+  const entries = [
+    message(
+      "plan-result",
+      "assistant",
+      "plan-turn",
+      '{"acceptance":["Works"],"tasks":[{"objective":"Runtimeı güncelle"},{"objective":"UIyi doğrula"}],"rationale":"İki bağımsız iş yeterli."}',
+    ),
+  ];
+  const visible = teamConversationEntries(entries, []);
+  expect(visible).toHaveLength(1);
+  if (visible[0]?.kind !== "message") throw new Error("Expected message");
+  expect(visible[0].message.text).toContain("İki bağımsız iş yeterli.");
+  expect(visible[0].message.text).toContain("- Runtimeı güncelle");
+  expect(visible[0].message.text).not.toContain('"acceptance"');
 });
 
 it("does not confuse a finished worker response with lead acceptance", () => {

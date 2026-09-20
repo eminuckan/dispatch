@@ -13,6 +13,7 @@ import {
 import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -161,6 +162,9 @@ export class DesktopTelemetryReceiver extends Context.Service<
       Scope.Scope
     >;
     readonly health: Effect.Effect<DesktopTelemetryReceiverHealth>;
+    /** Completes when the desktop-owned telemetry pipe reaches EOF. Native
+        desktop backends use that pipe for the Electron supervisor lifetime. */
+    readonly awaitSupervisorDisconnect: Effect.Effect<void>;
     readonly subscribeHealth: Effect.Effect<
       {
         readonly latest: DesktopTelemetryReceiverHealth;
@@ -332,6 +336,7 @@ export const make = Effect.fn("resourceTelemetry.desktopTelemetryReceiver.make")
   const config = yield* ServerConfig;
   const serverSettings = yield* ServerSettingsService;
   const latest = yield* Ref.make(Option.none<DesktopHostTelemetrySnapshot>());
+  const supervisorDisconnect = yield* Deferred.make<void>();
   const receiverStartedAt = yield* DateTime.now;
   const lastContactAtMs = yield* Ref.make(
     initialDesktopTelemetryContactAt(
@@ -554,6 +559,7 @@ export const make = Effect.fn("resourceTelemetry.desktopTelemetryReceiver.make")
           lastError: Option.some(new DesktopTelemetryStreamClosed({ fd }).message),
         })),
       ),
+      Effect.andThen(Deferred.succeed(supervisorDisconnect, undefined)),
       Effect.catch((error) =>
         updateHealth((current): DesktopTelemetryReceiverHealth => ({
           ...current,
@@ -644,6 +650,7 @@ export const make = Effect.fn("resourceTelemetry.desktopTelemetryReceiver.make")
       }),
     ),
     health: Ref.get(health),
+    awaitSupervisorDisconnect: Deferred.await(supervisorDisconnect),
     subscribeHealth: subscribeBeforeSnapshotWithoutMutex(healthChanges, Ref.get(health)),
     setDiagnosticsDemand,
     requestDesktopUpdate: (requestId) =>
@@ -695,6 +702,7 @@ export const layerTest = (
           })),
         ),
       health,
+      awaitSupervisorDisconnect: overrides.awaitSupervisorDisconnect ?? Effect.never,
       subscribeHealth:
         overrides.subscribeHealth ??
         health.pipe(

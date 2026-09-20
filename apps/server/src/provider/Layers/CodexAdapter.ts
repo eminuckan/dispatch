@@ -38,8 +38,10 @@ import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
+import * as SynchronizedRef from "effect/SynchronizedRef";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import * as CodexErrors from "effect-codex-app-server/errors";
 import * as EffectCodexSchema from "effect-codex-app-server/schema";
@@ -2250,247 +2252,261 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
     options?.nativeEventLogger === undefined ? nativeEventLogger : undefined;
   const runtimeEventQueue = yield* Queue.unbounded<ProviderRuntimeEvent>();
   const sessions = new Map<ThreadId, CodexAdapterSessionContext>();
+  const sessionLocks = yield* SynchronizedRef.make(new Map<ThreadId, Semaphore.Semaphore>());
+  const withSessionLock = <A, E, R>(threadId: ThreadId, effect: Effect.Effect<A, E, R>) =>
+    SynchronizedRef.modifyEffect(sessionLocks, (current) => {
+      const existing = current.get(threadId);
+      if (existing) return Effect.succeed([existing, current] as const);
+      return Semaphore.make(1).pipe(
+        Effect.map((lock) => [lock, new Map(current).set(threadId, lock)] as const),
+      );
+    }).pipe(Effect.flatMap((lock) => lock.withPermit(effect)));
 
   const startSession: CodexAdapterShape["startSession"] = (input) =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        if (input.provider !== undefined && input.provider !== PROVIDER) {
-          return yield* new ProviderAdapterValidationError({
-            provider: PROVIDER,
-            operation: "startSession",
-            issue: `Expected provider '${PROVIDER}' but received '${input.provider}'.`,
-          });
-        }
-
-        const existing = sessions.get(input.threadId);
-        if (existing && !existing.stopped) {
-          yield* Effect.suspend(() => stopSessionInternal(existing));
-        }
-
-        const serviceTier =
-          input.modelSelection?.instanceId === boundInstanceId
-            ? getCodexServiceTierOptionValue(input.modelSelection)
-            : undefined;
-        const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);
-        const runtimeInput: CodexSessionRuntimeOptions = {
-          threadId: input.threadId,
-          providerInstanceId: boundInstanceId,
-          cwd: input.cwd ?? process.cwd(),
-          binaryPath: codexConfig.binaryPath,
-          launchArgs: resolveCodexLaunchArgs(codexConfig.launchArgs, options?.environment),
-          ...(options?.environment ? { environment: options.environment } : {}),
-          ...(codexConfig.homePath ? { homePath: codexConfig.homePath } : {}),
-          ...(isCodexResumeCursorSchema(input.resumeCursor)
-            ? { resumeCursor: input.resumeCursor }
-            : {}),
-          runtimeMode: input.runtimeMode,
-          ...(input.modelSelection?.instanceId === boundInstanceId
-            ? { model: input.modelSelection.model }
-            : {}),
-          ...(serviceTier ? { serviceTier } : {}),
-          ...(mcpSession
-            ? {
-                environment: {
-                  ...McpProviderSession.withAgentDeviceEnvironment(
-                    options?.environment ?? process.env,
-                    mcpSession,
-                  ),
-                  T3_MCP_BEARER_TOKEN: mcpSession.authorizationHeader.replace(/^Bearer\s+/, ""),
-                },
-                appServerArgs: [
-                  "-c",
-                  `mcp_servers.t3-code.url=${mcpSession.endpoint}`,
-                  "-c",
-                  'mcp_servers.t3-code.bearer_token_env_var="T3_MCP_BEARER_TOKEN"',
-                ],
-                mcpCapabilities: mcpSession.capabilities,
-              }
-            : {}),
-        };
-        const turnTokenUsage = makeCodexTurnTokenUsageState();
-        // Codex reports a usage-limit stop as OpenAI's own sentence, which on a
-        // Business workspace blames credits for a window that ran out. The
-        // snapshot naming that window arrives in its own notification, before or
-        // after the stop and often sparse, so keep the session's merged view of
-        // it and read it when a turn fails on the limit.
-        let rateLimits: CodexRateLimitSnapshot | undefined;
-        const sessionScope = yield* Scope.make("sequential");
-        let sessionScopeTransferred = false;
-        yield* Effect.addFinalizer(() =>
-          sessionScopeTransferred ? Effect.void : Scope.close(sessionScope, Exit.void),
-        );
-        const createRuntime = options?.makeRuntime ?? makeCodexSessionRuntime;
-        const runtime = yield* createRuntime(runtimeInput).pipe(
-          Effect.provideService(Scope.Scope, sessionScope),
-          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
-          Effect.provideService(Crypto.Crypto, crypto),
-          Effect.mapError(
-            (cause) =>
-              new ProviderAdapterProcessError({
-                provider: PROVIDER,
-                threadId: input.threadId,
-                detail: cause.message,
-                cause,
-              }),
-          ),
-        );
-
-        // Fork into the session scope, not the calling fiber. `forkChild` makes
-        // this a child of `startSession`, and Effect interrupts a fiber's
-        // children when it completes, so the consumer died on return and every
-        // runtime event the session emitted afterwards was dropped.
-        const eventFiber = yield* Stream.runForEach(runtime.events, (event) =>
-          Effect.gen(function* () {
-            yield* writeNativeEvent(event);
-            if (event.method === "turn/started" && event.turnId) {
-              if (turnTokenUsage.activeTurnId !== event.turnId) {
-                turnTokenUsage.byTurnId.clear();
-                turnTokenUsage.activeTurnId = event.turnId;
-                getCodexTurnAccumulator(turnTokenUsage, event.turnId);
-              }
-            } else if (event.method === "thread/tokenUsage/updated") {
-              const payload = readPayload(
-                EffectCodexSchema.V2ThreadTokenUsageUpdatedNotification,
-                event.payload,
-              );
-              if (payload) {
-                accumulateCodexTurnTokenUsage(turnTokenUsage, payload.turnId, payload.tokenUsage);
-              }
-            } else if (turnTokenUsage.activeTurnId) {
-              const collabPayload =
-                typeof event.payload === "object" && event.payload !== null
-                  ? (event.payload as Record<string, unknown>)
-                  : undefined;
-              const isCollabSpawn =
-                event.method === "collabAgent/started" ||
-                (event.method === "collabAgent/activity" &&
-                  collabPayload?.activityKind === "started");
-              if (isCollabSpawn && event.turnId === turnTokenUsage.activeTurnId) {
-                getCodexTurnAccumulator(turnTokenUsage, turnTokenUsage.activeTurnId).hasSubagents =
-                  true;
-              }
-            }
-
-            if (event.method === "account/rateLimits/updated") {
-              const limitsPayload = readPayload(
-                EffectCodexSchema.V2AccountRateLimitsUpdatedNotification,
-                event.payload,
-              );
-              if (limitsPayload) {
-                rateLimits = mergeCodexRateLimits(rateLimits, limitsPayload.rateLimits);
-              }
-            } else if (event.method === "error") {
-              const errorPayload = readPayload(
-                EffectCodexSchema.V2ErrorNotification,
-                event.payload,
-              );
-              // The failed `turn/completed` repeats this sentence and is answered
-              // below; relaying both would show the limit twice.
-              if (errorPayload?.error.codexErrorInfo === "usageLimitExceeded") return;
-            }
-
-            let usageLimitError: ProviderRuntimeEvent | undefined;
-            let usageLimitMessage: string | undefined;
-            if (event.method === "turn/completed") {
-              const completedPayload = readPayload(
-                EffectCodexSchema.V2TurnCompletedNotification,
-                event.payload,
-              );
-              const turnError =
-                completedPayload?.turn.status === "failed"
-                  ? completedPayload.turn.error
-                  : undefined;
-              if (turnError?.codexErrorInfo === "usageLimitExceeded") {
-                usageLimitMessage = codexUsageLimitMessage(rateLimits, event.createdAt);
-                usageLimitError = {
-                  ...runtimeEventBase(event, event.threadId),
-                  type: "runtime.error",
-                  payload: {
-                    message: usageLimitMessage,
-                    class: "provider_error",
-                    ...(turnError.message ? { detail: turnError.message } : {}),
-                  },
-                };
-              }
-            }
-
-            const mappedEvents = mapToRuntimeEvents(event, event.threadId).map((runtimeEvent) => {
-              if (runtimeEvent.type === "turn.completed" && runtimeEvent.turnId) {
-                return {
-                  ...runtimeEvent,
-                  payload: {
-                    ...runtimeEvent.payload,
-                    ...(usageLimitMessage ? { errorMessage: usageLimitMessage } : {}),
-                    tokenUsage: completeCodexTurnTokenUsage(
-                      turnTokenUsage,
-                      String(runtimeEvent.turnId),
-                      runtimeEvent.payload.state === "completed",
-                    ),
-                  },
-                } satisfies ProviderRuntimeEvent;
-              }
-              if (runtimeEvent.type === "turn.aborted" && runtimeEvent.turnId) {
-                return {
-                  ...runtimeEvent,
-                  payload: {
-                    ...runtimeEvent.payload,
-                    tokenUsage: completeCodexTurnTokenUsage(
-                      turnTokenUsage,
-                      String(runtimeEvent.turnId),
-                      false,
-                    ),
-                  },
-                } satisfies ProviderRuntimeEvent;
-              }
-              return runtimeEvent;
+    withSessionLock(
+      input.threadId,
+      Effect.scoped(
+        Effect.gen(function* () {
+          if (input.provider !== undefined && input.provider !== PROVIDER) {
+            return yield* new ProviderAdapterValidationError({
+              provider: PROVIDER,
+              operation: "startSession",
+              issue: `Expected provider '${PROVIDER}' but received '${input.provider}'.`,
             });
-            const runtimeEvents = usageLimitError
-              ? [usageLimitError, ...mappedEvents]
-              : mappedEvents;
-            if (runtimeEvents.length === 0) {
-              yield* Effect.logDebug("ignoring unhandled Codex provider event", {
-                method: event.method,
-                threadId: event.threadId,
-                turnId: event.turnId,
-                itemId: event.itemId,
-              });
-              return;
-            }
-            yield* Queue.offerAll(runtimeEventQueue, runtimeEvents);
-          }),
-        ).pipe(Effect.forkIn(sessionScope));
+          }
 
-        const started = yield* runtime.start().pipe(
-          Effect.mapError(
-            (cause) =>
-              new ProviderAdapterProcessError({
-                provider: PROVIDER,
-                threadId: input.threadId,
-                detail: cause.message,
-                cause,
-              }),
-          ),
-          Effect.onError(() =>
-            runtime.close.pipe(
-              Effect.andThen(Effect.ignore(Scope.close(sessionScope, Exit.void))),
-              Effect.andThen(Fiber.interrupt(eventFiber)),
-              Effect.ignore,
+          const existing = sessions.get(input.threadId);
+          if (existing && !existing.stopped) {
+            yield* Effect.suspend(() => stopSessionInternal(existing));
+          }
+
+          const serviceTier =
+            input.modelSelection?.instanceId === boundInstanceId
+              ? getCodexServiceTierOptionValue(input.modelSelection)
+              : undefined;
+          const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);
+          const runtimeInput: CodexSessionRuntimeOptions = {
+            threadId: input.threadId,
+            providerInstanceId: boundInstanceId,
+            cwd: input.cwd ?? process.cwd(),
+            binaryPath: codexConfig.binaryPath,
+            launchArgs: resolveCodexLaunchArgs(codexConfig.launchArgs, options?.environment),
+            ...(options?.environment ? { environment: options.environment } : {}),
+            ...(codexConfig.homePath ? { homePath: codexConfig.homePath } : {}),
+            ...(isCodexResumeCursorSchema(input.resumeCursor)
+              ? { resumeCursor: input.resumeCursor }
+              : {}),
+            runtimeMode: input.runtimeMode,
+            ...(input.modelSelection?.instanceId === boundInstanceId
+              ? { model: input.modelSelection.model }
+              : {}),
+            ...(serviceTier ? { serviceTier } : {}),
+            ...(mcpSession
+              ? {
+                  environment: {
+                    ...McpProviderSession.withAgentDeviceEnvironment(
+                      options?.environment ?? process.env,
+                      mcpSession,
+                    ),
+                    T3_MCP_BEARER_TOKEN: mcpSession.authorizationHeader.replace(/^Bearer\s+/, ""),
+                  },
+                  appServerArgs: [
+                    "-c",
+                    `mcp_servers.t3-code.url=${mcpSession.endpoint}`,
+                    "-c",
+                    'mcp_servers.t3-code.bearer_token_env_var="T3_MCP_BEARER_TOKEN"',
+                  ],
+                  mcpCapabilities: mcpSession.capabilities,
+                }
+              : {}),
+          };
+          const turnTokenUsage = makeCodexTurnTokenUsageState();
+          // Codex reports a usage-limit stop as OpenAI's own sentence, which on a
+          // Business workspace blames credits for a window that ran out. The
+          // snapshot naming that window arrives in its own notification, before or
+          // after the stop and often sparse, so keep the session's merged view of
+          // it and read it when a turn fails on the limit.
+          let rateLimits: CodexRateLimitSnapshot | undefined;
+          const sessionScope = yield* Scope.make("sequential");
+          let sessionScopeTransferred = false;
+          yield* Effect.addFinalizer(() =>
+            sessionScopeTransferred ? Effect.void : Scope.close(sessionScope, Exit.void),
+          );
+          const createRuntime = options?.makeRuntime ?? makeCodexSessionRuntime;
+          const runtime = yield* createRuntime(runtimeInput).pipe(
+            Effect.provideService(Scope.Scope, sessionScope),
+            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
+            Effect.provideService(Crypto.Crypto, crypto),
+            Effect.mapError(
+              (cause) =>
+                new ProviderAdapterProcessError({
+                  provider: PROVIDER,
+                  threadId: input.threadId,
+                  detail: cause.message,
+                  cause,
+                }),
             ),
-          ),
-        );
+          );
 
-        sessions.set(input.threadId, {
-          threadId: input.threadId,
-          scope: sessionScope,
-          runtime,
-          eventFiber,
-          turnTokenUsage,
-          stopped: false,
-        });
-        sessionScopeTransferred = true;
+          // Fork into the session scope, not the calling fiber. `forkChild` makes
+          // this a child of `startSession`, and Effect interrupts a fiber's
+          // children when it completes, so the consumer died on return and every
+          // runtime event the session emitted afterwards was dropped.
+          const eventFiber = yield* Stream.runForEach(runtime.events, (event) =>
+            Effect.gen(function* () {
+              yield* writeNativeEvent(event);
+              if (event.method === "turn/started" && event.turnId) {
+                if (turnTokenUsage.activeTurnId !== event.turnId) {
+                  turnTokenUsage.byTurnId.clear();
+                  turnTokenUsage.activeTurnId = event.turnId;
+                  getCodexTurnAccumulator(turnTokenUsage, event.turnId);
+                }
+              } else if (event.method === "thread/tokenUsage/updated") {
+                const payload = readPayload(
+                  EffectCodexSchema.V2ThreadTokenUsageUpdatedNotification,
+                  event.payload,
+                );
+                if (payload) {
+                  accumulateCodexTurnTokenUsage(turnTokenUsage, payload.turnId, payload.tokenUsage);
+                }
+              } else if (turnTokenUsage.activeTurnId) {
+                const collabPayload =
+                  typeof event.payload === "object" && event.payload !== null
+                    ? (event.payload as Record<string, unknown>)
+                    : undefined;
+                const isCollabSpawn =
+                  event.method === "collabAgent/started" ||
+                  (event.method === "collabAgent/activity" &&
+                    collabPayload?.activityKind === "started");
+                if (isCollabSpawn && event.turnId === turnTokenUsage.activeTurnId) {
+                  getCodexTurnAccumulator(
+                    turnTokenUsage,
+                    turnTokenUsage.activeTurnId,
+                  ).hasSubagents = true;
+                }
+              }
 
-        return started;
-      }),
+              if (event.method === "account/rateLimits/updated") {
+                const limitsPayload = readPayload(
+                  EffectCodexSchema.V2AccountRateLimitsUpdatedNotification,
+                  event.payload,
+                );
+                if (limitsPayload) {
+                  rateLimits = mergeCodexRateLimits(rateLimits, limitsPayload.rateLimits);
+                }
+              } else if (event.method === "error") {
+                const errorPayload = readPayload(
+                  EffectCodexSchema.V2ErrorNotification,
+                  event.payload,
+                );
+                // The failed `turn/completed` repeats this sentence and is answered
+                // below; relaying both would show the limit twice.
+                if (errorPayload?.error.codexErrorInfo === "usageLimitExceeded") return;
+              }
+
+              let usageLimitError: ProviderRuntimeEvent | undefined;
+              let usageLimitMessage: string | undefined;
+              if (event.method === "turn/completed") {
+                const completedPayload = readPayload(
+                  EffectCodexSchema.V2TurnCompletedNotification,
+                  event.payload,
+                );
+                const turnError =
+                  completedPayload?.turn.status === "failed"
+                    ? completedPayload.turn.error
+                    : undefined;
+                if (turnError?.codexErrorInfo === "usageLimitExceeded") {
+                  usageLimitMessage = codexUsageLimitMessage(rateLimits, event.createdAt);
+                  usageLimitError = {
+                    ...runtimeEventBase(event, event.threadId),
+                    type: "runtime.error",
+                    payload: {
+                      message: usageLimitMessage,
+                      class: "provider_error",
+                      ...(turnError.message ? { detail: turnError.message } : {}),
+                    },
+                  };
+                }
+              }
+
+              const mappedEvents = mapToRuntimeEvents(event, event.threadId).map((runtimeEvent) => {
+                if (runtimeEvent.type === "turn.completed" && runtimeEvent.turnId) {
+                  return {
+                    ...runtimeEvent,
+                    payload: {
+                      ...runtimeEvent.payload,
+                      ...(usageLimitMessage ? { errorMessage: usageLimitMessage } : {}),
+                      tokenUsage: completeCodexTurnTokenUsage(
+                        turnTokenUsage,
+                        String(runtimeEvent.turnId),
+                        runtimeEvent.payload.state === "completed",
+                      ),
+                    },
+                  } satisfies ProviderRuntimeEvent;
+                }
+                if (runtimeEvent.type === "turn.aborted" && runtimeEvent.turnId) {
+                  return {
+                    ...runtimeEvent,
+                    payload: {
+                      ...runtimeEvent.payload,
+                      tokenUsage: completeCodexTurnTokenUsage(
+                        turnTokenUsage,
+                        String(runtimeEvent.turnId),
+                        false,
+                      ),
+                    },
+                  } satisfies ProviderRuntimeEvent;
+                }
+                return runtimeEvent;
+              });
+              const runtimeEvents = usageLimitError
+                ? [usageLimitError, ...mappedEvents]
+                : mappedEvents;
+              if (runtimeEvents.length === 0) {
+                yield* Effect.logDebug("ignoring unhandled Codex provider event", {
+                  method: event.method,
+                  threadId: event.threadId,
+                  turnId: event.turnId,
+                  itemId: event.itemId,
+                });
+                return;
+              }
+              yield* Queue.offerAll(runtimeEventQueue, runtimeEvents);
+            }),
+          ).pipe(Effect.forkIn(sessionScope));
+
+          const started = yield* runtime.start().pipe(
+            Effect.mapError(
+              (cause) =>
+                new ProviderAdapterProcessError({
+                  provider: PROVIDER,
+                  threadId: input.threadId,
+                  detail: cause.message,
+                  cause,
+                }),
+            ),
+            Effect.onError(() =>
+              runtime.close.pipe(
+                Effect.andThen(Effect.ignore(Scope.close(sessionScope, Exit.void))),
+                Effect.andThen(Fiber.interrupt(eventFiber)),
+                Effect.ignore,
+              ),
+            ),
+          );
+
+          sessions.set(input.threadId, {
+            threadId: input.threadId,
+            scope: sessionScope,
+            runtime,
+            eventFiber,
+            turnTokenUsage,
+            stopped: false,
+          });
+          sessionScopeTransferred = true;
+
+          return started;
+        }),
+      ),
     );
 
   const resolveAttachment = Effect.fn("resolveAttachment")(function* (
@@ -2686,13 +2702,16 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
   });
 
   const stopSession: CodexAdapterShape["stopSession"] = (threadId) =>
-    Effect.gen(function* () {
-      const session = sessions.get(threadId);
-      if (!session) {
-        return;
-      }
-      yield* stopSessionInternal(session);
-    });
+    withSessionLock(
+      threadId,
+      Effect.gen(function* () {
+        const session = sessions.get(threadId);
+        if (!session) {
+          return;
+        }
+        yield* stopSessionInternal(session);
+      }),
+    );
 
   const listSessions: CodexAdapterShape["listSessions"] = () =>
     Effect.forEach(

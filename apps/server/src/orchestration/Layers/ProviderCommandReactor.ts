@@ -1894,8 +1894,26 @@ const make = Effect.gen(function* () {
     const domainEvents = yield* orchestrationEngine.subscribeDomainEvents;
     yield* forkParked(Stream.runForEach(domainEvents, processEvent));
 
+    const recoverPendingTurnStarts =
+      projectionSnapshotQuery.listPendingTurnStartEvents === undefined
+        ? Effect.void
+        : projectionSnapshotQuery.listPendingTurnStartEvents().pipe(
+            Effect.flatMap((events) =>
+              Effect.forEach(events, processEvent, { concurrency: 1, discard: true }),
+            ),
+            Effect.catchCause((cause) =>
+              Cause.hasInterruptsOnly(cause)
+                ? Effect.interrupt
+                : Effect.logWarning(
+                    "provider command reactor failed to recover pending turn starts",
+                    { cause: Cause.pretty(cause) },
+                  ),
+            ),
+          );
+
     // Earlier events do not replay. Clear interrupted requests by their captured
-    // IDs, then schedule persisted refinements after subscribing to their events.
+    // IDs, recover accepted turn-start events that were never consumed, then
+    // schedule persisted refinements after subscribing to their events.
     const recoverTitles = clearInterruptedThreadTitleRegenerations(
       pendingTitles.interruptedRegenerations,
     ).pipe(
@@ -1919,8 +1937,12 @@ const make = Effect.gen(function* () {
     );
     const activation = yield* ServerActivation;
     if (activation === undefined) {
-      yield* recoverTitles;
+      yield* Effect.all([recoverPendingTurnStarts, recoverTitles], {
+        concurrency: "unbounded",
+        discard: true,
+      });
     } else {
+      yield* forkParked(recoverPendingTurnStarts);
       yield* forkParked(recoverTitles);
     }
   });

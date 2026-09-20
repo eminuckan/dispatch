@@ -1,5 +1,6 @@
 import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import {
   CommandId,
@@ -13,6 +14,7 @@ import {
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import { make } from "./TeamStore.ts";
 import { defaultTeamPolicy } from "./routing.ts";
+const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const profile = {
   id: "p",
   label: "P",
@@ -257,4 +259,31 @@ it.effect(
       expect(yield* store.findByThread(ThreadId.make("old-work"))).toBeNull();
       expect(yield* store.findByThread(ThreadId.make("team-ordinary"))).toBeNull();
     }).pipe(Effect.provide(SqlitePersistenceMemory)),
+);
+
+it.effect("reads legacy consult turns without widening the current execution role contract", () =>
+  Effect.gen(function* () {
+    const store = yield* make;
+    const sql = yield* SqlClient.SqlClient;
+    const legacy = executionRun("legacy-consult");
+    const legacyTurn = {
+      ...leadTurn(legacy, "legacy-consult-turn"),
+      role: "consult",
+    };
+    const payload = encodeJson({
+      ...legacy,
+      execution: {
+        ...legacy.execution!,
+        turns: [legacyTurn],
+      },
+    });
+    yield* sql`
+      INSERT INTO team_runs (id, command_id, revision, payload)
+      VALUES (${legacy.id}, ${legacy.commandId}, ${legacy.revision}, ${payload})
+    `;
+
+    const reopened = yield* store.get(legacy.id);
+    expect(reopened.execution?.turns[0]?.role).toBe("review");
+    expect((yield* store.findByThread(legacy.execution!.leadThreadId))?.id).toBe(legacy.id);
+  }).pipe(Effect.provide(SqlitePersistenceMemory)),
 );

@@ -3,14 +3,20 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
+import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import { assert, describe, expect } from "vite-plus/test";
 
+import * as ServerConfig from "../config.ts";
+import * as ServerSettings from "../serverSettings.ts";
+import * as DesktopTelemetryReceiver from "./DesktopTelemetryReceiver.ts";
 import {
   type DesktopTelemetryReceiverHealth,
   initialDesktopTelemetryContactAt,
@@ -57,6 +63,61 @@ describe("DesktopTelemetryReceiver", () => {
 
         expect(DateTime.toEpochMillis(Option.getOrThrow(published.lastSampleAt))).toBe(2_000);
       }),
+    ),
+  );
+
+  it.effect("reports desktop supervisor disconnect when the telemetry pipe reaches EOF", () =>
+    Effect.scoped(
+      Effect.acquireUseRelease(
+        Effect.sync(() => {
+          const directory = NodeFS.mkdtempSync(
+            NodePath.join(NodeOS.tmpdir(), "t3-desktop-supervisor-test-"),
+          );
+          const path = NodePath.join(directory, "telemetry.ndjson");
+          NodeFS.writeFileSync(
+            path,
+            '{"version":1,"type":"desktopTelemetryHello","electronPid":123}\n',
+          );
+          return {
+            directory,
+            fd: NodeFS.openSync(path, "r"),
+          };
+        }),
+        ({ fd }) =>
+          Effect.gen(function* () {
+            const configContext = yield* Layer.build(
+              ServerConfig.layerTest(process.cwd(), { prefix: "t3-desktop-supervisor-config-" }),
+            );
+            const baseConfig = Context.get(configContext, ServerConfig.ServerConfig);
+            const receiver = yield* DesktopTelemetryReceiver.make().pipe(
+              Effect.provide(ServerSettings.layerTest()),
+              Effect.provideService(
+                ServerConfig.ServerConfig,
+                ServerConfig.make({
+                  ...baseConfig,
+                  mode: "desktop",
+                  desktopTelemetryFd: fd,
+                }),
+              ),
+            );
+
+            yield* receiver.awaitSupervisorDisconnect.pipe(Effect.timeout("1 second"));
+            const health = yield* receiver.health;
+            expect(health.status).toBe("stopped");
+            expect(Option.getOrNull(health.lastError)).toBe(
+              `Desktop telemetry stream on fd ${fd} closed.`,
+            );
+          }),
+        ({ directory, fd }) =>
+          Effect.sync(() => {
+            try {
+              NodeFS.closeSync(fd);
+            } catch {
+              // The receiver owns and closes the descriptor after EOF.
+            }
+            NodeFS.rmSync(directory, { recursive: true, force: true });
+          }),
+      ).pipe(Effect.provide(NodeServices.layer)),
     ),
   );
 

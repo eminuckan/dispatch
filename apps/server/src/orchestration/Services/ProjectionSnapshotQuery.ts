@@ -13,6 +13,7 @@ import type {
   MessageId,
   OrchestrationCheckpointSummary,
   OrchestrationMessage,
+  OrchestrationEvent,
   OrchestrationProject,
   OrchestrationProjectShell,
   OrchestrationReadModel,
@@ -253,6 +254,12 @@ export interface ProjectionSnapshotQueryShape {
       readonly message: OrchestrationMessage;
       readonly hasOtherUserMessages: boolean;
     }>,
+    ProjectionRepositoryError
+  >;
+
+  /** Recover accepted turn-start events whose provider side effect was not consumed before restart. */
+  readonly listPendingTurnStartEvents?: () => Effect.Effect<
+    ReadonlyArray<Extract<OrchestrationEvent, { type: "thread.turn-start-requested" }>>,
     ProjectionRepositoryError
   >;
 

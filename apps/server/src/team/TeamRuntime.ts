@@ -303,20 +303,65 @@ export const make = Effect.gen(function* () {
         .pipe(Effect.mapError(mapError));
       if (Option.isNone(detail)) continue;
       const thread = detail.value;
-      const latest = thread.latestTurn;
-      if (!latest || latest.state === "running") continue;
-      const persistedTurn = yield* turns
-        .getByTurnId({ threadId: thread.id, turnId: latest.turnId })
+      const projectedTurns = yield* turns
+        .listByThreadId({ threadId: thread.id })
         .pipe(Effect.mapError(mapError));
-      if (
-        Option.isNone(persistedTurn) ||
-        persistedTurn.value.pendingMessageId !== turn.command.message.messageId
-      )
+      const persistedTurn = projectedTurns.find(
+        (candidate) =>
+          candidate.turnId !== null &&
+          candidate.pendingMessageId === turn.command.message.messageId,
+      );
+      if (!persistedTurn) {
+        const startFailure = thread.activities.find((activity) => {
+          if (
+            activity.kind !== "provider.turn.start.failed" ||
+            typeof activity.payload !== "object" ||
+            activity.payload === null
+          )
+            return false;
+          return (
+            (activity.payload as Record<string, unknown>).requestId ===
+            turn.command.message.messageId
+          );
+        });
+        if (!startFailure) continue;
+        const payload = startFailure.payload as Record<string, unknown>;
+        const result =
+          typeof payload.detail === "string" && payload.detail.trim()
+            ? payload.detail
+            : startFailure.summary;
+        run = yield* store.update(
+          run.id,
+          run.revision,
+          (r) => {
+            const next =
+              turn.role === "worker"
+                ? receiveResult(
+                    r,
+                    turn.taskId!,
+                    r.tasks.find((t) => t.id === turn.taskId)!.generation,
+                    result,
+                  )
+                : r;
+            return {
+              ...next,
+              execution: {
+                ...next.execution!,
+                turns: next.execution!.turns.map((t) =>
+                  t.id === turn.id ? { ...t, status: "settled", result, succeeded: false } : t,
+                ),
+              },
+            };
+          },
+          "turn-start-failed",
+        );
         continue;
-      const answer = thread.messages.find((m) => m.id === latest.assistantMessageId);
-      const result = answer?.text ?? `Provider turn ended with ${latest.state}.`;
-      const succeeded = latest.state === "completed" && !!answer && !answer.streaming;
-      if (latest.state === "completed" && !succeeded) continue;
+      }
+      if (persistedTurn.state === "pending" || persistedTurn.state === "running") continue;
+      const answer = thread.messages.find((m) => m.id === persistedTurn.assistantMessageId);
+      const result = answer?.text ?? `Provider turn ended with ${persistedTurn.state}.`;
+      const succeeded = persistedTurn.state === "completed" && !!answer && !answer.streaming;
+      if (persistedTurn.state === "completed" && !succeeded) continue;
       run = yield* store.update(
         run.id,
         run.revision,

@@ -3,37 +3,30 @@ import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime"
 import { useRightPanelStore } from "../../rightPanelStore";
 import { Link } from "@tanstack/react-router";
 import type { TimelineEntry } from "../../session-logic";
-import { teamFollowUpEntries, teamAgentName, teamTurnLabel } from "./teamConversation.logic";
+import { teamConversationEntries, teamAgentName, teamTurnLabel } from "./teamConversation.logic";
 import { useEffect, useState, type ReactNode } from "react";
-import { ChevronRightIcon, RefreshCwIcon, UsersIcon } from "lucide-react";
-import type { EnvironmentId, TeamThreadView, ThreadId } from "@t3tools/contracts";
+import { ChevronRightIcon, RefreshCwIcon } from "lucide-react";
+import {
+  MessageId,
+  type EnvironmentId,
+  type TeamThreadView,
+  type ThreadId,
+} from "@t3tools/contracts";
 import { teamEnvironment } from "../../state/team";
 import { useEnvironmentQuery } from "../../state/query";
 import { Button } from "../ui/button";
 import { ScrollArea } from "../ui/scroll-area";
 import ChatMarkdown from "../ChatMarkdown";
 
-const phaseLabels = {
-  plan: "Planning",
-  workers: "Working with agents",
-  integrate: "Verifying the combined result",
-  done: "Finished",
-};
 /** Exact persisted membership owns presentation; never classify arbitrary assistant JSON. */
 export function TeamConversation({
   environmentId,
   threadId,
-  cwd,
-  bottomInset,
   children,
   entries,
-  onOpenAgents,
 }: {
   environmentId: EnvironmentId;
   threadId: ThreadId;
-  cwd: string | undefined;
-  bottomInset: number;
-  onOpenAgents: () => void;
   entries: TimelineEntry[];
   children: (entries: TimelineEntry[]) => ReactNode;
 }) {
@@ -73,19 +66,39 @@ export function TeamConversation({
       </div>
     );
   }
-  const followUps = teamFollowUpEntries(entries, run.coordinationMessageIds);
-  return (
-    <TeamChatActivity
-      run={run}
-      environmentId={environmentId}
-      threadId={threadId}
-      cwd={cwd}
-      bottomInset={bottomInset}
-      onOpenAgents={onOpenAgents}
-      error={query.error}
-      followUp={followUps.length > 0 ? children(followUps) : null}
-    />
+  const visibleEntries = teamConversationEntries(entries, run.coordinationMessageIds);
+  const isLead = run.leadThreadId === threadId;
+  const hasObjective = visibleEntries.some(
+    (entry) =>
+      entry.kind === "message" &&
+      entry.message.role === "user" &&
+      entry.message.text.trim() === run.objective.trim(),
   );
+  if (!isLead || hasObjective) return children(visibleEntries);
+  const createdAt =
+    entries.find(
+      (entry) => entry.kind === "message" && run.coordinationMessageIds.includes(entry.message.id),
+    )?.createdAt ??
+    entries[0]?.createdAt ??
+    "1970-01-01T00:00:00.000Z";
+  const objectiveId = MessageId.make(`team-objective-${run.id}`);
+  return children([
+    {
+      id: objectiveId,
+      kind: "message",
+      createdAt,
+      message: {
+        id: objectiveId,
+        role: "user",
+        text: run.objective,
+        turnId: null,
+        streaming: false,
+        createdAt,
+        updatedAt: createdAt,
+      },
+    },
+    ...visibleEntries,
+  ]);
 }
 
 function TeamActivity({
@@ -362,124 +375,5 @@ export function TeamAgentsPanel({
       refresh={query.refresh}
       error={query.error}
     />
-  );
-}
-
-function TeamChatActivity({
-  run,
-  environmentId,
-  threadId,
-  cwd,
-  bottomInset,
-  onOpenAgents,
-  error,
-  followUp,
-}: {
-  run: TeamThreadView;
-  environmentId: EnvironmentId;
-  threadId: ThreadId;
-  cwd: string | undefined;
-  bottomInset: number;
-  onOpenAgents: () => void;
-  error: string | null;
-  followUp: ReactNode;
-}) {
-  const isLead = run.leadThreadId === threadId;
-  const turns = isLead ? run.turns : run.turns.filter((turn) => turn.threadId === threadId);
-  const result = isLead
-    ? run.notice
-    : turns.findLast((turn) => turn.role === "worker" && turn.summary)?.summary;
-  const latest = turns.at(-1);
-  const active = turns.some((turn) => turn.status !== "settled");
-  return (
-    <ScrollArea className="flex-1">
-      <div
-        className="mx-auto w-full max-w-3xl space-y-5 px-5 pt-6"
-        style={{ paddingBottom: Math.max(32, bottomInset + 24) }}
-      >
-        <p className="whitespace-pre-wrap text-sm leading-relaxed">
-          {isLead
-            ? run.objective
-            : (run.tasks.find((task) => turns.some((turn) => turn.taskId === task.id))?.objective ??
-              run.objective)}
-        </p>
-        <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
-          <span role="status" aria-live="polite" className="min-w-0 truncate">
-            {latest ? (
-              <>
-                <Link
-                  to="/$environmentId/$threadId"
-                  params={{ environmentId, threadId: latest.threadId }}
-                  onClick={() =>
-                    useRightPanelStore
-                      .getState()
-                      .open({ environmentId, threadId: latest.threadId }, "agents")
-                  }
-                  className="hover:text-foreground hover:underline"
-                >
-                  {teamAgentName(run, latest.threadId)}
-                </Link>{" "}
-                · {teamTurnLabel(run, latest)}
-              </>
-            ) : (
-              phaseLabels[run.phase]
-            )}
-          </span>
-          <Button size="xs" variant="ghost" onClick={onOpenAgents}>
-            <UsersIcon className="size-3.5" />
-            Agents
-            <ChevronRightIcon className="size-3" />
-          </Button>
-        </div>
-        <details open={active} className="text-xs text-muted-foreground">
-          <summary className="w-fit cursor-pointer py-1 hover:text-foreground">
-            Team activity · {run.status}
-          </summary>
-          <div className="mt-2 space-y-2 border-l pl-3">
-            {turns.slice(-8).map((turn) => (
-              <div key={turn.id} className="flex flex-wrap items-baseline gap-x-1.5">
-                <Link
-                  to="/$environmentId/$threadId"
-                  params={{ environmentId, threadId: turn.threadId }}
-                  onClick={() =>
-                    useRightPanelStore
-                      .getState()
-                      .open({ environmentId, threadId: turn.threadId }, "agents")
-                  }
-                  className="font-medium hover:text-foreground hover:underline"
-                >
-                  {teamAgentName(run, turn.threadId)}
-                </Link>
-                <span>
-                  {turn.role === "worker" ? "worker" : "lead"} · {teamTurnLabel(run, turn)}
-                </span>
-              </div>
-            ))}
-            {turns.length > 8 && (
-              <Button size="xs" variant="ghost" onClick={onOpenAgents}>
-                View all activity
-              </Button>
-            )}
-          </div>
-        </details>
-        {error && (
-          <p role="status" className="text-xs text-destructive">
-            Activity refresh failed. Showing the last received state.
-          </p>
-        )}
-        {!isLead && run.notice && run.status !== "completed" && (
-          <p role="status" className="text-sm text-muted-foreground">
-            {run.notice}
-          </p>
-        )}
-        {result && <ChatMarkdown text={result} cwd={cwd} environmentId={environmentId} />}
-        {followUp && (
-          <section>
-            <h2 className="mb-3 text-sm font-medium">Conversation</h2>
-            <div className="relative flex h-96 flex-col">{followUp}</div>
-          </section>
-        )}
-      </div>
-    </ScrollArea>
   );
 }

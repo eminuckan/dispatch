@@ -185,6 +185,58 @@ function makeRuntimeFactory() {
   };
 }
 
+function makeConcurrentStartRuntimeFactory() {
+  const runtimes: Array<FakeCodexRuntime> = [];
+  let activeStarts = 0;
+  let maxConcurrentStarts = 0;
+  let releaseFirstStart!: () => void;
+  let resolveFirstStarted!: () => void;
+  const firstStarted = new Promise<void>((resolve) => {
+    resolveFirstStarted = resolve;
+  });
+  const firstRelease = new Promise<void>((resolve) => {
+    releaseFirstStart = resolve;
+  });
+
+  const factory = vi.fn((options: CodexSessionRuntimeOptions) => {
+    const runtime = new FakeCodexRuntime(options);
+    const ordinal = runtimes.length;
+    runtime.startImpl.mockImplementation(async () => {
+      activeStarts += 1;
+      maxConcurrentStarts = Math.max(maxConcurrentStarts, activeStarts);
+      if (ordinal === 0) {
+        resolveFirstStarted();
+        await firstRelease;
+      }
+      activeStarts -= 1;
+      return {
+        provider: ProviderDriverKind.make("codex"),
+        status: "ready" as const,
+        runtimeMode: options.runtimeMode,
+        threadId: options.threadId,
+        cwd: options.cwd,
+        ...(options.model ? { model: options.model } : {}),
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      } satisfies ProviderSession;
+    });
+    runtimes.push(runtime);
+    return Effect.succeed(runtime);
+  });
+
+  return {
+    factory,
+    firstStarted: Effect.promise(() => firstStarted),
+    releaseFirstStart: Effect.sync(() => releaseFirstStart()),
+    get maxConcurrentStarts() {
+      return maxConcurrentStarts;
+    },
+    get runtimes() {
+      return runtimes;
+    },
+  };
+}
+
 function makeScopedRuntimeFactory(options?: { readonly failConstruction?: boolean }) {
   const runtimes: Array<FakeCodexRuntime> = [];
   const releasedThreadIds: Array<ThreadId> = [];
@@ -317,6 +369,55 @@ const sessionErrorLayer = it.layer(
     Layer.provideMerge(NodeServices.layer),
   ),
 );
+
+const concurrentStartRuntimeFactory = makeConcurrentStartRuntimeFactory();
+const concurrentStartLayer = it.layer(
+  Layer.effect(
+    CodexAdapter,
+    Effect.gen(function* () {
+      const codexConfig = decodeCodexSettings({});
+      return yield* makeCodexAdapter(codexConfig, {
+        makeRuntime: concurrentStartRuntimeFactory.factory,
+      });
+    }),
+  ).pipe(
+    Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
+    Layer.provideMerge(ServerSettingsService.layerTest()),
+    Layer.provideMerge(providerSessionDirectoryTestLayer),
+    Layer.provideMerge(NodeServices.layer),
+  ),
+);
+
+concurrentStartLayer("CodexAdapterLive session lifecycle serialization", (it) => {
+  it.effect("serializes concurrent starts for the same thread", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CodexAdapter;
+      const input = {
+        provider: ProviderDriverKind.make("codex"),
+        threadId: asThreadId("thread-concurrent-start"),
+        runtimeMode: "full-access" as const,
+      };
+
+      const first = yield* adapter.startSession(input).pipe(Effect.forkChild);
+      yield* concurrentStartRuntimeFactory.firstStarted;
+      const second = yield* adapter.startSession(input).pipe(Effect.forkChild);
+      yield* Effect.yieldNow;
+      yield* Effect.yieldNow;
+
+      NodeAssert.equal(concurrentStartRuntimeFactory.maxConcurrentStarts, 1);
+      NodeAssert.equal(concurrentStartRuntimeFactory.factory.mock.calls.length, 1);
+
+      yield* concurrentStartRuntimeFactory.releaseFirstStart;
+      yield* Fiber.join(first);
+      yield* Fiber.join(second);
+
+      NodeAssert.equal(concurrentStartRuntimeFactory.maxConcurrentStarts, 1);
+      NodeAssert.equal(concurrentStartRuntimeFactory.factory.mock.calls.length, 2);
+      NodeAssert.equal(concurrentStartRuntimeFactory.runtimes[0]?.closeImpl.mock.calls.length, 1);
+      NodeAssert.equal(yield* adapter.hasSession(input.threadId), true);
+    }),
+  );
+});
 
 sessionErrorLayer("CodexAdapterLive session errors", (it) => {
   it.effect("maps missing adapter sessions to ProviderAdapterSessionNotFoundError", () =>

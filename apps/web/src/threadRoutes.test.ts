@@ -97,7 +97,7 @@ describe("threadRoutes", () => {
   it("keeps shell-only server threads in the loading state", () => {
     expect(
       resolveThreadRouteRenderState({
-        bootstrapComplete: true,
+        shellAuthoritative: true,
         serverThreadShellExists: true,
         serverThreadDetailExists: false,
         serverThreadDetailDeleted: false,
@@ -109,7 +109,7 @@ describe("threadRoutes", () => {
   it("renders server details and local drafts when they are ready", () => {
     expect(
       resolveThreadRouteRenderState({
-        bootstrapComplete: true,
+        shellAuthoritative: true,
         serverThreadShellExists: true,
         serverThreadDetailExists: true,
         serverThreadDetailDeleted: false,
@@ -118,7 +118,7 @@ describe("threadRoutes", () => {
     ).toBe("ready");
     expect(
       resolveThreadRouteRenderState({
-        bootstrapComplete: true,
+        shellAuthoritative: true,
         serverThreadShellExists: false,
         serverThreadDetailExists: false,
         serverThreadDetailDeleted: false,
@@ -127,10 +127,10 @@ describe("threadRoutes", () => {
     ).toBe("ready");
   });
 
-  it("distinguishes bootstrap loading from a missing thread", () => {
+  it("distinguishes shell synchronization from an authoritative missing thread", () => {
     expect(
       resolveThreadRouteRenderState({
-        bootstrapComplete: false,
+        shellAuthoritative: false,
         serverThreadShellExists: false,
         serverThreadDetailExists: false,
         serverThreadDetailDeleted: false,
@@ -139,7 +139,7 @@ describe("threadRoutes", () => {
     ).toBe("loading");
     expect(
       resolveThreadRouteRenderState({
-        bootstrapComplete: true,
+        shellAuthoritative: true,
         serverThreadShellExists: false,
         serverThreadDetailExists: false,
         serverThreadDetailDeleted: false,
@@ -151,8 +151,20 @@ describe("threadRoutes", () => {
   it("redirects deleted shell-only threads", () => {
     expect(
       resolveThreadRouteRenderState({
-        bootstrapComplete: true,
+        shellAuthoritative: true,
         serverThreadShellExists: true,
+        serverThreadDetailExists: false,
+        serverThreadDetailDeleted: true,
+        draftThreadExists: false,
+      }),
+    ).toBe("missing");
+  });
+
+  it("keeps deleted threads missing while the shell is synchronizing", () => {
+    expect(
+      resolveThreadRouteRenderState({
+        shellAuthoritative: false,
+        serverThreadShellExists: false,
         serverThreadDetailExists: false,
         serverThreadDetailDeleted: true,
         draftThreadExists: false,
