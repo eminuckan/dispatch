@@ -3,7 +3,9 @@
 use super::*;
 use std::io::BufRead;
 
-const OBJECT: &str = "/com/t3tools/KdeCapture/Feedback";
+const OBJECT: &str = "/com/eminuckan/dispatch/KdeCapture/Feedback";
+#[cfg(test)]
+const INTERFACE: &str = "com.eminuckan.dispatch.KdeCapture.Feedback";
 
 #[derive(Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -36,7 +38,7 @@ impl Bridge {
         }
     }
 }
-#[zbus::interface(name = "com.t3tools.KdeCapture.Feedback")]
+#[zbus::interface(name = "com.eminuckan.dispatch.KdeCapture.Feedback")]
 impl Bridge {
     // An async pending call is an event channel, not a timer or a blocking KWin call.
     async fn next(
@@ -165,7 +167,7 @@ pub(super) fn run(connection: &Connection, directory: &Path, options: &str) -> R
     });
 
     let path = directory.join("feedback.qml");
-    let name = format!("t3-capture-feedback-{}", std::process::id());
+    let name = format!("dispatch-capture-feedback-{}", std::process::id());
     let bus = serde_json::to_string(
         connection
             .unique_name()
@@ -243,13 +245,7 @@ mod tests {
             .method_timeout(DEADLINE)
             .build()
             .unwrap();
-        let unrelated = Proxy::new(
-            &stranger,
-            destination.as_str(),
-            OBJECT,
-            "com.t3tools.KdeCapture.Feedback",
-        )
-        .unwrap();
+        let unrelated = Proxy::new(&stranger, destination.as_str(), OBJECT, INTERFACE).unwrap();
         let error = unrelated.call::<_, _, String>("Next", &()).unwrap_err();
         assert!(
             matches!(&error, zbus::Error::MethodError(name, _, _) if name.as_str() == "org.freedesktop.DBus.Error.AccessDenied"),
@@ -262,13 +258,7 @@ mod tests {
         );
         assert!(finished.try_recv().is_err());
 
-        let kwin = Proxy::new(
-            &f._server,
-            destination.clone(),
-            OBJECT,
-            "com.t3tools.KdeCapture.Feedback",
-        )
-        .unwrap();
+        let kwin = Proxy::new(&f._server, destination.clone(), OBJECT, INTERFACE).unwrap();
         // Event remains responsive while Next waits. No blocking the D-Bus executor.
         let next = kwin.clone();
         let request = std::thread::spawn(move || next.call::<_, _, String>("Next", &()).unwrap());

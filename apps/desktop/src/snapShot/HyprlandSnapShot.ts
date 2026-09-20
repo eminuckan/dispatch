@@ -12,10 +12,27 @@ import { startNativeCaptureFeedback } from "./NativeCaptureFeedback.ts";
 import { HYPRLAND_CAPTURE_ACTION } from "./linuxCaptureSession.ts";
 export { isHyprlandCaptureSession } from "./linuxCaptureSession.ts";
 
+// The bundled native artifact keeps its upstream Cargo output name for build compatibility.
 export const HYPRLAND_CAPTURE_EXECUTABLE = "t3-hyprland-snap-shot";
+const INSTALLED_HYPRLAND_CAPTURE_EXECUTABLE = "dispatch-hyprland-snap-shot";
+const LEGACY_HYPRLAND_CAPTURE_DIRECTORY = "t3code";
 export type HyprlandCapturePaths = { readonly bundle: string; readonly dataHome: string };
 export function hyprlandCaptureExecutable(paths: HyprlandCapturePaths) {
-  return NodePath.join(paths.dataHome, "t3code", "hyprland-capture", HYPRLAND_CAPTURE_EXECUTABLE);
+  return NodePath.join(
+    paths.dataHome,
+    "dispatch",
+    "hyprland-capture",
+    INSTALLED_HYPRLAND_CAPTURE_EXECUTABLE,
+  );
+}
+
+function legacyHyprlandCaptureExecutable(paths: HyprlandCapturePaths) {
+  return NodePath.join(
+    paths.dataHome,
+    LEGACY_HYPRLAND_CAPTURE_DIRECTORY,
+    "hyprland-capture",
+    HYPRLAND_CAPTURE_EXECUTABLE,
+  );
 }
 
 function hyprlandCaptureBinding(appId: string, lua: boolean): string {
@@ -75,6 +92,14 @@ async function regularFile(path: string): Promise<Buffer | undefined> {
     throw new Error("The capture helper must be a regular file, not a link.");
   return NodeFSP.readFile(path);
 }
+
+async function removeLegacyRegularFile(path: string): Promise<void> {
+  const stat = await NodeFSP.lstat(path).catch((error: NodeJS.ErrnoException) => {
+    if (error.code !== "ENOENT") throw error;
+    return undefined;
+  });
+  if (stat?.isFile() && !stat.isSymbolicLink()) await NodeFSP.unlink(path);
+}
 const decodeCapabilities = Schema.decodeUnknownSync(
   Schema.fromJsonString(Schema.Struct({ feedbackAvailable: Schema.Boolean })),
 );
@@ -87,11 +112,18 @@ export class HyprlandCaptureSetup {
   async state(): Promise<DesktopCaptureHelperState> {
     try {
       const installed = await regularFile(hyprlandCaptureExecutable(this.paths));
-      if (!installed)
+      if (!installed) {
+        const legacyInstalled = await regularFile(legacyHyprlandCaptureExecutable(this.paths));
+        if (legacyInstalled)
+          return {
+            status: "update-required",
+            message: "Update the bundled capture helper to migrate the legacy installation.",
+          };
         return {
           status: "not-installed",
           message: "Install the bundled helper to capture the window you're using.",
         };
+      }
       const bundle = await regularFile(this.paths.bundle);
       if (!bundle)
         throw new Error(
@@ -117,6 +149,7 @@ export class HyprlandCaptureSetup {
   }
   async perform(action: "install-hyprland-helper" | "remove-hyprland-helper") {
     const executable = hyprlandCaptureExecutable(this.paths);
+    const legacyExecutable = legacyHyprlandCaptureExecutable(this.paths);
     const directory = NodePath.dirname(executable);
     const stat = await NodeFSP.lstat(directory).catch((error: NodeJS.ErrnoException) => {
       if (error.code !== "ENOENT") throw error;
@@ -127,6 +160,7 @@ export class HyprlandCaptureSetup {
     await regularFile(executable);
     if (action === "remove-hyprland-helper") {
       await NodeFSP.rm(executable, { force: true });
+      await removeLegacyRegularFile(legacyExecutable);
       return;
     }
     const bundle = await regularFile(this.paths.bundle);
@@ -134,9 +168,10 @@ export class HyprlandCaptureSetup {
     await NodeFSP.mkdir(directory, { recursive: true });
     const staging = await NodeFSP.mkdtemp(NodePath.join(directory, ".install-"));
     try {
-      const staged = NodePath.join(staging, HYPRLAND_CAPTURE_EXECUTABLE);
+      const staged = NodePath.join(staging, INSTALLED_HYPRLAND_CAPTURE_EXECUTABLE);
       await NodeFSP.writeFile(staged, bundle, { mode: 0o755, flag: "wx" });
       await NodeFSP.rename(staged, executable);
+      await removeLegacyRegularFile(legacyExecutable);
     } finally {
       await NodeFSP.rm(staging, { recursive: true, force: true });
     }
@@ -170,7 +205,9 @@ export async function captureHyprlandWindow(
   if (state.status !== "ready")
     throw new Error(`${state.message} Open Settings → SnapShots to continue setup.`);
   const executable = hyprlandCaptureExecutable(paths);
-  const directory = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-hyprland-capture-"));
+  const directory = await NodeFSP.mkdtemp(
+    NodePath.join(NodeOS.tmpdir(), "dispatch-hyprland-capture-"),
+  );
   const cleanup = () => NodeFSP.rm(directory, { recursive: true, force: true });
   let retained = false;
   try {

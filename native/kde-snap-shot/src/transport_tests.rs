@@ -127,8 +127,8 @@ impl LoadedScript {
         connection
             .call_method(
                 Some(destination.as_str()),
-                "/com/t3tools/KdeCapture",
-                Some("com.t3tools.KdeCapture"),
+                SCRIPT_REPLY_PATH,
+                Some(SCRIPT_REPLY_INTERFACE),
                 "Reply",
                 &(value,),
             )
@@ -239,6 +239,10 @@ fn captures_pinned_window_through_real_fd_and_cleans_scripts() {
     );
     assert_eq!(*f.state.captured_ids.lock().unwrap(), ["{window-1}"]);
     assert_eq!(f.state.unloaded.load(Ordering::SeqCst), 2);
+    let script = f.state.script.lock().unwrap().clone();
+    assert!(script.contains(SCRIPT_REPLY_PATH));
+    assert!(script.contains(SCRIPT_REPLY_INTERFACE));
+    assert!(!script.contains("com.t3tools"));
     assert!(!f.directory.join("window.js").exists());
     let mut decoder = png::Decoder::new(BufReader::new(
         std::fs::File::open(f.directory.join("capture.png")).unwrap(),

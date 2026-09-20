@@ -36,7 +36,7 @@ const window = {
 };
 
 beforeEach(async () => {
-  directory = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-kde-test-"));
+  directory = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "dispatch-kde-test-"));
   paths = {
     bundle: NodePath.join(directory, "bundled-helper"),
     dataHome: NodePath.join(directory, "user data"),
@@ -89,10 +89,17 @@ it("does not install or request screenshots during initial discovery", async () 
 it("installs offline at a stable path and verifies permissions using the installed identity", async () => {
   await setup.perform("install-kde-helper");
   const { executable, desktop } = kdeCapturePaths(paths);
+  expect(executable).toBe(
+    NodePath.join(paths.dataHome, "dispatch", "kde-capture", "dispatch-kde-snap-shot"),
+  );
+  expect(desktop).toBe(
+    NodePath.join(paths.dataHome, "applications", "com.eminuckan.dispatch.KdeCapture.desktop"),
+  );
   expect(await NodeFSP.readFile(executable, "utf8")).toBe("bundled executable");
   expect((await NodeFSP.stat(executable)).mode & 0o777).toBe(0o755);
   expect(await NodeFSP.readFile(desktop, "utf8")).toBe(kdeCaptureDesktopEntry(executable));
   expect(kdeCaptureDesktopEntry(executable)).toContain(`Exec="${executable}" check`);
+  expect(kdeCaptureDesktopEntry(executable)).toContain("X-Dispatch-Capture-Helper=true");
   expect((await setup.state()).status).toBe("ready");
   expect((await setup.state()).feedbackAvailable).toBe(true);
   expect(execute.mock.calls.map(([file, args]) => [file, args])).toEqual([
@@ -113,6 +120,53 @@ it("installs offline at a stable path and verifies permissions using the install
     [executable, ["check"]],
     [executable, ["check"]],
   ]);
+});
+
+it("detects and removes the legacy T3 helper registration when installing Dispatch", async () => {
+  const legacyExecutable = NodePath.join(
+    paths.dataHome,
+    "t3code",
+    "kde-capture",
+    "t3-kde-snap-shot",
+  );
+  const legacyDesktop = NodePath.join(
+    paths.dataHome,
+    "applications",
+    "com.t3tools.T3Code.KdeCapture.desktop",
+  );
+  await NodeFSP.mkdir(NodePath.dirname(legacyExecutable), { recursive: true });
+  await NodeFSP.mkdir(NodePath.dirname(legacyDesktop), { recursive: true });
+  await NodeFSP.copyFile(paths.bundle, legacyExecutable);
+  await NodeFSP.writeFile(
+    legacyDesktop,
+    `[Desktop Entry]\nName=Dispatch SnapShots\nX-T3Code-Capture-Helper=true\n`,
+  );
+  expect(await setup.state()).toMatchObject({ status: "update-required" });
+  await setup.perform("install-kde-helper");
+  expect((await setup.state()).status).toBe("ready");
+  await expect(NodeFSP.stat(legacyExecutable)).rejects.toMatchObject({ code: "ENOENT" });
+  await expect(NodeFSP.stat(legacyDesktop)).rejects.toMatchObject({ code: "ENOENT" });
+});
+
+it("does not remove legacy-path files claimed by an unrelated desktop entry", async () => {
+  const legacyExecutable = NodePath.join(
+    paths.dataHome,
+    "t3code",
+    "kde-capture",
+    "t3-kde-snap-shot",
+  );
+  const legacyDesktop = NodePath.join(
+    paths.dataHome,
+    "applications",
+    "com.t3tools.T3Code.KdeCapture.desktop",
+  );
+  await NodeFSP.mkdir(NodePath.dirname(legacyExecutable), { recursive: true });
+  await NodeFSP.mkdir(NodePath.dirname(legacyDesktop), { recursive: true });
+  await NodeFSP.writeFile(legacyExecutable, "foreign helper");
+  await NodeFSP.writeFile(legacyDesktop, "[Desktop Entry]\nName=Foreign helper\n");
+  await setup.perform("install-kde-helper");
+  expect(await NodeFSP.readFile(legacyExecutable, "utf8")).toBe("foreign helper");
+  expect(await NodeFSP.readFile(legacyDesktop, "utf8")).toContain("Name=Foreign helper");
 });
 
 it("does not mistake installed files for KDE authorization, or fall back to a picker on denial", async () => {
@@ -186,7 +240,7 @@ it("refuses symlink destinations and unrelated desktop entries", async () => {
   expect(await NodeFSP.readFile(paths.bundle, "utf8")).toBe("bundled executable");
 });
 
-it("captures with verified identity, cleans private files, and activates only the owning T3 PID/title", async () => {
+it("captures with verified identity, cleans private files, and activates only the owning Dispatch PID/title", async () => {
   await setup.perform("install-kde-helper");
   const capture = await captureKdeWindow(paths);
   expect(capture.png).toEqual(png);

@@ -17,6 +17,8 @@ use zbus::{
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 const SCREENSHOT: &str = "org.kde.KWin.ScreenShot2";
+const SCRIPT_REPLY_PATH: &str = "/com/eminuckan/dispatch/KdeCapture";
+const SCRIPT_REPLY_INTERFACE: &str = "com.eminuckan.dispatch.KdeCapture";
 const MAX_BYTES: usize = 128 * 1024 * 1024;
 const DEADLINE: Duration = Duration::from_secs(5);
 
@@ -75,7 +77,7 @@ struct ScriptReply {
     owner: String,
     result: mpsc::SyncSender<String>,
 }
-#[zbus::interface(name = "com.t3tools.KdeCapture")]
+#[zbus::interface(name = "com.eminuckan.dispatch.KdeCapture")]
 impl ScriptReply {
     fn reply(
         &self,
@@ -101,22 +103,24 @@ fn script(connection: &Connection, directory: &Path, body: &str) -> Result<Strin
     let owner = dbus.get_name_owner("org.kde.KWin".try_into()?)?.to_string();
     let (send, receive) = mpsc::sync_channel(1);
     connection.object_server().at(
-        "/com/t3tools/KdeCapture",
+        SCRIPT_REPLY_PATH,
         ScriptReply {
             owner,
             result: send,
         },
     )?;
     let path = directory.join("window.js");
-    let name = format!("t3-capture-{}", std::process::id());
+    let name = format!("dispatch-capture-{}", std::process::id());
     let destination = serde_json::to_string(
         connection
             .unique_name()
             .ok_or("Missing bus identity")?
             .as_str(),
     )?;
+    let reply_path = serde_json::to_string(SCRIPT_REPLY_PATH)?;
+    let reply_interface = serde_json::to_string(SCRIPT_REPLY_INTERFACE)?;
     let source = format!(
-        "function reply(value) {{ callDBus({destination}, '/com/t3tools/KdeCapture', 'com.t3tools.KdeCapture', 'Reply', JSON.stringify(value)); }}\ntry {{ {body} }} catch (error) {{ reply({{error: String(error)}}); }}"
+        "function reply(value) {{ callDBus({destination}, {reply_path}, {reply_interface}, 'Reply', JSON.stringify(value)); }}\ntry {{ {body} }} catch (error) {{ reply({{error: String(error)}}); }}"
     );
     std::fs::write(&path, source)?;
     let scripting = Proxy::new(
@@ -149,7 +153,7 @@ fn script(connection: &Connection, directory: &Path, body: &str) -> Result<Strin
     })();
     connection
         .object_server()
-        .remove::<ScriptReply, _>("/com/t3tools/KdeCapture")?;
+        .remove::<ScriptReply, _>(SCRIPT_REPLY_PATH)?;
     let _ = std::fs::remove_file(path);
     result
 }
@@ -192,7 +196,7 @@ fn check(connection: &Connection) -> Result<()> {
     let reply: zbus::Result<HashMap<String, OwnedValue>> = proxy.call(
         "CaptureWindow",
         &(
-            "t3-permission-check-not-a-window",
+            "dispatch-permission-check-not-a-window",
             HashMap::<&str, Value<'_>>::new(),
             Fd::from(sink.as_fd()),
         ),
