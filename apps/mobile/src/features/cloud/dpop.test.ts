@@ -42,6 +42,10 @@ vi.mock("expo-secure-store", () => ({
     secureStore.set(key, value);
     return Promise.resolve();
   },
+  deleteItemAsync: (key: string) => {
+    secureStore.delete(key);
+    return Promise.resolve();
+  },
 }));
 
 function proofIat(proof: string): number {
@@ -86,11 +90,32 @@ describe("mobile DPoP", () => {
 
       expect(second.thumbprint).toBe(first.thumbprint);
       expect(second.privateJwk).toEqual(first.privateJwk);
+      expect(secureStore.has("dispatch.cloud.dpop-proof-key")).toBe(true);
+      expect(secureStore.has("t3code.cloud.dpop-proof-key")).toBe(false);
+    }).pipe(Effect.provide(cryptoLayer)),
+  );
+
+  it.effect("adopts a legacy proof key without rotating it", () =>
+    Effect.gen(function* () {
+      secureStore.clear();
+      const original = yield* loadOrCreateDpopProofKeyPair();
+      const encoded = secureStore.get("dispatch.cloud.dpop-proof-key");
+      expect(encoded).toBeDefined();
+      secureStore.delete("dispatch.cloud.dpop-proof-key");
+      secureStore.set("t3code.cloud.dpop-proof-key", encoded ?? "");
+
+      const migrated = yield* loadOrCreateDpopProofKeyPair();
+
+      expect(migrated.thumbprint).toBe(original.thumbprint);
+      expect(migrated.privateJwk).toEqual(original.privateJwk);
+      expect(secureStore.get("dispatch.cloud.dpop-proof-key")).toBe(encoded);
+      expect(secureStore.has("t3code.cloud.dpop-proof-key")).toBe(false);
     }).pipe(Effect.provide(cryptoLayer)),
   );
 
   it.effect("rejects malformed persisted proof keys", () =>
     Effect.gen(function* () {
+      secureStore.clear();
       secureStore.set("t3code.cloud.dpop-proof-key", `{"kty":"EC","crv":"P-256","d":42}`);
 
       const error = yield* loadOrCreateDpopProofKeyPair().pipe(Effect.flip);

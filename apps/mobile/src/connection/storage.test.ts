@@ -12,7 +12,12 @@ vi.mock("expo-secure-store", () => ({
   setItemAsync: vi.fn(),
 }));
 
-import { CONNECTION_CATALOG_KEY, LEGACY_CONNECTIONS_KEY, make } from "./catalog-store";
+import {
+  CONNECTION_CATALOG_KEY,
+  LEGACY_CONNECTION_CATALOG_KEY,
+  LEGACY_CONNECTIONS_KEY,
+  make,
+} from "./catalog-store";
 import { MobileSecureStorage } from "../persistence/mobile-secure-storage";
 
 function makeStorage(initial: Readonly<Record<string, string>>) {
@@ -34,6 +39,29 @@ function makeStorage(initial: Readonly<Record<string, string>>) {
 }
 
 describe("mobile connection catalog storage", () => {
+  it.effect("adopts the previous T3 catalog into the Dispatch key", () =>
+    Effect.gen(function* () {
+      const memory = makeStorage({
+        [LEGACY_CONNECTION_CATALOG_KEY]: JSON.stringify({
+          schemaVersion: 1,
+          targets: [],
+          profiles: [],
+          credentials: [],
+          remoteDpopTokens: [],
+          disabledEnvironmentIds: [],
+        }),
+      });
+      const catalog = yield* make().pipe(
+        Effect.provideService(MobileSecureStorage, memory.storage),
+      );
+
+      expect((yield* catalog.read).targets).toEqual([]);
+      expect(memory.values.has(CONNECTION_CATALOG_KEY)).toBe(true);
+      expect(memory.values.has(LEGACY_CONNECTION_CATALOG_KEY)).toBe(false);
+      expect(memory.deleted).toEqual([LEGACY_CONNECTION_CATALOG_KEY]);
+    }),
+  );
+
   it.effect("recovers from a corrupt current catalog", () =>
     Effect.gen(function* () {
       const memory = makeStorage({

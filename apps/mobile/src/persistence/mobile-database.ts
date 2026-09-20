@@ -6,7 +6,9 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import type { SQLiteDatabase } from "expo-sqlite";
 
-const DATABASE_NAME = "t3code-client.db";
+const DATABASE_NAME = "dispatch-client.db";
+const LEGACY_DATABASE_NAME = "t3code-client.db";
+const DATABASE_MIGRATION_NAME = "dispatch-client.migration.db";
 const DATABASE_SCHEMA_VERSION = 1;
 const LEGACY_CACHE_DIRECTORIES = [
   "connection-shell-snapshots",
@@ -237,13 +239,68 @@ export class MobileDatabase extends Context.Service<
   }
 >()("@dispatch/mobile/persistence/MobileDatabase") {}
 
+async function openDatabaseWithLegacyMigration(): Promise<SQLiteDatabase> {
+  const SQLite = await import("expo-sqlite");
+  const databaseDirectory = SQLite.defaultDatabaseDirectory;
+  if (!databaseDirectory) {
+    return SQLite.openDatabaseAsync(DATABASE_NAME);
+  }
+
+  const { File } = await import("expo-file-system");
+  const canonicalFile = new File(databaseDirectory, DATABASE_NAME);
+  if (canonicalFile.exists) {
+    return SQLite.openDatabaseAsync(DATABASE_NAME, undefined, databaseDirectory);
+  }
+
+  const legacyFile = new File(databaseDirectory, LEGACY_DATABASE_NAME);
+  if (!legacyFile.exists) {
+    return SQLite.openDatabaseAsync(DATABASE_NAME, undefined, databaseDirectory);
+  }
+
+  const migrationFile = new File(databaseDirectory, DATABASE_MIGRATION_NAME);
+  if (migrationFile.exists) {
+    await SQLite.deleteDatabaseAsync(DATABASE_MIGRATION_NAME, databaseDirectory);
+  }
+
+  const legacyDatabase = await SQLite.openDatabaseAsync(
+    LEGACY_DATABASE_NAME,
+    undefined,
+    databaseDirectory,
+  );
+  let migrationDatabase: SQLiteDatabase | null = null;
+  try {
+    migrationDatabase = await SQLite.openDatabaseAsync(
+      DATABASE_MIGRATION_NAME,
+      undefined,
+      databaseDirectory,
+    );
+    await SQLite.backupDatabaseAsync({
+      sourceDatabase: legacyDatabase,
+      destDatabase: migrationDatabase,
+    });
+    await migrationDatabase.closeAsync();
+    migrationDatabase = null;
+    await migrationFile.move(canonicalFile);
+    return await SQLite.openDatabaseAsync(DATABASE_NAME, undefined, databaseDirectory);
+  } catch (cause) {
+    if (migrationDatabase !== null) {
+      await migrationDatabase.closeAsync().catch(() => undefined);
+    }
+    if (migrationFile.exists) {
+      await SQLite.deleteDatabaseAsync(DATABASE_MIGRATION_NAME, databaseDirectory).catch(
+        () => undefined,
+      );
+    }
+    throw cause;
+  } finally {
+    await legacyDatabase.closeAsync().catch(() => undefined);
+  }
+}
+
 const makeAvailable = Effect.gen(function* () {
   const database = yield* Effect.acquireRelease(
     Effect.tryPromise({
-      try: async () => {
-        const SQLite = await import("expo-sqlite");
-        return SQLite.openDatabaseAsync(DATABASE_NAME);
-      },
+      try: openDatabaseWithLegacyMigration,
       catch: databaseError("open"),
     }),
     (openDatabase) => Effect.promise(() => openDatabase.closeAsync()).pipe(Effect.ignore),

@@ -86,7 +86,8 @@ export interface DpopProofKeyPair {
   readonly thumbprint: string;
 }
 
-const DPOP_PROOF_KEY_STORAGE_KEY = "t3code.cloud.dpop-proof-key";
+const DPOP_PROOF_KEY_STORAGE_KEY = "dispatch.cloud.dpop-proof-key";
+const LEGACY_DPOP_PROOF_KEY_STORAGE_KEY = "t3code.cloud.dpop-proof-key";
 
 function base64UrlToBytes(value: string): Uint8Array {
   return Result.getOrThrow(Encoding.decodeBase64Url(value));
@@ -197,10 +198,18 @@ export function loadOrCreateDpopProofKeyPair(): Effect.Effect<
   Crypto.Crypto
 > {
   return Effect.gen(function* () {
-    const stored = yield* Effect.tryPromise({
+    let stored = yield* Effect.tryPromise({
       try: () => SecureStore.getItemAsync(DPOP_PROOF_KEY_STORAGE_KEY),
       catch: cloudDpopError("Could not read the DPoP proof key."),
     });
+    let loadedFromLegacy = false;
+    if (!stored) {
+      stored = yield* Effect.tryPromise({
+        try: () => SecureStore.getItemAsync(LEGACY_DPOP_PROOF_KEY_STORAGE_KEY),
+        catch: cloudDpopError("Could not read the legacy DPoP proof key."),
+      });
+      loadedFromLegacy = stored !== null;
+    }
     if (stored) {
       const storedPrivateJwk = yield* decodeDpopPrivateJwkJson(stored).pipe(
         Effect.mapError(cloudDpopError("Stored DPoP proof key is invalid.")),
@@ -219,6 +228,30 @@ export function loadOrCreateDpopProofKeyPair(): Effect.Effect<
         catch: cloudDpopError("Stored DPoP proof key is invalid."),
       });
       const thumbprint = yield* computeDpopJwkThumbprintEffect(restored.publicJwk);
+      if (loadedFromLegacy) {
+        const migration = yield* Effect.result(
+          Effect.tryPromise({
+            try: () => SecureStore.setItemAsync(DPOP_PROOF_KEY_STORAGE_KEY, stored),
+            catch: cloudDpopError("Could not migrate the legacy DPoP proof key."),
+          }),
+        );
+        if (migration._tag === "Success") {
+          yield* Effect.tryPromise({
+            try: () => SecureStore.deleteItemAsync(LEGACY_DPOP_PROOF_KEY_STORAGE_KEY),
+            catch: cloudDpopError("Could not remove the migrated legacy DPoP proof key."),
+          }).pipe(
+            Effect.catch((error) =>
+              Effect.logWarning("Could not remove the migrated legacy DPoP proof key.").pipe(
+                Effect.annotateLogs({ error }),
+              ),
+            ),
+          );
+        } else {
+          yield* Effect.logWarning("Could not migrate the legacy DPoP proof key.").pipe(
+            Effect.annotateLogs({ error: migration.failure }),
+          );
+        }
+      }
       return {
         ...restored,
         thumbprint,

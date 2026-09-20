@@ -77,6 +77,7 @@ vi.mock("expo-secure-store", () => ({
 }));
 
 vi.mock("expo-sqlite", () => ({
+  defaultDatabaseDirectory: null,
   openDatabaseAsync: vi.fn(() => Promise.resolve(mocks.database)),
 }));
 
@@ -95,7 +96,10 @@ vi.mock("react-native", () => ({
 }));
 
 import {
+  loadAgentAwarenessDeviceId,
+  loadAgentAwarenessRegistrationRecord,
   loadPreferences,
+  loadRecentThreadShortcuts,
   loadSavedConnections,
   saveConnection,
   savePreferencesPatch,
@@ -146,14 +150,14 @@ describe("mobile connection storage", () => {
     await expect(loadSavedConnections()).rejects.toMatchObject({
       _tag: "MobileSecureStorageError",
       operation: "read",
-      key: "t3code.connections",
+      key: "dispatch.connections",
       cause,
-      message: "Mobile secure storage operation read failed for key t3code.connections.",
+      message: "Mobile secure storage operation read failed for key dispatch.connections.",
     });
   });
 
   it("logs structured decode failures before using the empty fallback", async () => {
-    await mocks.setItemAsync("t3code.connections", "{");
+    await mocks.setItemAsync("dispatch.connections", "{");
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
 
     await expect(loadSavedConnections()).resolves.toEqual([]);
@@ -161,13 +165,57 @@ describe("mobile connection storage", () => {
       "[mobile-storage] ignored invalid JSON",
       expect.objectContaining({
         _tag: "MobileStorageDecodeError",
-        key: "t3code.connections",
+        key: "dispatch.connections",
         cause: expect.any(SyntaxError),
-        message: "Failed to decode mobile storage value for key t3code.connections.",
+        message: "Failed to decode mobile storage value for key dispatch.connections.",
       }),
     );
 
     warn.mockRestore();
+  });
+
+  it("adopts legacy mobile storage values into Dispatch keys without changing their data", async () => {
+    const connection = toStableSavedRemoteConnection(managedConnection);
+    await mocks.setItemAsync("t3code.connections", JSON.stringify({ connections: [connection] }));
+    await mocks.setItemAsync("t3code.agent-awareness.device-id", "legacy-device-id");
+    await mocks.setItemAsync(
+      "t3code.agent-awareness.registration",
+      JSON.stringify({ identity: "legacy-identity", signature: "legacy-signature" }),
+    );
+    await mocks.setItemAsync(
+      "t3code.recent-thread-shortcuts",
+      JSON.stringify({
+        threads: [{ environmentId: "environment-1", threadId: "thread-1", title: "Legacy thread" }],
+      }),
+    );
+
+    await expect(loadSavedConnections()).resolves.toEqual([connection]);
+    await expect(loadAgentAwarenessDeviceId()).resolves.toBe("legacy-device-id");
+    await expect(loadAgentAwarenessRegistrationRecord()).resolves.toEqual({
+      identity: "legacy-identity",
+      signature: "legacy-signature",
+    });
+    await expect(loadRecentThreadShortcuts()).resolves.toEqual([
+      { environmentId: "environment-1", threadId: "thread-1", title: "Legacy thread" },
+    ]);
+
+    expect(JSON.parse(mocks.getStoredValue("dispatch.connections") ?? "")).toEqual({
+      connections: [connection],
+    });
+    expect(mocks.getStoredValue("dispatch.agent-awareness.device-id")).toBe("legacy-device-id");
+    expect(JSON.parse(mocks.getStoredValue("dispatch.agent-awareness.registration") ?? "")).toEqual(
+      {
+        identity: "legacy-identity",
+        signature: "legacy-signature",
+      },
+    );
+    expect(JSON.parse(mocks.getStoredValue("dispatch.recent-thread-shortcuts") ?? "")).toEqual({
+      threads: [{ environmentId: "environment-1", threadId: "thread-1", title: "Legacy thread" }],
+    });
+    expect(mocks.getStoredValue("t3code.connections")).toBeNull();
+    expect(mocks.getStoredValue("t3code.agent-awareness.device-id")).toBeNull();
+    expect(mocks.getStoredValue("t3code.agent-awareness.registration")).toBeNull();
+    expect(mocks.getStoredValue("t3code.recent-thread-shortcuts")).toBeNull();
   });
 
   it("loads legacy preferences when SQLite is unavailable", async () => {
@@ -224,12 +272,25 @@ describe("mobile connection storage", () => {
   it("falls back to secure storage when SQLite cannot save preferences", async () => {
     mocks.setDatabaseFailures(true, true);
     await expect(savePreferencesPatch({ baseFontSize: 19 })).resolves.toEqual({ baseFontSize: 19 });
-    const fallback = JSON.parse(mocks.getStoredValue("t3code.preferences.fallback") ?? "") as {
+    const fallback = JSON.parse(mocks.getStoredValue("dispatch.preferences.fallback") ?? "") as {
       readonly payload: string;
       readonly updatedAt: number;
     };
     expect(JSON.parse(fallback.payload)).toEqual({ baseFontSize: 19 });
     expect(fallback.updatedAt).toEqual(expect.any(Number));
+  });
+
+  it("adopts a legacy preferences fallback when SQLite is unavailable", async () => {
+    mocks.setDatabaseFailures(true, true);
+    const legacyFallback = JSON.stringify({
+      payload: JSON.stringify({ baseFontSize: 18 }),
+      updatedAt: 20,
+    });
+    await mocks.setItemAsync("t3code.preferences.fallback", legacyFallback);
+
+    await expect(loadPreferences()).resolves.toEqual({ baseFontSize: 18 });
+    expect(mocks.getStoredValue("dispatch.preferences.fallback")).toBe(legacyFallback);
+    expect(mocks.getStoredValue("t3code.preferences.fallback")).toBeNull();
   });
 
   it("persists thread list shelf expansion preferences", async () => {

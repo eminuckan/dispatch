@@ -12,8 +12,10 @@ import * as MobileDatabase from "./mobile-database";
 import * as MobileSecureStorage from "./mobile-secure-storage";
 import { MobileStorageDecodeError, MobileStorageEncodeError } from "./mobile-storage";
 
-const PREFERENCES_KEY = "t3code.preferences";
-const PREFERENCES_FALLBACK_KEY = "t3code.preferences.fallback";
+const PREFERENCES_KEY = "dispatch.preferences";
+const LEGACY_PREFERENCES_KEY = "t3code.preferences";
+const PREFERENCES_FALLBACK_KEY = "dispatch.preferences.fallback";
+const LEGACY_PREFERENCES_FALLBACK_KEY = "t3code.preferences.fallback";
 
 export interface Preferences {
   readonly liveActivitiesEnabled?: boolean;
@@ -208,7 +210,7 @@ export const make = Effect.fn("MobilePreferencesStore.make")(function* () {
   const lock = yield* Semaphore.make(1);
   const lastUpdatedAt = yield* Ref.make(0);
 
-  const parsePayload = (raw: string | null): Preferences | null => {
+  const parsePayload = (raw: string | null, key = PREFERENCES_KEY): Preferences | null => {
     if (raw === null || !raw.trim()) return null;
     let parsed: unknown;
     try {
@@ -216,7 +218,7 @@ export const make = Effect.fn("MobilePreferencesStore.make")(function* () {
     } catch (cause) {
       console.warn(
         "[mobile-storage] ignored invalid JSON",
-        new MobileStorageDecodeError({ key: PREFERENCES_KEY, cause }),
+        new MobileStorageDecodeError({ key, cause }),
       );
       return null;
     }
@@ -225,7 +227,7 @@ export const make = Effect.fn("MobilePreferencesStore.make")(function* () {
       : null;
   };
 
-  const parseFallback = (raw: string | null): PreferencesFallback | null => {
+  const parseFallback = (raw: string | null, key: string): PreferencesFallback | null => {
     if (raw === null || !raw.trim()) return null;
     let parsed: unknown;
     try {
@@ -233,7 +235,7 @@ export const make = Effect.fn("MobilePreferencesStore.make")(function* () {
     } catch (cause) {
       console.warn(
         "[mobile-storage] ignored invalid JSON",
-        new MobileStorageDecodeError({ key: PREFERENCES_FALLBACK_KEY, cause }),
+        new MobileStorageDecodeError({ key, cause }),
       );
       return null;
     }
@@ -268,6 +270,23 @@ export const make = Effect.fn("MobilePreferencesStore.make")(function* () {
     return [next, next] as const;
   });
 
+  const removeStorageKey = (key: string, message: string) =>
+    secureStorage
+      .removeItem(key)
+      .pipe(
+        Effect.catch((error) =>
+          Effect.logWarning(message).pipe(Effect.annotateLogs({ error, key })),
+        ),
+      );
+
+  const removeFallbackKeys = Effect.all([
+    removeStorageKey(PREFERENCES_FALLBACK_KEY, "Could not remove the mobile preferences fallback."),
+    removeStorageKey(
+      LEGACY_PREFERENCES_FALLBACK_KEY,
+      "Could not remove the legacy mobile preferences fallback.",
+    ),
+  ]).pipe(Effect.asVoid);
+
   const saveJson = Effect.fn("MobilePreferencesStore.saveJson")(function* (
     payload: string,
     updatedAt?: number,
@@ -281,17 +300,13 @@ export const make = Effect.fn("MobilePreferencesStore.make")(function* () {
       );
       const fallback = yield* encode(PREFERENCES_FALLBACK_KEY, { payload, updatedAt: timestamp });
       yield* secureStorage.setItem(PREFERENCES_FALLBACK_KEY, fallback);
+      yield* removeStorageKey(
+        LEGACY_PREFERENCES_FALLBACK_KEY,
+        "Could not remove the migrated legacy mobile preferences fallback.",
+      );
       return;
     }
-    yield* secureStorage
-      .removeItem(PREFERENCES_FALLBACK_KEY)
-      .pipe(
-        Effect.catch((error) =>
-          Effect.logWarning("Could not remove the mobile preferences fallback.").pipe(
-            Effect.annotateLogs({ error }),
-          ),
-        ),
-      );
+    yield* removeFallbackKeys;
   });
 
   const loadUnlocked = Effect.gen(function* () {
@@ -308,6 +323,7 @@ export const make = Effect.fn("MobilePreferencesStore.make")(function* () {
 
     const fallbackResult = yield* Effect.result(secureStorage.getItem(PREFERENCES_FALLBACK_KEY));
     let fallbackJson: string | null = null;
+    let fallbackKey = PREFERENCES_FALLBACK_KEY;
     if (fallbackResult._tag === "Success") {
       fallbackJson = fallbackResult.success;
     } else if (Option.isNone(storedJson)) {
@@ -318,7 +334,23 @@ export const make = Effect.fn("MobilePreferencesStore.make")(function* () {
       );
     }
 
-    const fallback = parseFallback(fallbackJson);
+    if (fallbackJson === null) {
+      const legacyFallbackResult = yield* Effect.result(
+        secureStorage.getItem(LEGACY_PREFERENCES_FALLBACK_KEY),
+      );
+      if (legacyFallbackResult._tag === "Success") {
+        fallbackJson = legacyFallbackResult.success;
+        fallbackKey = LEGACY_PREFERENCES_FALLBACK_KEY;
+      } else if (Option.isNone(storedJson)) {
+        return yield* legacyFallbackResult.failure;
+      } else {
+        yield* Effect.logWarning("Could not inspect the legacy mobile preferences fallback.").pipe(
+          Effect.annotateLogs({ error: legacyFallbackResult.failure }),
+        );
+      }
+    }
+
+    const fallback = parseFallback(fallbackJson, fallbackKey);
     const storedPreferences = Option.isSome(storedJson)
       ? parsePayload(storedJson.value.payload)
       : null;
@@ -331,38 +363,33 @@ export const make = Effect.fn("MobilePreferencesStore.make")(function* () {
     if (fallbackIsNewer) {
       parsed = fallback.preferences;
       yield* Ref.update(lastUpdatedAt, (last) => Math.max(last, fallback.updatedAt));
-      if (databaseAvailable) yield* saveJson(fallback.payload, fallback.updatedAt);
+      if (databaseAvailable) {
+        yield* saveJson(fallback.payload, fallback.updatedAt);
+      } else if (fallbackKey === LEGACY_PREFERENCES_FALLBACK_KEY && fallbackJson !== null) {
+        yield* secureStorage.setItem(PREFERENCES_FALLBACK_KEY, fallbackJson);
+        yield* removeStorageKey(
+          LEGACY_PREFERENCES_FALLBACK_KEY,
+          "Could not remove the migrated legacy mobile preferences fallback.",
+        );
+      }
     } else if (storedPreferences !== null && Option.isSome(storedJson)) {
       parsed = storedPreferences;
       yield* Ref.update(lastUpdatedAt, (last) => Math.max(last, storedJson.value.updatedAt));
       if (fallbackJson !== null) {
-        yield* secureStorage
-          .removeItem(PREFERENCES_FALLBACK_KEY)
-          .pipe(
-            Effect.catch((error) =>
-              Effect.logWarning("Could not remove a stale mobile preferences fallback.").pipe(
-                Effect.annotateLogs({ error }),
-              ),
-            ),
-          );
+        yield* removeFallbackKeys;
       }
     }
 
     if (parsed === null) {
-      const legacyJson = yield* secureStorage.getItem(PREFERENCES_KEY);
-      const legacyPreferences = parsePayload(legacyJson);
+      const legacyJson = yield* secureStorage.getItem(LEGACY_PREFERENCES_KEY);
+      const legacyPreferences = parsePayload(legacyJson, LEGACY_PREFERENCES_KEY);
       parsed = legacyPreferences;
       if (legacyJson !== null && legacyPreferences !== null && databaseAvailable) {
         yield* saveJson(legacyJson);
-        yield* secureStorage
-          .removeItem(PREFERENCES_KEY)
-          .pipe(
-            Effect.catch((error) =>
-              Effect.logWarning("Could not remove migrated mobile preferences.").pipe(
-                Effect.annotateLogs({ error }),
-              ),
-            ),
-          );
+        yield* removeStorageKey(
+          LEGACY_PREFERENCES_KEY,
+          "Could not remove migrated mobile preferences.",
+        );
       }
     }
 
