@@ -61,7 +61,7 @@ function mockProcess(exit: number | PlatformError.PlatformError) {
 
 const devServerInput = {
   mode: "dev:server",
-  t3Home: "/tmp/t3code-dev-runner",
+  homeDir: "/tmp/dispatch-dev-runner",
   browser: undefined,
   autoBootstrapProjectFromCwd: undefined,
   logWebSocketEvents: undefined,
@@ -161,7 +161,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           },
           serverOffset: 0,
           webOffset: 0,
-          t3Home: undefined,
+          homeDir: undefined,
           browser: undefined,
           autoBootstrapProjectFromCwd: undefined,
           logWebSocketEvents: undefined,
@@ -185,7 +185,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           baseEnv: {},
           serverOffset: 0,
           webOffset: 0,
-          t3Home: undefined,
+          homeDir: undefined,
           browser: undefined,
           autoBootstrapProjectFromCwd: undefined,
           logWebSocketEvents: undefined,
@@ -208,7 +208,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           baseEnv: {},
           serverOffset: 0,
           webOffset: 0,
-          t3Home: undefined,
+          homeDir: undefined,
           browser: true,
           autoBootstrapProjectFromCwd: undefined,
           logWebSocketEvents: undefined,
@@ -229,7 +229,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           baseEnv: { DISPATCH_NO_BROWSER: "0", T3CODE_NO_BROWSER: "0" },
           serverOffset: 0,
           webOffset: 0,
-          t3Home: undefined,
+          homeDir: undefined,
           browser: false,
           autoBootstrapProjectFromCwd: undefined,
           logWebSocketEvents: undefined,
@@ -251,7 +251,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           baseEnv: {},
           serverOffset: 0,
           webOffset: 0,
-          t3Home: "/tmp/custom-t3",
+          homeDir: "/tmp/custom-dispatch",
           browser: false,
           autoBootstrapProjectFromCwd: false,
           logWebSocketEvents: true,
@@ -260,8 +260,8 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           devUrl: new URL("http://localhost:7331"),
         });
 
-        assert.equal(env.DISPATCH_HOME, path.resolve("/tmp/custom-t3"));
-        assert.equal(env.T3CODE_HOME, path.resolve("/tmp/custom-t3"));
+        assert.equal(env.DISPATCH_HOME, path.resolve("/tmp/custom-dispatch"));
+        assert.equal(env.T3CODE_HOME, path.resolve("/tmp/custom-dispatch"));
         assert.equal(env.DISPATCH_PORT, "4222");
         assert.equal(env.T3CODE_PORT, "4222");
         assert.equal(env.VITE_HTTP_URL, "http://localhost:4222");
@@ -288,7 +288,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           },
           serverOffset: 0,
           webOffset: 0,
-          t3Home: undefined,
+          homeDir: undefined,
           browser: undefined,
           autoBootstrapProjectFromCwd: undefined,
           logWebSocketEvents: undefined,
@@ -312,7 +312,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           },
           serverOffset: 0,
           webOffset: 0,
-          t3Home: undefined,
+          homeDir: undefined,
           browser: undefined,
           autoBootstrapProjectFromCwd: undefined,
           logWebSocketEvents: undefined,
@@ -338,7 +338,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           },
           serverOffset: 0,
           webOffset: 0,
-          t3Home: undefined,
+          homeDir: undefined,
           browser: undefined,
           autoBootstrapProjectFromCwd: undefined,
           logWebSocketEvents: false,
@@ -352,7 +352,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
       }),
     );
 
-    it.effect("uses custom t3Home when provided", () =>
+    it.effect("uses custom homeDir when provided", () =>
       Effect.gen(function* () {
         const path = yield* Path.Path;
         const env = yield* createDevRunnerEnv({
@@ -360,7 +360,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           baseEnv: {},
           serverOffset: 0,
           webOffset: 0,
-          t3Home: "/tmp/my-t3",
+          homeDir: "/tmp/my-dispatch",
           browser: undefined,
           autoBootstrapProjectFromCwd: undefined,
           logWebSocketEvents: undefined,
@@ -369,8 +369,8 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           devUrl: undefined,
         });
 
-        assert.equal(env.DISPATCH_HOME, path.resolve("/tmp/my-t3"));
-        assert.equal(env.T3CODE_HOME, path.resolve("/tmp/my-t3"));
+        assert.equal(env.DISPATCH_HOME, path.resolve("/tmp/my-dispatch"));
+        assert.equal(env.T3CODE_HOME, path.resolve("/tmp/my-dispatch"));
       }),
     );
 
@@ -395,7 +395,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           },
           serverOffset: 0,
           webOffset: 0,
-          t3Home: "/tmp/my-t3",
+          homeDir: "/tmp/my-dispatch",
           browser: true,
           autoBootstrapProjectFromCwd: undefined,
           logWebSocketEvents: undefined,
@@ -404,7 +404,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           devUrl: undefined,
         });
 
-        assert.equal(env.T3CODE_HOME, path.resolve("/tmp/my-t3"));
+        assert.equal(env.T3CODE_HOME, path.resolve("/tmp/my-dispatch"));
         assert.equal(env.PORT, "5733");
         assert.equal(env.VITE_DEV_SERVER_URL, "http://127.0.0.1:5733");
         assert.equal(env.HOST, "127.0.0.1");
@@ -430,7 +430,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           baseEnv: {},
           serverOffset: 0,
           webOffset: 0,
-          t3Home: undefined,
+          homeDir: undefined,
           browser: undefined,
           autoBootstrapProjectFromCwd: undefined,
           logWebSocketEvents: undefined,
@@ -459,7 +459,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
             },
             serverOffset: 0,
             webOffset: 0,
-            t3Home: undefined,
+            homeDir: undefined,
             browser: undefined,
             autoBootstrapProjectFromCwd: undefined,
             logWebSocketEvents: undefined,
@@ -490,7 +490,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           baseEnv: { DISPATCH_SINGLE_ORIGIN_DEV: "1", T3CODE_SINGLE_ORIGIN_DEV: "1" },
           serverOffset: 0,
           webOffset: 0,
-          t3Home: undefined,
+          homeDir: undefined,
           browser: undefined,
           autoBootstrapProjectFromCwd: undefined,
           logWebSocketEvents: undefined,
@@ -512,7 +512,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           baseEnv: { DISPATCH_SINGLE_ORIGIN_DEV: "1", T3CODE_SINGLE_ORIGIN_DEV: "1" },
           serverOffset: 0,
           webOffset: 0,
-          t3Home: undefined,
+          homeDir: undefined,
           browser: undefined,
           autoBootstrapProjectFromCwd: undefined,
           logWebSocketEvents: undefined,
@@ -538,7 +538,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
             baseEnv: { HOST: "0.0.0.0" },
             serverOffset: 0,
             webOffset: 0,
-            t3Home: undefined,
+            homeDir: undefined,
             browser: undefined,
             autoBootstrapProjectFromCwd: undefined,
             logWebSocketEvents: undefined,
@@ -561,7 +561,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           baseEnv: { HOST: "0.0.0.0" },
           serverOffset: 0,
           webOffset: 0,
-          t3Home: undefined,
+          homeDir: undefined,
           browser: undefined,
           autoBootstrapProjectFromCwd: undefined,
           logWebSocketEvents: undefined,
@@ -583,7 +583,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           baseEnv: { HOST: "0.0.0.0" },
           serverOffset: 0,
           webOffset: 0,
-          t3Home: undefined,
+          homeDir: undefined,
           browser: undefined,
           autoBootstrapProjectFromCwd: undefined,
           logWebSocketEvents: undefined,
@@ -603,7 +603,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           baseEnv: {},
           serverOffset: 0,
           webOffset: 0,
-          t3Home: undefined,
+          homeDir: undefined,
           browser: undefined,
           autoBootstrapProjectFromCwd: undefined,
           logWebSocketEvents: undefined,
@@ -959,7 +959,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           baseEnv: { T3CODE_HOME: "/home/user/.t3" },
           serverOffset: 0,
           webOffset: 0,
-          t3Home: undefined,
+          homeDir: undefined,
           browser: undefined,
           autoBootstrapProjectFromCwd: undefined,
           logWebSocketEvents: undefined,
@@ -1332,7 +1332,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
       );
 
       const spawnedHome = (input: {
-        readonly t3Home: string | undefined;
+        readonly homeDir: string | undefined;
         readonly cwd: string;
         readonly ambientHome: string | undefined;
         readonly ambientDispatchHome?: string | undefined;
@@ -1351,7 +1351,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
             }),
           );
 
-          yield* runDevRunnerWithInput({ ...devServerInput, t3Home: input.t3Home }).pipe(
+          yield* runDevRunnerWithInput({ ...devServerInput, homeDir: input.homeDir }).pipe(
             Effect.provide(Layer.mergeAll(emptyConfigLayer, netServiceLayer, spawnerLayer)),
             Effect.provideService(HostProcessPlatform, "linux"),
             Effect.provideService(HostProcessWorkingDirectory, input.cwd),
@@ -1371,7 +1371,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           const path = yield* Path.Path;
           const root = yield* makeWorktree;
           const home = yield* spawnedHome({
-            t3Home: "/tmp/explicit-home",
+            homeDir: "/tmp/explicit-home",
             cwd: root,
             ambientDispatchHome: "/home/user/.dispatch",
             ambientHome: "/home/user/.t3",
@@ -1385,7 +1385,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           const path = yield* Path.Path;
           const root = yield* makeWorktree;
           const home = yield* spawnedHome({
-            t3Home: "   ",
+            homeDir: "   ",
             cwd: root,
             ambientHome: "/home/user/.t3",
           });
@@ -1398,7 +1398,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           const path = yield* Path.Path;
           const root = yield* makeWorktree;
           const home = yield* spawnedHome({
-            t3Home: undefined,
+            homeDir: undefined,
             cwd: root,
             ambientDispatchHome: "/home/user/.dispatch-explicit",
             ambientHome: "/home/user/.t3",
@@ -1412,7 +1412,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           const path = yield* Path.Path;
           const root = yield* makeWorktree;
           const home = yield* spawnedHome({
-            t3Home: undefined,
+            homeDir: undefined,
             cwd: root,
             ambientHome: "/home/user/.t3",
           });
@@ -1426,7 +1426,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           const root = yield* makeWorktree;
           NodeFS.mkdirSync(NodePath.join(root, ".t3"));
           const home = yield* spawnedHome({
-            t3Home: undefined,
+            homeDir: undefined,
             cwd: root,
             ambientHome: "/home/user/.t3",
           });
@@ -1442,7 +1442,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           NodeFS.mkdirSync(NodePath.join(root, ".t3"));
           NodeFS.mkdirSync(NodePath.join(root, ".dispatch"));
           const home = yield* spawnedHome({
-            t3Home: undefined,
+            homeDir: undefined,
             cwd: root,
             ambientHome: "/home/user/.t3",
           });
@@ -1454,7 +1454,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
         Effect.gen(function* () {
           const path = yield* Path.Path;
           const home = yield* spawnedHome({
-            t3Home: undefined,
+            homeDir: undefined,
             cwd: NodeOS.tmpdir(),
             ambientHome: "/home/user/.t3",
           });
@@ -1466,7 +1466,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
         Effect.gen(function* () {
           const path = yield* Path.Path;
           const home = yield* spawnedHome({
-            t3Home: undefined,
+            homeDir: undefined,
             cwd: NodeOS.tmpdir(),
             ambientDispatchHome: "/home/user/.dispatch",
             ambientHome: "/home/user/.t3",
@@ -1478,7 +1478,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
       it.effect("leaves the home implicit with no worktree and no ambient value", () =>
         Effect.gen(function* () {
           const home = yield* spawnedHome({
-            t3Home: undefined,
+            homeDir: undefined,
             cwd: NodeOS.tmpdir(),
             ambientHome: undefined,
           });

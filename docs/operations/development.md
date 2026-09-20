@@ -80,7 +80,7 @@ openssl rand -hex 32
 Put that value in the main checkout's gitignored `.env`:
 
 ```dotenv
-T3CODE_DEV_AUTH_TOKEN=<the value generated above>
+DISPATCH_DEV_AUTH_TOKEN=<the value generated above>
 ```
 
 The `t3.json` Setup Worktree commands on Unix and Windows link that file to each worktree's
@@ -90,13 +90,15 @@ environment values override `.env`, so no per-worktree export is needed after se
 For a manual worktree or launcher without that link, export the same fixed value instead:
 
 ```sh
-export T3CODE_DEV_AUTH_TOKEN="<the value generated above>"
+export DISPATCH_DEV_AUTH_TOKEN="<the value generated above>"
 ```
 
 Do not generate a new value at startup. Start or restart `vp run dev --share` after configuration,
 then open its printed startup pairing URL once per browser profile on that hostname. Later web dev
 servers on the same hostname accept the shared cookie across ports. The cookie expires after 30
 days. Reload an old tab if its URL now serves a replacement environment.
+
+`T3CODE_DEV_AUTH_TOKEN` remains accepted as a compatibility alias for existing setups.
 
 The token and startup pairing URLs are reusable administrative secrets. Never put them in a
 commit, pull request, or public output. Every server still seeds its own auth database record at

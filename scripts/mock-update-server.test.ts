@@ -1,12 +1,13 @@
 import { NodeHttpServer, NodeServices } from "@effect/platform-node";
 import { assert, it } from "@effect/vitest";
+import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import { HttpClient, HttpRouter } from "effect/unstable/http";
 
-import { makeMockUpdateRouteLayer } from "./mock-update-server.ts";
+import { makeMockUpdateRouteLayer, resolveMockUpdateServerConfig } from "./mock-update-server.ts";
 import { symlinksSupported } from "@dispatch/shared/testing/symlinks";
 
 const withMockUpdateServer = <A, E, R>(rootRealPath: string, effect: Effect.Effect<A, E, R>) =>
@@ -20,6 +21,52 @@ const withMockUpdateServer = <A, E, R>(rootRealPath: string, effect: Effect.Effe
   );
 
 it.layer(NodeServices.layer)("mock-update-server", (it) => {
+  it.effect("prefers Dispatch config and falls back to legacy mock update env", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const canonicalRoot = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "dispatch-mock-update-config-",
+        });
+        const legacyRoot = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "dispatch-mock-update-legacy-config-",
+        });
+
+        const canonical = yield* resolveMockUpdateServerConfig.pipe(
+          Effect.provide(
+            ConfigProvider.layer(
+              ConfigProvider.fromEnv({
+                env: {
+                  DISPATCH_DESKTOP_MOCK_UPDATE_SERVER_PORT: "4100",
+                  T3CODE_DESKTOP_MOCK_UPDATE_SERVER_PORT: "4200",
+                  DISPATCH_DESKTOP_MOCK_UPDATE_SERVER_ROOT: canonicalRoot,
+                  T3CODE_DESKTOP_MOCK_UPDATE_SERVER_ROOT: legacyRoot,
+                },
+              }),
+            ),
+          ),
+        );
+        const legacy = yield* resolveMockUpdateServerConfig.pipe(
+          Effect.provide(
+            ConfigProvider.layer(
+              ConfigProvider.fromEnv({
+                env: {
+                  T3CODE_DESKTOP_MOCK_UPDATE_SERVER_PORT: "4200",
+                  T3CODE_DESKTOP_MOCK_UPDATE_SERVER_ROOT: legacyRoot,
+                },
+              }),
+            ),
+          ),
+        );
+
+        assert.equal(canonical.port, 4100);
+        assert.equal(canonical.rootRealPath, yield* fileSystem.realPath(canonicalRoot));
+        assert.equal(legacy.port, 4200);
+        assert.equal(legacy.rootRealPath, yield* fileSystem.realPath(legacyRoot));
+      }),
+    ),
+  );
+
   it.effect("serves files from the configured root", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;

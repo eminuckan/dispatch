@@ -3,7 +3,8 @@ const path = require("node:path");
 
 const ARTIFACT_NAME = "thread-transfer-results";
 const RESULT_FILE = "thread-transfer-result.json";
-const COMMENT_MARKER = "<!-- t3-thread-transfer-report -->";
+const COMMENT_MARKER = "<!-- dispatch-thread-transfer-report -->";
+const LEGACY_COMMENT_MARKER = "<!-- t3-thread-transfer-report -->";
 const PROVIDERS = ["codex", "claudeAgent"];
 const OBSERVED_KEYS = [
   "totalWireBytes",
@@ -30,6 +31,10 @@ const SCENARIO_KEYS = [
 ];
 
 function resultShaMarker(sha) {
+  return `<!-- dispatch-thread-transfer-result-sha:${sha} -->`;
+}
+
+function legacyResultShaMarker(sha) {
   return `<!-- t3-thread-transfer-result-sha:${sha} -->`;
 }
 
@@ -326,11 +331,13 @@ async function upsertComment(github, context, pullNumber, body, options = {}) {
   });
   const existing = comments.find(
     (comment) =>
-      comment.user?.login === "github-actions[bot]" && comment.body?.includes(COMMENT_MARKER),
+      comment.user?.login === "github-actions[bot]" &&
+      (comment.body?.includes(COMMENT_MARKER) || comment.body?.includes(LEGACY_COMMENT_MARKER)),
   );
   if (
     options.preserveResultSha &&
-    existing?.body?.includes(resultShaMarker(options.preserveResultSha))
+    (existing?.body?.includes(resultShaMarker(options.preserveResultSha)) ||
+      existing?.body?.includes(legacyResultShaMarker(options.preserveResultSha)))
   ) {
     return;
   }

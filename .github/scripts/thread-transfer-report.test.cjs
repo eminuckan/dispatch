@@ -79,10 +79,10 @@ test("renders baseline, impact, ceiling, and ceiling changes", () => {
   assert.match(comment, /\+9\.8 KiB \(\+4\.0%\)/);
   assert.match(comment, /This PR changes transfer ceilings/);
   assert.match(comment, /312\.5 KiB → 322\.3 KiB/);
-  assert.match(comment, /<!-- t3-thread-transfer-report -->/);
+  assert.match(comment, /<!-- dispatch-thread-transfer-report -->/);
   assert.match(
     comment,
-    /<!-- t3-thread-transfer-result-sha:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb -->/,
+    /<!-- dispatch-thread-transfer-result-sha:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb -->/,
   );
 });
 
@@ -289,6 +289,52 @@ test("preserves a successful result when a same-SHA rerun has no artifact", asyn
 
   assert.equal(published, true);
   assert.equal(updatedComment, false);
+});
+
+test("updates an existing legacy bot comment in place", async () => {
+  let createdComment = false;
+  let updatedComment;
+  const sha = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+  const body = `<!-- dispatch-thread-transfer-report -->\n<!-- dispatch-thread-transfer-result-sha:${sha} -->`;
+  const published = await upsertCommentForCurrentHead(
+    {
+      paginate: async () => [
+        {
+          id: 7,
+          user: { login: "github-actions[bot]" },
+          body: "<!-- t3-thread-transfer-report -->\n<!-- t3-thread-transfer-result-sha:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa -->",
+        },
+      ],
+      rest: {
+        issues: {
+          listComments: () => {},
+          createComment: () => {
+            createdComment = true;
+          },
+          updateComment: async (input) => {
+            updatedComment = input;
+          },
+        },
+        pulls: {
+          get: async () => ({ data: { head: { sha } } }),
+        },
+      },
+    },
+    { repo: { owner: "pingdotgg", repo: "t3code" } },
+    { info: () => {} },
+    5350,
+    sha,
+    body,
+  );
+
+  assert.equal(published, true);
+  assert.equal(createdComment, false);
+  assert.deepEqual(updatedComment, {
+    owner: "pingdotgg",
+    repo: "t3code",
+    comment_id: 7,
+    body,
+  });
 });
 
 test("accepts V2 without comparing it to the V1 scenario", () => {

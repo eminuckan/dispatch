@@ -6,6 +6,7 @@ import { PNG } from "pngjs";
 import showcaseConfig, {
   DEFAULT_SHOWCASE_THEME,
   resolveShowcaseAndroidAbi,
+  resolveShowcaseAndroidAbiFromEnvironment,
   SHOWCASE_THEMES,
   type ShowcaseConfig,
   type ShowcaseStoreAssetSpec,
@@ -136,7 +137,18 @@ it("parses validation-only mode", () => {
 it("selects an explicit CI Android ABI without changing the local default", () => {
   assert.equal(resolveShowcaseAndroidAbi(undefined), "arm64-v8a");
   assert.equal(resolveShowcaseAndroidAbi("x86_64"), "x86_64");
-  assert.throws(() => resolveShowcaseAndroidAbi("mips"), /Unsupported T3_SHOWCASE_ANDROID_ABI/u);
+  assert.throws(
+    () => resolveShowcaseAndroidAbi("mips"),
+    /Unsupported DISPATCH_SHOWCASE_ANDROID_ABI/u,
+  );
+  assert.equal(
+    resolveShowcaseAndroidAbiFromEnvironment({
+      DISPATCH_SHOWCASE_ANDROID_ABI: "x86_64",
+      T3_SHOWCASE_ANDROID_ABI: "x86",
+    }),
+    "x86_64",
+  );
+  assert.equal(resolveShowcaseAndroidAbiFromEnvironment({ T3_SHOWCASE_ANDROID_ABI: "x86" }), "x86");
 });
 
 it("uses platform-correct default Android SDK roots", () => {

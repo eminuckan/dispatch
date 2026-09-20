@@ -948,7 +948,7 @@ interface StagePackageJson {
   readonly name: string;
   readonly version: string;
   readonly buildVersion: string;
-  readonly t3codeCommitHash: string;
+  readonly dispatchCommitHash: string;
   readonly private: true;
   readonly packageManager: string;
   readonly description: string;
@@ -3714,7 +3714,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     name: "dispatch",
     version: appVersion,
     buildVersion: appVersion,
-    t3codeCommitHash: commitHash,
+    dispatchCommitHash: commitHash,
     private: true,
     packageManager: rootPackageJson.packageManager,
     description: "Dispatch desktop build",

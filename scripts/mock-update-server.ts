@@ -14,12 +14,16 @@ interface MockUpdateServerConfig {
   readonly rootRealPath: string;
 }
 
-const resolveMockUpdateServerConfig = Effect.gen(function* () {
+export const resolveMockUpdateServerConfig = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const config = yield* Config.all({
-    port: Config.Port("T3CODE_DESKTOP_MOCK_UPDATE_SERVER_PORT").pipe(Config.withDefault(3000)),
-    root: Config.String("T3CODE_DESKTOP_MOCK_UPDATE_SERVER_ROOT").pipe(
+    port: Config.Port("DISPATCH_DESKTOP_MOCK_UPDATE_SERVER_PORT").pipe(
+      Config.orElse(() => Config.Port("T3CODE_DESKTOP_MOCK_UPDATE_SERVER_PORT")),
+      Config.withDefault(3000),
+    ),
+    root: Config.String("DISPATCH_DESKTOP_MOCK_UPDATE_SERVER_ROOT").pipe(
+      Config.orElse(() => Config.String("T3CODE_DESKTOP_MOCK_UPDATE_SERVER_ROOT")),
       Config.withDefault("../release-mock"),
     ),
   });

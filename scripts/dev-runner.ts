@@ -97,7 +97,7 @@ const MODE_ARGS = {
 
 type DevMode = keyof typeof MODE_ARGS;
 /**
- * `role` matters because only the backend honours `--host`/`T3CODE_HOST`; the
+ * `role` matters because only the backend honours `--host`/`DISPATCH_HOST`; the
  * web port is always loopback. Passed explicitly rather than inferred from the
  * port number, which stops distinguishing them under a large port offset.
  */
@@ -293,7 +293,7 @@ interface CreateDevRunnerEnvInput {
   readonly baseEnv: NodeJS.ProcessEnv;
   readonly serverOffset: number;
   readonly webOffset: number;
-  readonly t3Home: string | undefined;
+  readonly homeDir: string | undefined;
   readonly browser: boolean | undefined;
   readonly autoBootstrapProjectFromCwd: boolean | undefined;
   readonly logWebSocketEvents: boolean | undefined;
@@ -317,7 +317,7 @@ export function createDevRunnerEnv({
   baseEnv,
   serverOffset,
   webOffset,
-  t3Home,
+  homeDir,
   browser,
   autoBootstrapProjectFromCwd,
   logWebSocketEvents,
@@ -328,9 +328,9 @@ export function createDevRunnerEnv({
   return Effect.gen(function* () {
     const serverPort = port ?? BASE_SERVER_PORT + serverOffset;
     const webPort = BASE_WEB_PORT + webOffset;
-    // Precedence is resolved by the caller; an unset t3Home here genuinely
+    // Precedence is resolved by the caller; an unset homeDir here genuinely
     // means "let the server use its canonical/adopted main-checkout default".
-    const configuredBaseDir = t3Home?.trim() || undefined;
+    const configuredBaseDir = homeDir?.trim() || undefined;
     const path = yield* Path.Path;
     const resolvedBaseDir =
       configuredBaseDir === undefined ? undefined : path.resolve(configuredBaseDir);
@@ -351,9 +351,9 @@ export function createDevRunnerEnv({
     }
 
     // A dev-runner server is never launcher-managed. When the shell that runs
-    // this script was itself spawned by the machine's managed t3 service (an
+    // this script was itself spawned by the machine's managed Dispatch service (an
     // agent working inside Dispatch), these leak through and the child server
-    // fails startup with "The service launcher started a different t3 version"
+    // fails startup when the inherited launcher context belongs to another version
     // (serviceLauncherClient.ts resolveStartup).
     delete output.T3_SERVICE_LAUNCHER_CONTEXT;
     delete output.T3_BOOT_SERVICE_UNIT;
@@ -633,7 +633,7 @@ export function resolveModePortOffsets<R = NetService.NetService>({
 
 interface DevRunnerCliInput {
   readonly mode: DevMode;
-  readonly t3Home: string | undefined;
+  readonly homeDir: string | undefined;
   readonly browser: boolean | undefined;
   readonly autoBootstrapProjectFromCwd: boolean | undefined;
   readonly logWebSocketEvents: boolean | undefined;
@@ -696,8 +696,8 @@ export function runDevRunnerWithInput(input: DevRunnerCliInput) {
     // Trim before choosing: `--home-dir ""` is not a selection, and treating it
     // as one would skip the worktree default and land on the shared home —
     // exactly the outcome this precedence exists to prevent.
-    const resolvedDevHome =
-      (input.t3Home?.trim() || undefined) ??
+    const resolvedDispatchHome =
+      (input.homeDir?.trim() || undefined) ??
       (hostEnvironment.DISPATCH_HOME?.trim() || undefined) ??
       worktreeHome ??
       (hostEnvironment.T3CODE_HOME?.trim() || undefined);
@@ -706,7 +706,7 @@ export function runDevRunnerWithInput(input: DevRunnerCliInput) {
       baseEnv: hostEnvironment,
       serverOffset,
       webOffset,
-      t3Home: resolvedDevHome,
+      homeDir: resolvedDispatchHome,
       browser: input.browser,
       autoBootstrapProjectFromCwd: input.autoBootstrapProjectFromCwd,
       logWebSocketEvents: input.logWebSocketEvents,
@@ -719,10 +719,10 @@ export function runDevRunnerWithInput(input: DevRunnerCliInput) {
       serverOffset !== offset || webOffset !== offset
         ? ` selectedOffset(server=${serverOffset},web=${webOffset})`
         : "";
-    const baseDir = env.DISPATCH_HOME ?? env.T3CODE_HOME ?? (yield* DEFAULT_DISPATCH_HOME);
+    const dispatchHome = env.DISPATCH_HOME ?? env.T3CODE_HOME ?? (yield* DEFAULT_DISPATCH_HOME);
 
     yield* Effect.logInfo(
-      `[dev-runner] mode=${input.mode} source=${source}${selectionSuffix} serverPort=${String(env.T3CODE_PORT)} webPort=${String(env.PORT)} baseDir=${baseDir}`,
+      `[dev-runner] mode=${input.mode} source=${source}${selectionSuffix} serverPort=${String(env.DISPATCH_PORT)} webPort=${String(env.PORT)} dispatchHome=${dispatchHome}`,
     );
 
     // Before the share block: --dry-run only resolves and prints. Sharing would
@@ -879,7 +879,7 @@ const devRunnerCli = Command.make("dev-runner", {
   mode: Argument.Literals("mode", DEV_RUNNER_MODES).pipe(
     Argument.withDescription("Development mode to run."),
   ),
-  t3Home: Flag.String("home-dir").pipe(
+  homeDir: Flag.String("home-dir").pipe(
     Flag.withDescription(
       "Explicit Dispatch data directory; runtime state is stored under userdata (DISPATCH_HOME, with T3CODE_HOME retained as a legacy alias). Inside a git worktree this defaults to that worktree's own local state so dev state stays off the shared home.",
     ),
