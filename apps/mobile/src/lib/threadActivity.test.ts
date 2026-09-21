@@ -1300,7 +1300,7 @@ describe("buildThreadFeed", () => {
       item: { server: "t3-code", tool: "task_status" },
       status: "inProgress",
       displayName: "Getting delegated task status",
-      icon: "t3-code",
+      icon: "dispatch",
     },
     {
       source: "provider-qualified title",
@@ -1318,7 +1318,7 @@ describe("buildThreadFeed", () => {
       item: undefined,
       status: "inProgress",
       displayName: "Getting delegated task status",
-      icon: "t3-code",
+      icon: "dispatch",
     },
     {
       source: "browser identity without lifecycle status",
@@ -1340,7 +1340,7 @@ describe("buildThreadFeed", () => {
       displayName: "Getting delegated task status",
       liveDisplayName: "Getting delegated task status",
       settledDisplayName: "Got delegated task status",
-      icon: "t3-code",
+      icon: "dispatch",
     },
   ])(
     "uses friendly row and running labels from $source",
