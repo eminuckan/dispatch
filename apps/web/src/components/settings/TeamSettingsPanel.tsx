@@ -21,7 +21,14 @@ import { Switch } from "../ui/switch";
 import { Select, SelectTrigger, SelectValue, SelectPopup, SelectItem } from "../ui/select";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { SettingsPageContainer, SettingsSection, SettingsRow } from "./settingsLayout";
-import { routingTierLabels, subscriptionRoutingPolicy } from "./teamProfileDefaults";
+import {
+  findReadyCapableLead,
+  initialRecommendedPolicy,
+  recommendedProfileForModel,
+  refreshedRecommendationPolicy,
+  routingTierLabels,
+  subscriptionRoutingPolicy,
+} from "./teamProfileDefaults";
 
 function ProfileOptions({
   initiallyOpen,
@@ -35,7 +42,11 @@ function ProfileOptions({
     <details
       open={open}
       onToggle={(event) => setOpen(event.currentTarget.open)}
-      className="text-xs text-muted-foreground"
+      className={
+        open
+          ? "text-xs text-muted-foreground"
+          : "text-xs text-muted-foreground [&>:not(summary)]:hidden"
+      }
     >
       {children}
     </details>
@@ -138,35 +149,33 @@ function TeamSettingsForm({
   const save = useAtomCommand(teamEnvironment.saveSettings, { reportFailure: false });
   const suggest = useAtomCommand(teamEnvironment.suggestPool, { reportFailure: false });
   const [poolNote, setPoolNote] = useState<string | null>(null);
-  async function createPool() {
-    if (pending) return;
+  const [recommendations, setRecommendations] = useState<ReadonlyArray<TeamModelProfile>>([]);
+  const normalizedInitialPolicy = subscriptionRoutingPolicy(initial.policy);
+  const hasUnsavedEdits = JSON.stringify(policy) !== JSON.stringify(normalizedInitialPolicy);
+  async function refreshRecommendations() {
+    if (pending || hasUnsavedEdits) return;
     setPending(true);
     const result = await suggest({ environmentId, input: {} });
     setPending(false);
     if (result._tag === "Failure") {
       const error = squashAtomCommandFailure(result);
-      setPoolNote(error instanceof Error ? error.message : "Could not create a suggested pool.");
+      setPoolNote(
+        error instanceof Error ? error.message : "Could not refresh model recommendations.",
+      );
       return;
     }
+    setRecommendations(result.value.profiles);
     if (result.value.profiles.length)
-      setPolicy((p) => ({
-        ...p,
-        profiles: result.value.profiles,
-        preferredCapableProfileId: result.value.profiles.some(
-          (profile) => profile.id === p.preferredCapableProfileId,
-        )
-          ? p.preferredCapableProfileId
-          : null,
-      }));
+      setPolicy((current) => refreshedRecommendationPolicy(current, result.value.profiles));
     setPoolNote(
-      `${result.value.source === "jev" ? "Jev-assisted" : "Provider inventory"} starting pool. ${result.value.notes.join(" ")}`,
+      `${result.value.source === "jev" ? "Jev-assisted" : "Provider inventory"} model recommendations refreshed. ${result.value.notes.join(" ")}`,
     );
   }
   const secret = useAtomCommand(teamEnvironment.setSecret, { reportFailure: false });
   const available = providers.filter((p) => p.enabled && p.availability !== "unavailable");
   const first = available.find((p) => p.models.length > 0);
   const dirty =
-    JSON.stringify(policy) !== JSON.stringify(subscriptionRoutingPolicy(initial.policy)) ||
+    hasUnsavedEdits ||
     initial.policy.estimatedBudgetUsd != null ||
     initial.policy.profiles.some((p) => p.estimatedAttemptUsd !== null);
   function updateProfile(id: string, update: Partial<TeamModelProfile>) {
@@ -197,22 +206,60 @@ function TeamSettingsForm({
         const error = squashAtomCommandFailure(result);
         setMessage(error instanceof Error ? error.message : "Could not save routing settings.");
       } else {
-        setKey("");
-        setEditingKey(false);
-        refresh();
-        setMessage(
+        let successMessage =
           kind === "policy"
             ? "Routing settings saved."
             : kind === "key"
               ? "Key saved securely."
-              : "Key removed. Routing is off.",
-        );
+              : "Key removed. Routing is off.";
+        if (
+          kind === "key" &&
+          !initial.jevConfigured &&
+          !findReadyCapableLead(result.value.policy.profiles) &&
+          !hasUnsavedEdits
+        ) {
+          const suggested = await suggest({ environmentId, input: {} });
+          if (suggested._tag === "Failure") {
+            successMessage =
+              "Key saved securely, but model recommendations could not be loaded. Refresh recommendations to finish orchestration setup.";
+          } else {
+            setRecommendations(suggested.value.profiles);
+            const recommendedPolicy = initialRecommendedPolicy(
+              result.value.policy,
+              suggested.value.profiles,
+            );
+            if (!recommendedPolicy) {
+              successMessage =
+                "Key saved securely, but Jev did not return a ready capable lead. Check the key and providers, then refresh recommendations.";
+            } else {
+              const saved = await save({ environmentId, input: { policy: recommendedPolicy } });
+              if (saved._tag === "Failure") {
+                successMessage =
+                  "Key saved securely, but the recommended routing setup could not be saved. Refresh recommendations and save again.";
+              } else {
+                setPolicy(subscriptionRoutingPolicy(saved.value.policy));
+                successMessage = "Key saved securely. Model recommendations are ready to use.";
+              }
+            }
+          }
+        } else if (
+          kind === "key" &&
+          !initial.jevConfigured &&
+          !findReadyCapableLead(result.value.policy.profiles) &&
+          hasUnsavedEdits
+        )
+          successMessage =
+            "Key saved securely. Save or reset your current edits before refreshing model recommendations.";
+        setKey("");
+        setEditingKey(false);
+        refresh();
+        setMessage(successMessage);
       }
     } finally {
       setPending(false);
     }
   }
-  function addModel(instanceId: string, slug: string) {
+  async function addModel(instanceId: string, slug: string) {
     const provider = available.find((p) => p.instanceId === instanceId);
     const model = provider?.models.find((m) => m.slug === slug);
     if (!provider || !model) return;
@@ -221,26 +268,50 @@ function TeamSettingsForm({
         (p) => p.selection.instanceId === instanceId && p.selection.model === slug,
       )
     ) {
-      setMessage("That model is already in your routing pool.");
+      setMessage("That model is already in your allowed models.");
       return;
     }
+    let recommendation = recommendedProfileForModel(
+      recommendations,
+      provider.instanceId,
+      model.slug,
+    );
+    if (initial.jevConfigured && !recommendation) {
+      setPending(true);
+      const result = await suggest({ environmentId, input: {} });
+      setPending(false);
+      if (result._tag === "Success") {
+        setRecommendations(result.value.profiles);
+        recommendation = recommendedProfileForModel(
+          result.value.profiles,
+          provider.instanceId,
+          model.slug,
+        );
+      }
+    }
+    const profile =
+      recommendation ??
+      ({
+        id: randomUUID(),
+        label: `${provider.displayName ?? provider.instanceId} · ${model.name}`,
+        selection: { instanceId: provider.instanceId, model: model.slug },
+        tier: "capable",
+        reviewRequired: true,
+        lead: false,
+        worker: false,
+        estimatedAttemptUsd: null,
+      } satisfies TeamModelProfile);
     setPolicy((p) => ({
       ...p,
-      profiles: [
-        ...p.profiles,
-        {
-          id: randomUUID(),
-          label: `${provider.displayName ?? provider.instanceId} · ${model.name}`,
-          selection: { instanceId: provider.instanceId, model: model.slug },
-          tier: "capable",
-          reviewRequired: true,
-          lead: false,
-          worker: false,
-          estimatedAttemptUsd: null,
-        },
-      ],
+      profiles: [...p.profiles, profile],
     }));
-    setMessage(null);
+    setMessage(
+      recommendation
+        ? "Added with Jev-recommended task group, roles, and model options."
+        : initial.jevConfigured
+          ? "Added as inactive because no model recommendation was available. Review its task group and roles before saving."
+          : null,
+    );
   }
   return (
     <SettingsPageContainer>
@@ -250,7 +321,7 @@ function TeamSettingsForm({
           description={
             initial.jevConfigured
               ? "Saved in this environment’s private secret store."
-              : "Add your TypeSafe key to enable routing."
+              : "Add your Jev (TypeSafe) API key to set up automatic routing."
           }
           control={
             initial.jevConfigured && !editingKey ? (
@@ -335,16 +406,20 @@ function TeamSettingsForm({
         }
       >
         <SettingsRow
-          title="Suggested starting pool"
-          description="Collect models from all ready providers and reported quota. Existing approved profiles are reused; new models require task-group and role review."
+          title="Model recommendations"
+          description={
+            hasUnsavedEdits
+              ? "Save or reset your current edits before refreshing recommendations."
+              : "Refresh recommended task groups, agent roles, and model options from ready providers. Existing saved overrides are preserved."
+          }
           control={
             <Button
               size="sm"
               variant="outline"
-              disabled={pending}
-              onClick={() => void createPool()}
+              disabled={pending || hasUnsavedEdits}
+              onClick={() => void refreshRecommendations()}
             >
-              {pending ? "Working…" : "Build model pool"}
+              {pending ? "Working…" : "Refresh recommendations"}
             </Button>
           }
         >
@@ -356,10 +431,10 @@ function TeamSettingsForm({
         </SettingsRow>
         {policy.profiles.length === 0 && (
           <SettingsRow
-            title="Choose the models you want Jev to use"
+            title="Choose models for Orchestration"
             description={
               first
-                ? "Add models from your connected subscriptions. Task groups are suggested for known model families; you can customize them."
+                ? "Add models from your connected providers. With Jev configured, Dispatch recommends their task group, team roles, and reasoning defaults; you can customize any recommendation."
                 : "Enable a provider in Settings → Providers, then add its models here."
             }
           />
@@ -368,7 +443,7 @@ function TeamSettingsForm({
           const provider = providers.find((p) => p.instanceId === profile.selection.instanceId);
           const model = provider?.models.find((m) => m.slug === profile.selection.model);
           const effort = profile.selection.options?.find((o) =>
-            ["reasoningEffort", "effort"].includes(o.id),
+            ["reasoningEffort", "effort", "reasoning", "variant"].includes(o.id),
           )?.value;
           return (
             <SettingsRow
@@ -425,8 +500,8 @@ function TeamSettingsForm({
                     />
                   </div>
                   <p>
-                    Choose this from your evaluation or explicit preference. Model names and Jev
-                    confidence are not capability measurements.
+                    Jev provides a starting recommendation. Change it if your own evaluation or
+                    preference differs.
                   </p>
                   {(model?.capabilities?.optionDescriptors ?? []).map((option) => {
                     const value = profile.selection.options?.find((o) => o.id === option.id)?.value;

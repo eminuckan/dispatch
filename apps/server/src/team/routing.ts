@@ -181,7 +181,7 @@ export function chooseProfile(
         p.tier === "capable" ||
         p.selection.options?.some(
           (option) =>
-            ["reasoningEffort", "effort"].includes(option.id) &&
+            ["reasoningEffort", "effort", "reasoning", "variant"].includes(option.id) &&
             typeof option.value === "string" &&
             ["high", "xhigh", "max", "ultra"].includes(option.value),
         )),

@@ -26,7 +26,7 @@ export function teamThreadView(run: TeamRun | null): TeamThreadView | null {
       model: turn.command.modelSelection?.model ?? "Unknown model",
       effort: (() => {
         const value = turn.command.modelSelection?.options?.find((option) =>
-          ["reasoningEffort", "effort"].includes(option.id),
+          ["reasoningEffort", "effort", "reasoning", "variant"].includes(option.id),
         )?.value;
         return typeof value === "string" ? value : null;
       })(),

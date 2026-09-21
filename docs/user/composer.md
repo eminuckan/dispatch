@@ -69,24 +69,29 @@ Leaving reasoning level or service tier unset uses the provider's own configurat
 
 ## Jev routing and managed teams (experimental)
 
-In Dispatch's web and desktop clients, configure Jev in Settings → Orchestration.
-Add your own Jev API key and explicitly choose the allowed model profiles and
-reasoning options. Models in the ordinary picker are not automatically eligible.
-**Build model pool** collects models from every ready configured provider and reuses
-explicitly approved profiles. New models are inactive until you choose their task
-group and agent roles; no capability or price ranking is inferred from model names.
-Jev may select between approved profiles using the supplied groups and quota, but
-its confidence is not a measurement of model ability. Terra is excluded from generated
-presets by product preference and remains available for manual configuration.
+Fresh web and desktop installs offer an optional **Orchestration** step after agent
+setup. Add your own Jev API key there to let Dispatch prepare a starting model
+configuration automatically, or choose **Not now** and continue without it. Skipping
+setup leaves the composer control hidden. You can configure it later in
+Settings → Orchestration.
+
+When Jev is configured, Dispatch collects models from every ready provider and asks
+Jev to recommend each new model's task group, lead/worker roles, and advertised
+reasoning option. These are starting recommendations: use **Customize** to change any
+choice, and **Refresh recommendations** to incorporate newly available models while
+preserving saved customizations. A single capable model may be both lead and worker;
+there is no two-model minimum. Models without a usable recommendation remain inactive.
+Terra is excluded from generated defaults by product preference and remains available
+for manual configuration.
+
 Reported exhausted quota is excluded at recommendation and admission time, including
 family-specific Claude windows. Unknown quota is labeled, not treated as verified
-spare quota. Save to apply. This is not a benchmark-proven optimum or a hard
-subscription quota guarantee. Use Customize to review effort and lead/worker roles.
-Choose a lead for complex or uncertain tasks; an absent model cannot be
-recommended. Enabling routing sends draft text to TypeSafe after a typing pause.
-The key is saved in the environment's private secret store.
+spare quota. Save to apply. Recommendations are advisory rather than benchmark results
+or hard subscription quota guarantees. Enabling routing sends draft text to TypeSafe
+after a typing pause. The key is saved in the environment's private secret store.
 
-The composer’s Orchestration switch controls draft assessment and team launch.
+The composer’s Orchestration switch appears after a Jev key and an approved capable
+lead are configured. It controls draft assessment and team launch.
 Selecting a model manually turns it off for that draft. Existing lead and worker
 models remain fixed throughout their conversations.
 Confidence describes classification certainty, not the chance that the code is correct.

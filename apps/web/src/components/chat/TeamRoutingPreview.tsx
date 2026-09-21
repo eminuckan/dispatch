@@ -7,7 +7,13 @@ import { squashAtomCommandFailure } from "@dispatch/client-runtime/state/runtime
 import { useRightPanelStore } from "../../rightPanelStore";
 import { randomUUID } from "../../lib/utils";
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
-import type { ChatAttachment, EnvironmentId, ProjectId, TeamAssessment } from "@dispatch/contracts";
+import type {
+  ChatAttachment,
+  EnvironmentId,
+  ProjectId,
+  TeamAssessment,
+  TeamSettings,
+} from "@dispatch/contracts";
 import { createTeamDraftCoordinator } from "@dispatch/client-runtime/state/team-draft";
 import { teamEnvironment } from "../../state/team";
 import { useEnvironmentQuery } from "../../state/query";
@@ -55,6 +61,21 @@ type RoutingProps = {
   allowRouting: boolean;
 };
 
+export function isTeamRoutingReady(
+  serverCapable: boolean,
+  settings: TeamSettings | null | undefined,
+): boolean {
+  return (
+    serverCapable &&
+    settings !== null &&
+    settings !== undefined &&
+    settings.jevConfigured &&
+    settings.policy.profiles.some(
+      (profile) => profile.lead && profile.tier === "capable" && profile.reviewRequired !== true,
+    )
+  );
+}
+
 export function clearStartedTeamDraftIfUnchanged(input: {
   currentDraft: Pick<ComposerThreadDraftState, "prompt" | "images" | "files"> | null;
   promptSnapshot: string;
@@ -91,8 +112,6 @@ export function useTeamRoutingState({
 }: RoutingProps) {
   const config = useAtomValue(serverEnvironment.configValueAtom(environmentId));
   const available = config?.teamRouting === true;
-  const [enabledScope, setEnabledScope] = useState<string | null>(null);
-  const orchestration = available && allowRouting && enabledScope === scopeKey;
   const navigate = useNavigate();
   const start = useAtomCommand(teamEnvironment.start, { reportFailure: false });
   const starting = useRef(false);
@@ -102,6 +121,9 @@ export function useTeamRoutingState({
   const settings = useEnvironmentQuery(
     available ? teamEnvironment.settings({ environmentId, input: {} }) : null,
   );
+  const ready = isTeamRoutingReady(available, settings.data);
+  const [enabledScope, setEnabledScope] = useState<string | null>(null);
+  const orchestration = ready && allowRouting && enabledScope === scopeKey;
   const assess = useAtomCommand(teamEnvironment.assess, { reportFailure: false });
   const [result, setResult] = useState<{
     key: string;
@@ -182,7 +204,7 @@ export function useTeamRoutingState({
   ]);
   const profile = settings.data?.policy.profiles.find((p) => p.id === assessment?.profileId);
   const effort = profile?.selection.options?.find((option) =>
-    ["reasoningEffort", "effort"].includes(option.id),
+    ["reasoningEffort", "effort", "reasoning", "variant"].includes(option.id),
   )?.value;
   const modelLabel = profile?.label.replace(/^.*? · /, "") ?? "No eligible model";
   const summary = failed
@@ -194,6 +216,7 @@ export function useTeamRoutingState({
         : "Chooses when you type";
   async function setOrchestration(on: boolean) {
     if (pending || saving) return;
+    if (on && !ready) return;
     if (on && settings.data?.policy.mode === "off" && !(await setMode("shadow"))) return;
     setEnabledScope(on ? scopeKey : null);
     setStartError(null);
@@ -315,6 +338,7 @@ export function useTeamRoutingState({
     saving,
     modeError,
     available,
+    ready,
     orchestration,
     setOrchestration,
     pending,
@@ -343,7 +367,7 @@ export function TeamRoutingPickerDetails() {
 
 export function TeamRoutingActions() {
   const routing = useComposerRouting();
-  if (!routing?.available || !routing.allowRouting || !routing.projectId) return null;
+  if (!routing?.ready || !routing.allowRouting || !routing.projectId) return null;
   return (
     <label className="flex shrink-0 cursor-pointer items-center gap-1.5 text-xs text-muted-foreground">
       <Switch

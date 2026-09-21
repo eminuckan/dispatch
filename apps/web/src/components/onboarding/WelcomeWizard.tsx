@@ -49,7 +49,8 @@ import { readProjects, useProjects } from "../../state/entities";
 import { useEnvironments, usePrimaryEnvironment } from "../../state/environments";
 import { useProjectScans } from "../../onboarding/useProjectScans";
 import { projectEnvironment } from "../../state/projects";
-import { serverEnvironment } from "../../state/server";
+import { environmentServerConfigsAtom, serverEnvironment } from "../../state/server";
+import { teamEnvironment } from "../../state/team";
 import { terminalEnvironment } from "../../state/terminal";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { connectPairing } from "../../connection/onboarding";
@@ -75,16 +76,17 @@ import { formatRelativeTime } from "../../timestampFormat";
  * First-run welcome wizard. Rendered over the workspace at `/welcome` on a
  * fresh install (no completed-onboarding flag, empty workspace). Flow per the
  * onboarding overhaul spec: connection choice → sign-in/pair (remote paths) →
- * agent setup with inline install terminal → project import → main screen.
+ * agent setup with inline install terminal → optional orchestration setup →
+ * project import → main screen.
  * Every step past the connection gate is skippable; the whole wizard is
  * re-runnable by clearing the flag.
  */
 
-type WizardStep = "connection" | "agents" | "import";
+type WizardStep = "connection" | "agents" | "orchestration" | "import";
 const NO_ENVIRONMENTS: readonly EnvironmentId[] = [];
 
 const AGENT_ONBOARDING_THREAD_ID = ThreadId.make("onboarding-agent-setup");
-const ONBOARDING_STAGES = ["Connect", "Agents", "Projects"] as const;
+const ONBOARDING_STAGES = ["Connect", "Agents", "Orchestration", "Projects"] as const;
 const SCAN_LIMIT_MESSAGE = "Scan limit reached. Some projects or conversations may be missing.";
 
 export function WelcomeWizard({
@@ -133,7 +135,8 @@ export function WelcomeWizard({
     setSetupIds(ids);
     setStep("agents");
   };
-  const stageIndex = step === "agents" ? 1 : step === "import" ? 2 : 0;
+  const stageIndex =
+    step === "agents" ? 1 : step === "orchestration" ? 2 : step === "import" ? 3 : 0;
   const finish = useCallback(
     (projectRef?: ScopedProjectRef) => {
       if (finishingPromiseRef.current !== null) return finishingPromiseRef.current;
@@ -199,7 +202,15 @@ export function WelcomeWizard({
             isStepDisabled={(index) => isImporting || index >= stageIndex}
             onStepChange={(index) => {
               if (isImporting || index > stageIndex) return;
-              setStep(index === 0 ? "connection" : "agents");
+              setStep(
+                index === 0
+                  ? "connection"
+                  : index === 1
+                    ? "agents"
+                    : index === 2
+                      ? "orchestration"
+                      : "import",
+              );
             }}
           />
         </WizardHeader>
@@ -222,7 +233,9 @@ export function WelcomeWizard({
               }}
             />
           ) : step === "agents" ? (
-            <AgentsStep environmentIds={setupIds} onContinue={() => setStep("import")} />
+            <AgentsStep environmentIds={setupIds} onContinue={() => setStep("orchestration")} />
+          ) : step === "orchestration" ? (
+            <OrchestrationStep environmentIds={setupIds} onContinue={() => setStep("import")} />
           ) : (
             <ImportStep
               scans={scans}
@@ -488,7 +501,7 @@ function PairingForm({
   );
 }
 
-// ── Step 3: agents ───────────────────────────────────────────
+// ── Step 2: agents ───────────────────────────────────────────
 
 const PRIMARY_AGENT_DRIVERS = ["claudeAgent", "codex"] as const;
 type OnboardingAgentDriver = (typeof PRIMARY_AGENT_DRIVERS)[number];
@@ -828,6 +841,195 @@ function AgentInstallTerminal({
         ) : null}
       </div>
     </div>
+  );
+}
+
+// ── Step 3: orchestration ────────────────────────────────────
+
+function OrchestrationStep({
+  environmentIds,
+  onContinue,
+}: {
+  readonly environmentIds: readonly EnvironmentId[];
+  readonly onContinue: () => void;
+}) {
+  const serverConfigs = useAtomValue(environmentServerConfigsAtom);
+  const { environments } = useEnvironments();
+  const setSecret = useAtomCommand(teamEnvironment.setSecret, { reportFailure: false });
+  const suggestPool = useAtomCommand(teamEnvironment.suggestPool, { reportFailure: false });
+  const saveSettings = useAtomCommand(teamEnvironment.saveSettings, { reportFailure: false });
+  const [apiKey, setApiKey] = useState("");
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const supportedEnvironmentIds = useMemo(
+    () =>
+      environmentIds.filter(
+        (environmentId) => serverConfigs.get(environmentId)?.teamRouting === true,
+      ),
+    [environmentIds, serverConfigs],
+  );
+  const unsupportedCount = environmentIds.length - supportedEnvironmentIds.length;
+
+  const environmentLabel = useCallback(
+    (environmentId: EnvironmentId) =>
+      environments.find((environment) => environment.environmentId === environmentId)?.label ??
+      "Computer",
+    [environments],
+  );
+
+  const fail = useCallback(
+    (environmentId: EnvironmentId, cause: unknown, fallback: string) => {
+      const detail =
+        cause instanceof Error && cause.message.trim().length > 0 ? cause.message : fallback;
+      setError(`${environmentLabel(environmentId)}: ${detail}`);
+    },
+    [environmentLabel],
+  );
+
+  async function setupOrchestration() {
+    if (pending) return;
+    const key = apiKey.trim();
+    if (key.length === 0) {
+      setError("Enter your Jev API key to set up Orchestration.");
+      return;
+    }
+
+    setPending(true);
+    setError(null);
+    try {
+      for (const environmentId of supportedEnvironmentIds) {
+        const secretResult = await setSecret({ environmentId, input: { apiKey: key } });
+        if (secretResult._tag === "Failure") {
+          fail(
+            environmentId,
+            squashAtomCommandFailure(secretResult),
+            "Could not save the Jev API key. Try again.",
+          );
+          return;
+        }
+
+        const suggestionResult = await suggestPool({ environmentId, input: {} });
+        if (suggestionResult._tag === "Failure") {
+          fail(
+            environmentId,
+            squashAtomCommandFailure(suggestionResult),
+            "Could not prepare model recommendations. Try again.",
+          );
+          return;
+        }
+
+        const capableLead = suggestionResult.value.profiles.find(
+          (profile) =>
+            profile.reviewRequired !== true && profile.lead && profile.tier === "capable",
+        );
+        if (capableLead === undefined) {
+          setError(
+            `${environmentLabel(environmentId)}: Jev could not prepare a capable lead recommendation. Check the API key and ready providers, then try again.`,
+          );
+          return;
+        }
+
+        const saveResult = await saveSettings({
+          environmentId,
+          input: {
+            policy: {
+              ...secretResult.value.policy,
+              mode: "shadow",
+              profiles: suggestionResult.value.profiles,
+              preferredCapableProfileId: capableLead.id,
+            },
+          },
+        });
+        if (saveResult._tag === "Failure") {
+          fail(
+            environmentId,
+            squashAtomCommandFailure(saveResult),
+            "Could not save Orchestration settings. Try again.",
+          );
+          return;
+        }
+      }
+
+      setApiKey("");
+      onContinue();
+    } finally {
+      setPending(false);
+    }
+  }
+
+  if (supportedEnvironmentIds.length === 0) {
+    return (
+      <StepShell
+        title="Orchestration"
+        description="Your selected computers do not support Orchestration yet. You can configure it later from Settings after updating them."
+      >
+        <div className="mt-6 flex justify-end">
+          <Button autoFocus onClick={onContinue}>
+            Continue to projects
+            <ArrowRightIcon className="size-3.5" />
+          </Button>
+        </div>
+      </StepShell>
+    );
+  }
+
+  return (
+    <StepShell
+      title="Orchestration"
+      description="Optional. Let Jev recommend which models can lead or work, choose their reasoning defaults, and route each orchestrated task automatically."
+    >
+      <div className="mt-5 space-y-4">
+        <div className="space-y-2">
+          <label
+            className="block text-sm font-medium text-foreground"
+            htmlFor="onboarding-jev-api-key"
+          >
+            Jev API key
+          </label>
+          <Input
+            id="onboarding-jev-api-key"
+            type="password"
+            autoComplete="off"
+            value={apiKey}
+            disabled={pending}
+            aria-describedby={error ? "onboarding-orchestration-error" : undefined}
+            placeholder="Enter API key"
+            onChange={(event) => {
+              setApiKey(event.target.value);
+              if (error) setError(null);
+            }}
+          />
+          <p className="text-xs leading-relaxed text-muted-foreground">
+            Dispatch prepares sensible model defaults for you; you only need to change the ones you
+            disagree with. The key is stored separately on each supported computer and can be
+            changed later in Settings → Orchestration.
+          </p>
+        </div>
+
+        {unsupportedCount > 0 ? (
+          <p className="text-xs text-muted-foreground">
+            {unsupportedCount} selected {unsupportedCount === 1 ? "computer does" : "computers do"}{" "}
+            not support Orchestration yet and will be skipped.
+          </p>
+        ) : null}
+
+        {error ? (
+          <p id="onboarding-orchestration-error" role="alert" className="text-sm text-destructive">
+            {error}
+          </p>
+        ) : null}
+
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <Button variant="ghost" disabled={pending} onClick={onContinue}>
+            Not now
+          </Button>
+          <Button disabled={pending} onClick={() => void setupOrchestration()}>
+            {pending ? "Setting up…" : "Set up Orchestration"}
+            {!pending ? <ArrowRightIcon className="size-3.5" /> : null}
+          </Button>
+        </div>
+      </div>
+    </StepShell>
   );
 }
 

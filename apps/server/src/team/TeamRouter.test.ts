@@ -283,3 +283,165 @@ it.effect(
     }).pipe(Effect.provide(f.layer));
   },
 );
+
+it.effect("uses Jev to prepare roles, task groups, and reasoning defaults for new models", () => {
+  const firstId = "candidate-codex-0";
+  const secondId = "candidate-codex-1";
+  const f = fixture({
+    model: "jev-1.13.0",
+    answers: {
+      capableLead: answer(firstId, [firstId, secondId]),
+      [`tier:${firstId}`]: answer("capable", ["economy", "balanced", "capable"]),
+      [`role:${firstId}`]: answer("lead_worker", ["lead_worker", "lead", "worker", "inactive"]),
+      [`reasoning:${firstId}`]: answer("high", ["low", "medium", "high"]),
+      [`tier:${secondId}`]: answer("balanced", ["economy", "balanced", "capable"]),
+      [`role:${secondId}`]: answer("worker", ["lead_worker", "lead", "worker", "inactive"]),
+      [`reasoning:${secondId}`]: answer("medium", ["low", "medium", "high"]),
+    },
+  });
+  f.setProviders([
+    {
+      ...provider,
+      models: ["gpt-6-astra", "gpt-5.6-luna"].map((slug, index) => ({
+        slug,
+        name: slug,
+        isCustom: false,
+        capabilities: {
+          optionDescriptors: [
+            {
+              id: "reasoningEffort",
+              label: "Reasoning",
+              type: "select" as const,
+              options: ["low", "medium", "high"].map((id) => ({
+                id,
+                label: id,
+                ...(id === "medium" ? { isDefault: true } : {}),
+              })),
+              currentValue: index === 0 ? "medium" : "low",
+            },
+          ],
+        },
+      })),
+    },
+  ]);
+  return Effect.gen(function* () {
+    const router = yield* make;
+    yield* router.setSecret("fixture-key");
+    const suggestion = yield* router.suggestPool();
+    expect(suggestion.source).toBe("jev");
+    expect(suggestion.profiles).toEqual([
+      expect.objectContaining({
+        id: firstId,
+        tier: "capable",
+        reviewRequired: false,
+        lead: true,
+        worker: true,
+        selection: expect.objectContaining({
+          options: [{ id: "reasoningEffort", value: "high" }],
+        }),
+      }),
+      expect.objectContaining({
+        id: secondId,
+        tier: "balanced",
+        reviewRequired: false,
+        lead: false,
+        worker: true,
+        selection: expect.objectContaining({
+          options: [{ id: "reasoningEffort", value: "medium" }],
+        }),
+      }),
+    ]);
+    expect((yield* router.settings).policy.profiles).toEqual([]);
+    expect(f.calls()).toBe(1);
+  }).pipe(Effect.provide(f.layer));
+});
+
+it.effect("can prepare a single model as both capable lead and worker", () => {
+  const id = "candidate-codex-0";
+  const f = fixture({
+    model: "jev-1.13.0",
+    answers: {
+      capableLead: answer(id, [id]),
+    },
+  });
+  f.setProviders([
+    {
+      ...provider,
+      models: [
+        {
+          slug: "only-model",
+          name: "Only model",
+          isCustom: false,
+          capabilities: {
+            optionDescriptors: [
+              {
+                id: "reasoningEffort",
+                label: "Reasoning",
+                type: "select" as const,
+                options: [
+                  { id: "medium", label: "Medium", isDefault: true },
+                  { id: "high", label: "High" },
+                ],
+                currentValue: "medium",
+              },
+            ],
+          },
+        },
+      ],
+    },
+  ]);
+  return Effect.gen(function* () {
+    const router = yield* make;
+    yield* router.setSecret("fixture-key");
+    const suggestion = yield* router.suggestPool();
+    expect(suggestion.profiles).toEqual([
+      expect.objectContaining({
+        id,
+        tier: "capable",
+        reviewRequired: false,
+        lead: true,
+        worker: true,
+        selection: expect.objectContaining({
+          options: [{ id: "reasoningEffort", value: "medium" }],
+        }),
+      }),
+    ]);
+  }).pipe(Effect.provide(f.layer));
+});
+
+it.effect("keeps an existing capable lead when recommending a newly discovered model", () => {
+  const newId = "candidate-codex-1";
+  const f = fixture({
+    model: "jev-1.13.0",
+    answers: {
+      capableLead: answer(newId, [newId]),
+      [`tier:${newId}`]: answer("balanced", ["economy", "balanced", "capable"]),
+      [`role:${newId}`]: answer("worker", ["lead_worker", "lead", "worker", "inactive"]),
+    },
+  });
+  f.setProviders([
+    {
+      ...provider,
+      models: [
+        { slug: "large", name: "Large", isCustom: false, capabilities: null },
+        { slug: "new-model", name: "New model", isCustom: false, capabilities: null },
+      ],
+    },
+  ]);
+  return Effect.gen(function* () {
+    const router = yield* make;
+    yield* router.setSecret("fixture-key");
+    yield* router.saveSettings(policy);
+    const suggestion = yield* router.suggestPool();
+    expect(suggestion.profiles).toEqual([
+      expect.objectContaining({ id: "lead", tier: "capable", lead: true, worker: true }),
+      expect.objectContaining({
+        id: newId,
+        tier: "balanced",
+        reviewRequired: false,
+        lead: false,
+        worker: true,
+      }),
+    ]);
+  }).pipe(Effect.provide(f.layer));
+});

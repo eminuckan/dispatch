@@ -138,6 +138,19 @@ describe("routing gates", () => {
     };
     expect(chooseProfile(withEffort, "economy", "lead", true)?.id).toBe("cheap");
   });
+  it("recognizes Cursor and OpenCode reasoning option ids", () => {
+    for (const id of ["reasoning", "variant"]) {
+      const withEffort = {
+        ...policy,
+        profiles: policy.profiles.map((p) =>
+          p.id === "cheap"
+            ? { ...p, selection: { ...p.selection, options: [{ id, value: "high" }] } }
+            : p,
+        ),
+      };
+      expect(chooseProfile(withEffort, "economy", "lead", true)?.id).toBe("cheap");
+    }
+  });
   it("raises effort rather than complexity when only reasoning confidence is low", () => {
     const original = response();
     const uncertain = {

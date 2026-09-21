@@ -48,11 +48,13 @@ export function recoveryRequest(input: TeamRecoveryInput) {
 
 const efforts = ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"];
 const effortOf = (p: TeamPolicy["profiles"][number]) =>
-  p.selection.options?.find((o) => ["effort", "reasoningEffort"].includes(o.id));
+  p.selection.options?.find((o) =>
+    ["effort", "reasoningEffort", "reasoning", "variant"].includes(o.id),
+  );
 const otherOptions = (p: TeamPolicy["profiles"][number]) =>
   JSON.stringify(
     (p.selection.options ?? [])
-      .filter((o) => !["effort", "reasoningEffort"].includes(o.id))
+      .filter((o) => !["effort", "reasoningEffort", "reasoning", "variant"].includes(o.id))
       .toSorted((a, b) => a.id.localeCompare(b.id)),
   );
 

@@ -1,9 +1,19 @@
 import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
-import { EnvironmentId, ProjectId, ThreadId } from "@dispatch/contracts";
+import {
+  EnvironmentId,
+  ProjectId,
+  ProviderInstanceId,
+  ThreadId,
+  type TeamSettings,
+} from "@dispatch/contracts";
 
 import { ATTACHMENT_ONLY_BOOTSTRAP_PROMPT } from "./composerPromptHistory";
-import { clearStartedTeamDraftIfUnchanged, useTeamRoutingState } from "./TeamRoutingPreview";
+import {
+  clearStartedTeamDraftIfUnchanged,
+  isTeamRoutingReady,
+  useTeamRoutingState,
+} from "./TeamRoutingPreview";
 
 (
   globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
@@ -21,6 +31,26 @@ const mocks = vi.hoisted(() => ({
   getUploadedAttachments: vi.fn(),
   forgetDraftAttachmentUploads: vi.fn(),
   scheduledDrafts: [] as Array<Record<string, unknown>>,
+  settingsData: null as null | {
+    jevConfigured: boolean;
+    policy: {
+      revision: number;
+      mode: "off" | "shadow" | "auto";
+      profiles: Array<{
+        id: string;
+        label: string;
+        selection: { instanceId: string; model: string };
+        tier: "economy" | "balanced" | "capable";
+        reviewRequired?: boolean;
+        lead: boolean;
+        worker: boolean;
+        estimatedAttemptUsd: number | null;
+      }>;
+      maxActive: number;
+      maxAttempts: number;
+      confidenceThreshold: number;
+    };
+  },
 }));
 
 vi.mock("@effect/atom-react", () => ({ useAtomValue: () => ({ teamRouting: true }) }));
@@ -48,20 +78,7 @@ vi.mock("../../state/use-atom-command", () => ({
 }));
 vi.mock("../../state/query", () => ({
   useEnvironmentQuery: () => ({
-    data: {
-      jevConfigured: true,
-      policy: {
-        revision: 3,
-        mode: "shadow",
-        profiles: [
-          {
-            id: "lead",
-            label: "Lead model",
-            selection: { instanceId: "codex", model: "test" },
-          },
-        ],
-      },
-    },
+    data: mocks.settingsData,
     refresh: vi.fn(),
   }),
 }));
@@ -75,7 +92,7 @@ vi.mock("@dispatch/client-runtime/state/team-draft", () => ({
         fingerprint: "fingerprint",
         policyRevision: draft.policyRevision,
         profileId: "lead",
-        selection: { instanceId: "codex", model: "test" },
+        selection: { instanceId: ProviderInstanceId.make("codex"), model: "test" },
         tier: "capable",
         confidence: 1,
         reason: "test",
@@ -113,6 +130,27 @@ const uploadedAttachment = {
   mimeType: "image/png",
   sizeBytes: 42,
 };
+const configuredSettings = {
+  jevConfigured: true,
+  policy: {
+    revision: 3,
+    mode: "shadow" as const,
+    profiles: [
+      {
+        id: "lead",
+        label: "Lead model",
+        selection: { instanceId: ProviderInstanceId.make("codex"), model: "test" },
+        tier: "capable" as const,
+        lead: true,
+        worker: false,
+        estimatedAttemptUsd: null,
+      },
+    ],
+    maxActive: 5,
+    maxAttempts: 2,
+    confidenceThreshold: 0.9,
+  },
+} satisfies TeamSettings;
 
 type RoutingState = ReturnType<typeof useTeamRoutingState>;
 let latest: RoutingState | null = null;
@@ -165,6 +203,7 @@ async function submitRouting(): Promise<boolean> {
 
 beforeEach(() => {
   latest = null;
+  mocks.settingsData = configuredSettings;
   mocks.start.mockReset();
   mocks.assess.mockReset();
   mocks.save.mockReset();
@@ -176,6 +215,88 @@ beforeEach(() => {
   mocks.getUploadedAttachments.mockReset().mockReturnValue([uploadedAttachment]);
   mocks.forgetDraftAttachmentUploads.mockReset();
   mocks.scheduledDrafts.length = 0;
+});
+
+describe("team routing readiness", () => {
+  it("requires loaded JEV settings with an approved capable lead without requiring mode or worker", () => {
+    expect(isTeamRoutingReady(true, null)).toBe(false);
+    expect(isTeamRoutingReady(false, configuredSettings)).toBe(false);
+    expect(isTeamRoutingReady(true, { ...configuredSettings, jevConfigured: false })).toBe(false);
+    expect(
+      isTeamRoutingReady(true, {
+        ...configuredSettings,
+        policy: {
+          ...configuredSettings.policy,
+          profiles: configuredSettings.policy.profiles.map((profile) => ({
+            ...profile,
+            lead: false,
+          })),
+        },
+      }),
+    ).toBe(false);
+    expect(
+      isTeamRoutingReady(true, {
+        ...configuredSettings,
+        policy: {
+          ...configuredSettings.policy,
+          profiles: configuredSettings.policy.profiles.map((profile) => ({
+            ...profile,
+            tier: "balanced" as const,
+          })),
+        },
+      }),
+    ).toBe(false);
+    expect(
+      isTeamRoutingReady(true, {
+        ...configuredSettings,
+        policy: {
+          ...configuredSettings.policy,
+          profiles: configuredSettings.policy.profiles.map((profile) => ({
+            ...profile,
+            reviewRequired: true,
+          })),
+        },
+      }),
+    ).toBe(false);
+    expect(
+      isTeamRoutingReady(true, {
+        ...configuredSettings,
+        policy: {
+          ...configuredSettings.policy,
+          mode: "off",
+          profiles: configuredSettings.policy.profiles,
+        },
+      }),
+    ).toBe(true);
+  });
+
+  it("stays unavailable and does not assess until settings finish loading", async () => {
+    mocks.settingsData = null;
+    await act(async () => {
+      renderer = create(<Harness />);
+    });
+    expect(latest?.ready).toBe(false);
+    expect(mocks.scheduledDrafts).toHaveLength(0);
+
+    await act(async () => {
+      await latest!.setOrchestration(true);
+    });
+    expect(latest?.orchestration).toBe(false);
+    expect(mocks.scheduledDrafts).toHaveLength(0);
+
+    mocks.settingsData = configuredSettings;
+    await act(async () => {
+      renderer!.update(<Harness />);
+    });
+    expect(latest?.ready).toBe(true);
+
+    await act(async () => {
+      await latest!.setOrchestration(true);
+    });
+    await act(async () => {});
+    expect(latest?.orchestration).toBe(true);
+    expect(mocks.scheduledDrafts).toHaveLength(1);
+  });
 });
 
 afterEach(async () => {

@@ -99,9 +99,5 @@ export function poolCandidates(
         profiles.push(queue[index]!);
         seen.add(queue[index]!.id);
       }
-  if (profiles.some((profile) => profile.reviewRequired))
-    notes.push(
-      "New profiles are inactive. Choose a task group and agent roles after reviewing model/effort suitability. No capability or price ranking was inferred from model names.",
-    );
   return { profiles, notes };
 }
