@@ -1459,7 +1459,10 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
         yield* writeTextFile(cwd, "z-last.txt", "last file\n");
         yield* git(cwd, ["add", "."]);
         yield* git(cwd, ["commit", "-m", "large change"]);
-        yield* writeTextFile(cwd, "a-large.txt", largeContents.replaceAll("changed", "updated"));
+        // Change the byte length as well as the contents so Git cannot classify
+        // the rewrite as racy-clean when it lands in the same filesystem tick as
+        // the commit that populated the index.
+        yield* writeTextFile(cwd, "a-large.txt", largeContents.replaceAll("changed", "updated!"));
         yield* writeTextFile(cwd, "z-last.txt", "last file updated\n");
         yield* writeTextFile(cwd, "untracked.txt", largeContents);
 
