@@ -50,7 +50,7 @@ export function resolveStorage(
 
 type SyncStorageLike = Pick<SyncStateStorage, "getItem" | "setItem" | "removeItem">;
 
-export function legacyT3CodeStorageKey(canonicalKey: string): string | null {
+function legacyT3CodeStorageKey(canonicalKey: string): string | null {
   if (canonicalKey.startsWith("dispatch:")) {
     return `t3code:${canonicalKey.slice("dispatch:".length)}`;
   }

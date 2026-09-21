@@ -202,7 +202,9 @@ server.listen(0, "127.0.0.1", () => {
             const stop = yield* spawner.spawn(
               ChildProcess.make("/bin/sh", ["-s"], {
                 cwd: fixture,
-                env: { T3_TEST_STATE_DIR: fixture },
+                // ChildProcess env replaces the inherited environment, so give
+                // the stop script an isolated HOME before its `set -u` reads it.
+                env: { HOME: fixture, T3_TEST_STATE_DIR: fixture },
                 stdin: Stream.make(new TextEncoder().encode(isolatedScript)),
               }),
             );

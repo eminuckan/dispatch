@@ -452,21 +452,6 @@ export async function fetchDispatchConnectEnvironmentIdentity(): Promise<Dispatc
   }
 }
 
-export async function fetchDispatchConnectEnvironmentStatus(): Promise<DispatchConnectEnvironmentStatus> {
-  try {
-    return await runPrimaryHttp(
-      PrimaryEnvironmentHttpClient.pipe(
-        Effect.flatMap((client) => client.auth.dispatchConnectStatus({ headers: {} })),
-      ),
-    );
-  } catch (error) {
-    throw PrimaryEnvironmentRequestError.fromCause({
-      operation: "dispatch-connect-status",
-      cause: error,
-    });
-  }
-}
-
 export async function configureDispatchConnectEnvironment(
   input: DispatchConnectEnvironmentConfigureInput,
 ): Promise<DispatchConnectEnvironmentStatus> {

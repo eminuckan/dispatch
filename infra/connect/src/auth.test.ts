@@ -1,5 +1,5 @@
-import assert from "node:assert/strict";
-import test from "node:test";
+import * as NodeAssert from "node:assert/strict";
+import * as NodeTest from "node:test";
 
 import { createConnectAuthPlugins } from "./auth.ts";
 import type { ConnectConfig } from "./config.ts";
@@ -19,10 +19,10 @@ function config(deviceVerificationUrl: string): ConnectConfig {
   };
 }
 
-test("device authorization plugin uses the configured verification UI", () => {
+NodeTest.test("device authorization plugin uses the configured verification UI", () => {
   const plugins = createConnectAuthPlugins(config("https://connect.example.test/device")).map(
     (plugin) => plugin.id,
   );
 
-  assert.equal(plugins.includes("device-authorization"), true);
+  NodeAssert.equal(plugins.includes("device-authorization"), true);
 });

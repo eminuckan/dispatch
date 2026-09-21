@@ -1,6 +1,6 @@
 import { dispatchConnectAuthorizationHeader } from "./accountToken";
 
-export const DISPATCH_CONNECT_CODE_LENGTH = 12;
+const DISPATCH_CONNECT_CODE_LENGTH = 12;
 const DISPATCH_CONNECT_CODE_ALPHABET = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
 
 export type DispatchConnectEndpointKind = "tailscale" | "cloudflare_tunnel";

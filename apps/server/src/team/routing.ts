@@ -33,9 +33,9 @@ export const JevResponse = Schema.Struct({
 });
 export type JevResponse = typeof JevResponse.Type;
 export const JEV_MODEL = "jev-1.13.0";
-export const ROUTING_VERSION = "4";
+const ROUTING_VERSION = "4";
 // A conservative UTF-8 bound leaves room for questions without silently truncating the task.
-export const MAX_JEV_STATE_BYTES = 24000;
+const MAX_JEV_STATE_BYTES = 24000;
 export function fitsJevState(state: unknown): boolean {
   return new TextEncoder().encode(JSON.stringify(state)).byteLength <= MAX_JEV_STATE_BYTES;
 }

@@ -11,7 +11,6 @@ export {
   createDispatchConnectPairingChallenge,
   ensureDispatchConnectManagedEndpoint,
   fetchDispatchConnectEnvironmentIdentity,
-  fetchDispatchConnectEnvironmentStatus,
   isPrimaryEnvironmentPairingCredentialRejectedError,
   peekPairingTokenFromUrl,
   PrimaryEnvironmentPairingCredentialRejectedError,

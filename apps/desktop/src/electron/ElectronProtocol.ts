@@ -15,7 +15,7 @@ import * as Electron from "electron";
 export const DESKTOP_HOST = "app";
 const DESKTOP_PRODUCTION_SCHEME = "dispatch";
 const DESKTOP_DEVELOPMENT_SCHEME = "dispatch-dev";
-export const LEGACY_DESKTOP_SCHEMES = ["t3code", "t3code-dev"] as const;
+const LEGACY_DESKTOP_SCHEMES = ["t3code", "t3code-dev"] as const;
 
 export function getDesktopScheme(isDevelopment: boolean): string {
   return isDevelopment ? DESKTOP_DEVELOPMENT_SCHEME : DESKTOP_PRODUCTION_SCHEME;

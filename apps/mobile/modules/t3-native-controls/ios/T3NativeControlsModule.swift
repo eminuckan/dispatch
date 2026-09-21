@@ -73,22 +73,7 @@ public final class T3NativeControlsModule: Module {
     }
 
     Function("getShowcaseScene") { () -> String? in
-      let scenePaths = ["DispatchShowcaseScene", "T3ShowcaseScene"]
-      for filename in scenePaths {
-        let scenePath = NSHomeDirectory() + "/Library/Caches/" + filename
-        if let storedScene = try? String(contentsOfFile: scenePath, encoding: .utf8)
-          .trimmingCharacters(in: .whitespacesAndNewlines), !storedScene.isEmpty {
-          return storedScene
-        }
-      }
-      let arguments = ProcessInfo.processInfo.arguments
-      guard
-        let flagIndex = arguments.firstIndex(of: "--showcaseScene"),
-        arguments.indices.contains(flagIndex + 1)
-      else {
-        return nil as String?
-      }
-      return arguments[flagIndex + 1]
+      self.showcaseScene()
     }
 
     // The palette is fixed for the whole capture, so it only ever arrives as a
@@ -158,6 +143,25 @@ public final class T3NativeControlsModule: Module {
       let readyPath = NSHomeDirectory() + "/Library/Caches/DispatchShowcaseReadyScene"
       try? scene.write(toFile: readyPath, atomically: true, encoding: .utf8)
     }
+  }
+
+  private func showcaseScene() -> String? {
+    let scenePaths = ["DispatchShowcaseScene", "T3ShowcaseScene"]
+    for filename in scenePaths {
+      let scenePath = NSHomeDirectory() + "/Library/Caches/" + filename
+      if let storedScene = try? String(contentsOfFile: scenePath, encoding: .utf8)
+        .trimmingCharacters(in: .whitespacesAndNewlines), !storedScene.isEmpty {
+        return storedScene
+      }
+    }
+    let arguments = ProcessInfo.processInfo.arguments
+    guard
+      let flagIndex = arguments.firstIndex(of: "--showcaseScene"),
+      arguments.indices.contains(flagIndex + 1)
+    else {
+      return nil
+    }
+    return arguments[flagIndex + 1]
   }
 
   private func presentVideo(url: URL, title: String, sourceIdentifier: String, identifier: String, promise: Promise) throws {

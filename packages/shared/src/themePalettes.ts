@@ -1,4 +1,4 @@
-export const DISPATCH_THEME_ID = "dispatch" as const;
+const DISPATCH_THEME_ID = "dispatch" as const;
 export const DISPATCH_CHAT_THEME_ID = "dispatch-chat" as const;
 
 export const BUILT_IN_THEME_IDS = [
@@ -20,7 +20,7 @@ export const MOBILE_DEFAULT_THEME_ID = DISPATCH_THEME_ID;
 export const MOBILE_THEME_IDS = [MOBILE_DEFAULT_THEME_ID, ...BUILT_IN_THEME_IDS] as const;
 
 /** Persisted ids emitted by T3 builds before the Dispatch identity migration. */
-export const LEGACY_THEME_ID_ALIASES: Readonly<Record<string, string>> = {
+const LEGACY_THEME_ID_ALIASES: Readonly<Record<string, string>> = {
   "t3-code": DISPATCH_THEME_ID,
   "t3-chat": DISPATCH_CHAT_THEME_ID,
   "t3-chat-dark": DISPATCH_CHAT_THEME_ID,
