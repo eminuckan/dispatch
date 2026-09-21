@@ -1,6 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off - The standalone Connect HTTP service resolves socket addresses directly.
 import * as NodeNet from "node:net";
-import type { IncomingMessage } from "node:http";
+import type * as NodeHttp from "node:http";
 
 function normalizedIp(value: string): string | null {
   const trimmed = value.trim();
@@ -47,7 +47,7 @@ export class ConnectClientIp {
   }
 
   resolve(request: {
-    readonly headers: IncomingMessage["headers"];
+    readonly headers: NodeHttp.IncomingMessage["headers"];
     readonly socket: { readonly remoteAddress?: string | undefined };
   }): string {
     const remote = normalizedIp(request.socket.remoteAddress ?? "");

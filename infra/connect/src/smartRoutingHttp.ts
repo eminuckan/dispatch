@@ -1,6 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off preferSchemaOverJson:off - The standalone Connect service uses Node HTTP directly.
 import * as NodeCrypto from "node:crypto";
-import type { IncomingMessage, ServerResponse } from "node:http";
+import type * as NodeHttp from "node:http";
 
 import type { ConnectClientIp } from "./clientIp.ts";
 import { FixedWindowRateLimiter } from "./rateLimit.ts";
@@ -12,7 +12,7 @@ import {
 import type { SmartRoutingService } from "./smartRoutingService.ts";
 import type { SmartRoutingSession, SmartRoutingStore } from "./smartRoutingStore.ts";
 
-function writeJson(response: ServerResponse, status: number, body: unknown): void {
+function writeJson(response: NodeHttp.ServerResponse, status: number, body: unknown): void {
   response.writeHead(status, {
     "content-type": "application/json; charset=utf-8",
     "cache-control": "no-store",
@@ -20,7 +20,7 @@ function writeJson(response: ServerResponse, status: number, body: unknown): voi
   response.end(JSON.stringify(body));
 }
 
-async function readBody(request: IncomingMessage): Promise<unknown> {
+async function readBody(request: NodeHttp.IncomingMessage): Promise<unknown> {
   if (
     request.headers["content-type"]?.split(";", 1)[0]?.trim().toLowerCase() !== "application/json"
   )
@@ -56,8 +56,8 @@ export function createSmartRoutingHttpHandler(input: {
 }) {
   const ingress = new FixedWindowRateLimiter(180, 60_000);
   return async (
-    request: IncomingMessage,
-    response: ServerResponse,
+    request: NodeHttp.IncomingMessage,
+    response: NodeHttp.ServerResponse,
     pathname: string,
     ip: string,
   ): Promise<boolean> => {
