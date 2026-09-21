@@ -67,6 +67,7 @@ vi.mock("../state/assets", () => ({
 }));
 
 import { ProjectFavicon, type ProjectFaviconProject } from "./ProjectFavicon";
+import { DispatchMark } from "./DispatchMark";
 
 function makeProject(
   overrides: Partial<ProjectFaviconProject> &
@@ -177,6 +178,64 @@ describe("ProjectFavicon", () => {
     }) as ReactElement<{ readonly emoji: string }>;
 
     expect(element.props.emoji).toBe("🦄");
+  });
+
+  it("uses Dispatch branding for the canonical Dispatch repository", () => {
+    const element = ProjectFavicon({
+      project: makeProject({
+        workspaceRoot: "/workspace/dispatch",
+        title: "dispatch",
+        repositoryIdentity: {
+          canonicalKey: "github.com/eminuckan/dispatch",
+          locator: {
+            source: "git-remote",
+            remoteName: "origin",
+            remoteUrl: "https://github.com/eminuckan/dispatch.git",
+          },
+        },
+      }),
+    }) as ReactElement;
+
+    expect(element.type).toBe(DispatchMark);
+  });
+
+  it("keeps legacy T3 repositories on their resolved project favicon", () => {
+    const element = ProjectFavicon({
+      project: makeProject({
+        workspaceRoot: "/workspace/t3code",
+        title: "t3code",
+        repositoryIdentity: {
+          canonicalKey: "github.com/pingdotgg/t3code",
+          locator: {
+            source: "git-remote",
+            remoteName: "upstream",
+            remoteUrl: "https://github.com/pingdotgg/t3code.git",
+          },
+        },
+      }),
+    }) as ReactElement;
+
+    expect(element.type).not.toBe(DispatchMark);
+  });
+
+  it("keeps an explicit project favicon override ahead of Dispatch branding", () => {
+    const element = ProjectFavicon({
+      project: makeProject({
+        workspaceRoot: "/workspace/dispatch",
+        title: "dispatch",
+        faviconPath: "brand/custom.svg",
+        repositoryIdentity: {
+          canonicalKey: "github.com/eminuckan/dispatch",
+          locator: {
+            source: "git-remote",
+            remoteName: "origin",
+            remoteUrl: "https://github.com/eminuckan/dispatch.git",
+          },
+        },
+      }),
+    }) as ReactElement;
+
+    expect(element.type).not.toBe(DispatchMark);
   });
 
   it("falls back when the displayed favicon fails without discarding a valid older image early", () => {

@@ -302,6 +302,7 @@ export const ThreadListV2PendingRow = memo(function ThreadListV2PendingRow(props
             faviconPath={props.project.faviconPath}
             size={15}
             projectTitle={projectTitle}
+            repositoryIdentity={props.project.repositoryIdentity}
             workspaceRoot={props.project.workspaceRoot}
           />
         ) : null}
@@ -833,6 +834,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
             faviconPath={props.project.faviconPath}
             size={15}
             projectTitle={props.projectTitle ?? props.project.title}
+            repositoryIdentity={props.project.repositoryIdentity}
             workspaceRoot={props.project.workspaceRoot}
           />
         ) : null}
@@ -1067,6 +1069,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
                 faviconPath={props.project.faviconPath}
                 size={15}
                 projectTitle={props.projectTitle ?? props.project.title}
+                repositoryIdentity={props.project.repositoryIdentity}
                 workspaceRoot={props.project.workspaceRoot}
               />
             </View>

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   getProjectFaviconCacheKey,
+  isCanonicalDispatchRepository,
   isProjectFaviconFallbackUrl,
   PROJECT_FAVICON_FALLBACK_MARKER,
 } from "./projectFavicon.ts";
@@ -48,5 +49,21 @@ describe("project favicon", () => {
       ),
     ).toBe(false);
     expect(isProjectFaviconFallbackUrl(null)).toBe(false);
+  });
+
+  it("attributes only the canonical Dispatch repository to Dispatch branding", () => {
+    expect(isCanonicalDispatchRepository({ canonicalKey: "github.com/eminuckan/dispatch" })).toBe(
+      true,
+    );
+    expect(
+      isCanonicalDispatchRepository({ canonicalKey: "GitHub.com/EminUckan/Dispatch.git/" }),
+    ).toBe(true);
+    expect(isCanonicalDispatchRepository({ canonicalKey: "github.com/eminuckan/t3code" })).toBe(
+      false,
+    );
+    expect(isCanonicalDispatchRepository({ canonicalKey: "github.com/pingdotgg/t3code" })).toBe(
+      false,
+    );
+    expect(isCanonicalDispatchRepository(null)).toBe(false);
   });
 });

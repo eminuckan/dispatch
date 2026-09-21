@@ -1,4 +1,28 @@
+import type { RepositoryIdentity } from "@dispatch/contracts";
+
 export const PROJECT_FAVICON_FALLBACK_MARKER = "project-favicon-missing";
+const CANONICAL_DISPATCH_REPOSITORY_KEY = "github.com/eminuckan/dispatch";
+
+function normalizeRepositoryKey(key: string): string {
+  return key
+    .trim()
+    .toLowerCase()
+    .replace(/\/+$/u, "")
+    .replace(/\.git$/u, "");
+}
+
+/**
+ * The Dispatch repository used to carry T3 artwork in its project config. Keep
+ * that legacy artwork available to real T3 repositories, but attribute the
+ * canonical Dispatch checkout to Dispatch regardless of its automatic favicon.
+ */
+export function isCanonicalDispatchRepository(
+  identity: Pick<RepositoryIdentity, "canonicalKey"> | null | undefined,
+): boolean {
+  return identity !== null && identity !== undefined
+    ? normalizeRepositoryKey(identity.canonicalKey) === CANONICAL_DISPATCH_REPOSITORY_KEY
+    : false;
+}
 
 export function getProjectFaviconResourceKey(
   environmentId: string,

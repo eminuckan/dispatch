@@ -2,10 +2,11 @@ import { SymbolView } from "./AppSymbol";
 import { Image } from "expo-image";
 import { useLayoutEffect, useMemo, useState } from "react";
 import { View } from "react-native";
-import type { EnvironmentId } from "@dispatch/contracts";
+import type { EnvironmentId, RepositoryIdentity } from "@dispatch/contracts";
 import {
   getProjectFaviconCacheKey,
   getProjectFaviconResourceKey,
+  isCanonicalDispatchRepository,
   isProjectFaviconFallbackUrl,
 } from "@dispatch/shared/projectFavicon";
 import { useAtomValue } from "@effect/atom-react";
@@ -19,6 +20,7 @@ import {
   markProjectFaviconFailed,
   markProjectFaviconLoaded,
 } from "./projectFaviconCache";
+import { DispatchMark } from "./DispatchMark";
 
 const EMPTY_FAVICON_URL = Atom.make<string | null>(null);
 
@@ -28,10 +30,13 @@ export function ProjectFavicon(props: {
   readonly open?: boolean;
   readonly size?: number;
   readonly projectTitle: string;
+  readonly repositoryIdentity?: RepositoryIdentity | null;
   readonly workspaceRoot?: string | null;
   readonly faviconPath?: string | null;
 }) {
   const size = props.size ?? 42;
+  const useDispatchBrand =
+    !props.faviconPath && isCanonicalDispatchRepository(props.repositoryIdentity);
   const faviconUrl = useAtomValue(
     props.workspaceRoot == null
       ? EMPTY_FAVICON_URL
@@ -41,7 +46,22 @@ export function ProjectFavicon(props: {
           faviconPath: props.faviconPath,
         }),
   );
-  const renderableFaviconUrl = isProjectFaviconFallbackUrl(faviconUrl) ? null : faviconUrl;
+  const renderableFaviconUrl =
+    useDispatchBrand || isProjectFaviconFallbackUrl(faviconUrl) ? null : faviconUrl;
+  if (useDispatchBrand) {
+    return (
+      <View
+        style={{
+          width: size,
+          height: size,
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+      >
+        <DispatchMark colorClassName="accent-icon" size={size} />
+      </View>
+    );
+  }
   // Inline images are self-contained; remote URLs key on their revision so signed-token
   // rotation reuses the disk cache while a changed icon starts from the loading state.
   const cacheKey =

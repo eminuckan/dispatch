@@ -1,6 +1,7 @@
 import type { EnvironmentProject } from "@dispatch/client-runtime/state/shell";
 import {
   getProjectFaviconResourceKey,
+  isCanonicalDispatchRepository,
   isProjectFaviconFallbackUrl,
 } from "@dispatch/shared/projectFavicon";
 import { FolderCodeIcon } from "lucide-react";
@@ -11,6 +12,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { projectFaviconUrlAtom } from "../state/assets";
 import { deriveProjectIdentity } from "../projectIdentity";
 import { projectIconColorClassName } from "../projectIconColors";
+import { DispatchMark } from "./DispatchMark";
 import { ProjectMonogram } from "./ProjectMonogram";
 import { cn } from "~/lib/utils";
 
@@ -28,7 +30,7 @@ function DynamicProjectIconFallback() {
 // changes the automatic icon, which is how the command palette drifted once.
 export type ProjectFaviconProject = Pick<
   EnvironmentProject,
-  "environmentId" | "workspaceRoot" | "title" | "faviconPath" | "projectIcon"
+  "environmentId" | "workspaceRoot" | "title" | "faviconPath" | "projectIcon" | "repositoryIdentity"
 >;
 export function ProjectFavicon(input: {
   project: ProjectFaviconProject;
@@ -78,6 +80,15 @@ export function ProjectFavicon(input: {
           />
         </Suspense>
       </span>
+    );
+  }
+
+  if (!project.faviconPath && isCanonicalDispatchRepository(project.repositoryIdentity)) {
+    return (
+      <DispatchMark
+        aria-hidden
+        className={cn("size-3.5 shrink-0 text-foreground", input.className)}
+      />
     );
   }
   const FallbackIcon = input.fallbackIcon ?? FolderCodeIcon;

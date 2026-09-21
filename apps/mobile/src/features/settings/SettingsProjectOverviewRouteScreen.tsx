@@ -97,6 +97,7 @@ function ProjectOverviewContent(props: {
         <ProjectFavicon
           environmentId={representative.environmentId}
           projectTitle={displayName}
+          repositoryIdentity={representative.repositoryIdentity}
           workspaceRoot={representative.workspaceRoot}
           faviconPath={representative.faviconPath}
           size={48}

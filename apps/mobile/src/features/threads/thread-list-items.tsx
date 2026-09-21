@@ -149,6 +149,7 @@ export const ThreadListGroupHeader = memo(function ThreadListGroupHeader(props: 
           environmentId={props.project.environmentId}
           faviconPath={props.project.faviconPath}
           open={!props.collapsed}
+          repositoryIdentity={props.project.repositoryIdentity}
           size={compact ? 22 : 18}
           projectTitle={props.project.title}
           workspaceRoot={props.project.workspaceRoot}
