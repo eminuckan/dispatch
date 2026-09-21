@@ -5,8 +5,9 @@ description: Test Dispatch's web and desktop UI through its built-in Browser pan
 
 # Test Dispatch web and desktop
 
-Prefer Dispatch's built-in Browser panel for verification when its tools are
-available. If they are unavailable, use the existing browser automation tools
+Prefer Dispatch's built-in Browser panel for verification when its tools and
+panel runtime are available. If the tools are absent or `preview_status`
+reports the panel unavailable, use the existing browser automation tools
 already connected to the session instead. Do not install a new automation
 system just for verification. For native mobile testing, use
 [test-t3-mobile](../test-t3-mobile/SKILL.md).
@@ -25,12 +26,13 @@ inspecting or seeding SQLite. Stop the test server before direct fixture writes.
 
 ## Use the Browser panel
 
-When the Browser panel tools are available, call `preview_status`, then
-`preview_open` if the panel is closed. Navigate to the complete startup pairing
-URL once with `preview_navigate`, then use `preview_snapshot` and Dispatch's
-interaction tools. Otherwise open the same pairing URL in the session's existing
-browser automation and keep using that tab. If the token was consumed or expired,
-run `node apps/server/src/bin.ts pair` for a fresh one.
+When the Browser panel tools are available, call `preview_status`. If it reports
+the panel available, call `preview_open` when closed, navigate to the complete
+startup pairing URL once with `preview_navigate`, then use `preview_snapshot`
+and Dispatch's interaction tools. If the tools are absent or the panel runtime is
+unavailable, open the same pairing URL in the session's existing browser automation
+and keep using that tab. If the token was consumed or expired, run
+`node apps/server/src/bin.ts pair` for a fresh one.
 
 ## Verify and retain
 

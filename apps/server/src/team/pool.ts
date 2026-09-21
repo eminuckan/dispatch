@@ -64,8 +64,7 @@ export function poolCandidates(
           const existing = approved.filter(
             (profile) =>
               profile.selection.instanceId === provider.instanceId &&
-              profile.selection.model === model.slug &&
-              !profile.reviewRequired,
+              profile.selection.model === model.slug,
           );
           if (existing.length) return existing;
           return [
@@ -82,15 +81,10 @@ export function poolCandidates(
           ];
         });
     });
-  const profiles: TeamModelProfile[] = approved.filter(
-    (profile) =>
-      !profile.reviewRequired &&
-      providers.some(
-        (provider) =>
-          provider.instanceId === profile.selection.instanceId &&
-          usableModel(provider, profile.selection.model),
-      ),
-  );
+  // Suggestions are an editing inventory, not a runtime-admission snapshot.
+  // Keep every saved profile even while its provider/model/quota is temporarily
+  // unavailable. eligiblePolicy remains the runtime gate.
+  const profiles: TeamModelProfile[] = [...approved];
   const seen = new Set(profiles.map((profile) => profile.id));
   // Round-robin prevents a large aggregator catalog from hiding the other providers.
   for (let index = 0; profiles.length < 40 && queues.some((queue) => index < queue.length); index++)

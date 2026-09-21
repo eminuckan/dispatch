@@ -528,17 +528,13 @@ export const make = Effect.gen(function* () {
           selectCapableLead: !hasExistingCapableLead,
         })
       : provisional;
-    const preserved = candidates.profiles.filter((profile) => profile.reviewRequired !== true);
-    const latest = eligiblePolicy(
-      { ...policy, profiles: [...preserved, ...recommended] },
-      providers,
-    );
-    const remaining = recommended.filter(
-      (profile) => !latest.profiles.some((chosen) => chosen.id === profile.id),
+    const recommendedById = new Map(recommended.map((profile) => [profile.id, profile]));
+    const profiles = candidates.profiles.map(
+      (profile) => recommendedById.get(profile.id) ?? profile,
     );
     const configuredCount = recommended.filter((profile) => profile.reviewRequired !== true).length;
     return {
-      profiles: [...latest.profiles, ...remaining],
+      profiles,
       notes: [
         ...candidates.notes,
         ...(jevResponse && configuredCount > 0

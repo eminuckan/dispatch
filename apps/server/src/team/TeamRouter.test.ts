@@ -445,3 +445,33 @@ it.effect("keeps an existing capable lead when recommending a newly discovered m
     ]);
   }).pipe(Effect.provide(f.layer));
 });
+
+it.effect("keeps saved profiles in recommendations while quota is temporarily exhausted", () => {
+  const f = fixture();
+  return Effect.gen(function* () {
+    const router = yield* make;
+    yield* router.setSecret("fixture-key");
+    yield* router.saveSettings(policy);
+    f.setProviders([
+      {
+        ...provider,
+        usageLimits: {
+          checkedAt: provider.checkedAt,
+          windows: [{ id: "weekly", label: "Weekly", kind: "weekly", usedPercent: 100 }],
+        },
+      },
+    ]);
+
+    const suggestion = yield* router.suggestPool();
+    expect(suggestion.profiles).toEqual([
+      expect.objectContaining({
+        id: "lead",
+        tier: "capable",
+        lead: true,
+        worker: true,
+        selection: { instanceId: provider.instanceId, model: "large" },
+      }),
+    ]);
+    expect(f.calls()).toBe(0);
+  }).pipe(Effect.provide(f.layer));
+});

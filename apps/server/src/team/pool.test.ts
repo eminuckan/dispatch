@@ -132,3 +132,31 @@ it("preserves approved model and effort variants without inferring capabilities 
     true,
   );
 });
+
+it("preserves saved profiles while provider eligibility is temporarily lost", () => {
+  const saved = {
+    ...poolCandidates([provider]).profiles[0]!,
+    id: "saved-opus",
+    reviewRequired: false,
+    tier: "capable" as const,
+    lead: true,
+    worker: true,
+    selection: {
+      instanceId: provider.instanceId,
+      model: "claude-opus-4",
+      options: [{ id: "effort", value: "high" }],
+    },
+  };
+  const limited = {
+    ...provider,
+    usageLimits: {
+      checkedAt: provider.checkedAt,
+      windows: [{ id: "seven_day_opus", label: "Opus", kind: "weekly" as const, usedPercent: 100 }],
+    },
+  };
+
+  expect(poolCandidates([limited], [saved]).profiles).toContainEqual(saved);
+  expect(eligiblePolicy({ ...defaultTeamPolicy, profiles: [saved] }, [limited]).profiles).toEqual(
+    [],
+  );
+});
