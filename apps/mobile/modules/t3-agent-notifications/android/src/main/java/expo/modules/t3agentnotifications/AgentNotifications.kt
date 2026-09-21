@@ -256,22 +256,22 @@ object AgentNotifications {
 
     val legacy = context.getSharedPreferences(LEGACY_STORE, Context.MODE_PRIVATE)
     val values = legacy.all
-    if (values.isEmpty()) return current
-
-    val editor = current.edit()
-    values.forEach { (key, value) ->
-      when (value) {
-        is Boolean -> editor.putBoolean(key, value)
-        is Float -> editor.putFloat(key, value)
-        is Int -> editor.putInt(key, value)
-        is Long -> editor.putLong(key, value)
-        is String -> editor.putString(key, value)
-        is Set<*> -> editor.putStringSet(key, value.filterIsInstance<String>().toSet())
+    if (values.isNotEmpty()) {
+      val editor = current.edit()
+      values.forEach { (key, value) ->
+        when (value) {
+          is Boolean -> editor.putBoolean(key, value)
+          is Float -> editor.putFloat(key, value)
+          is Int -> editor.putInt(key, value)
+          is Long -> editor.putLong(key, value)
+          is String -> editor.putString(key, value)
+          is Set<*> -> editor.putStringSet(key, value.filterIsInstance<String>().toSet())
+        }
       }
+      editor.apply()
+      legacy.edit().clear().apply()
+      cancelLegacyNotifications(context)
     }
-    editor.apply()
-    legacy.edit().clear().apply()
-    cancelLegacyNotifications(context)
     return current
   }
 

@@ -125,10 +125,12 @@ class SubscriptionUsageWidget : AppWidgetProvider() {
       }
 
       val legacy = context.getSharedPreferences(LEGACY_PREFERENCES, 0)
-      val saved = legacy.getString("snapshot", null) ?: return null
-      val snapshot = runCatching { JSONObject(saved) }.getOrNull() ?: return null
-      current.edit().putString("snapshot", saved).apply()
-      legacy.edit().remove("snapshot").apply()
+      val saved = legacy.getString("snapshot", null)
+      val snapshot = saved?.let { runCatching { JSONObject(it) }.getOrNull() }
+      if (snapshot != null && saved != null) {
+        current.edit().putString("snapshot", saved).apply()
+        legacy.edit().remove("snapshot").apply()
+      }
       return snapshot
     }
 
