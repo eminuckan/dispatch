@@ -1,8 +1,10 @@
 # Install Dispatch
 
-Dispatch runs coding agents on your computer and lets you control them from its web and desktop clients. The Dispatch fork does not currently publish its own installer or packaged release endpoint, so the supported setup for this repository is a source checkout.
+Dispatch runs coding agents on your computer and lets you control them from its desktop, web, and mobile clients. Dispatch is pre-stable: Dispatch-owned preview artifacts are published on [GitHub Releases](https://github.com/eminuckan/dispatch/releases), while source checkout remains the supported path for development and for platforms without a published Dispatch artifact.
 
-Do not use upstream installers, release artifacts, or package-manager entries to install Dispatch. Those install the upstream project rather than this fork.
+Do not use upstream T3 Code installers, release artifacts, or package-manager entries to install Dispatch. Those install the upstream project rather than Dispatch.
+
+The currently published Dispatch preview is a signed and notarized macOS Apple Silicon build. There is no stable/latest Dispatch release yet, so check the release page for the platforms actually available before downloading.
 
 ## Requirements
 
@@ -61,7 +63,7 @@ You can run the built server directly:
 node apps/server/dist/bin.mjs
 ```
 
-Local desktop artifacts are available through the platform packaging commands in the [development runbook](../operations/development.md#desktop-artifacts). They are local builds and do not create or configure a Dispatch release channel.
+Local desktop artifacts are available through the platform packaging commands in the [development runbook](../operations/development.md#desktop-artifacts). They are local builds and are separate from the artifacts published on the Dispatch GitHub Releases page.
 
 The current source tree retains several upstream compatibility identifiers. In particular, the legacy CLI alias `t3`, `.t3` data directories, `T3CODE_*` environment variables, service identifiers, and some wire values may still appear in commands or paths. Those identifiers are compatibility details; the canonical CLI and product name are Dispatch.
 
@@ -81,7 +83,7 @@ Pass a path, such as `dispatch app ../my-project`, to open another directory. A 
 
 ## Mobile app
 
-The repository contains a mobile client, but this fork does not currently advertise a Dispatch App Store or Google Play release. Use the source-built web or desktop client for normal setup until Dispatch publishes its own mobile distribution.
+The repository contains a mobile client, but Dispatch does not currently advertise a public App Store or Google Play release. Use the source-built web or desktop client for normal setup until Dispatch publishes its own mobile distribution.
 
 ## Providers
 

@@ -1,6 +1,6 @@
 # Updating Dispatch
 
-Dispatch does not currently publish its own installer, package channel, or hosted release endpoint. For a source checkout, update from the canonical repository and rebuild the client or server you run.
+Dispatch publishes pre-stable preview artifacts on [GitHub Releases](https://github.com/eminuckan/dispatch/releases), but there is no stable/latest Dispatch release channel yet. For a source checkout, update from the canonical repository and rebuild the client or server you run.
 
 ## Before you update
 
@@ -39,10 +39,10 @@ Then restart the process or local artifact you normally use. If the server and c
 
 ## Packaged update controls
 
-The source tree supports canonical `dispatch update` plus the legacy `t3 update` compatibility alias, along with background-service and client-driven update machinery. Those paths require a Dispatch-built release channel to be configured. Until Dispatch publishes that release channel, do not treat upstream packages or upstream update feeds as Dispatch updates.
+The source tree supports canonical `dispatch update` plus the legacy `t3 update` compatibility alias, along with background-service and client-driven update machinery. Those paths require a Dispatch-built release channel to be configured. Do not treat upstream packages or upstream update feeds as Dispatch updates; for public preview builds, the Dispatch GitHub Releases page is the authoritative source for replacement installers.
 
 If you create and operate your own packaged Dispatch build, use the release configuration for that build and follow the update action shown by that client. A source checkout should continue to update through Git as described above.
 
 ## Mobile builds
 
-This fork does not currently advertise a Dispatch App Store or Google Play release. Update a locally built mobile client from the same Dispatch checkout and rebuild it when its native runtime changes.
+Dispatch does not currently advertise a public App Store or Google Play release. Update a locally built mobile client from the same Dispatch checkout and rebuild it when its native runtime changes.

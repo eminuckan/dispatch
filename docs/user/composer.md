@@ -69,7 +69,7 @@ Leaving reasoning level or service tier unset uses the provider's own configurat
 
 ## Jev routing and managed teams (experimental)
 
-On this fork's web and desktop clients, configure Jev in Settings → Orchestration.
+In Dispatch's web and desktop clients, configure Jev in Settings → Orchestration.
 Add your own Jev API key and explicitly choose the allowed model profiles and
 reasoning options. Models in the ordinary picker are not automatically eligible.
 **Build model pool** collects models from every ready configured provider and reuses

@@ -1,6 +1,6 @@
 # Running Dispatch in the background
 
-Dispatch can host agents without keeping the desktop window open. The current public setup for this fork is source-based, so a source checkout does not install a global background service automatically.
+Dispatch can host agents without keeping the desktop window open. A source checkout does not install a global background service automatically; packaged Dispatch builds can provide the canonical `dispatch` launcher and service commands.
 
 ## Source checkout
 
@@ -33,7 +33,7 @@ Dispatch builds use `dispatch` as the canonical launcher. The legacy `t3` comman
 
 Uninstalling the service leaves projects, threads, and settings intact. Running `dispatch service install` again can repair a service that `dispatch service status` reports as broken.
 
-`dispatch update` is available to a packaged Dispatch build, and `t3 update` remains its compatibility alias. Both require a Dispatch release channel. Until this fork publishes one, update source checkouts through Git instead of pointing either command at upstream releases.
+`dispatch update` is available to a packaged Dispatch build, and `t3 update` remains its compatibility alias. Both require a Dispatch release channel. Update source checkouts through Git, and use Dispatch-owned release artifacts rather than pointing either command at upstream releases.
 
 ## Platform support
 
