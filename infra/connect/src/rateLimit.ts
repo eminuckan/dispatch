@@ -15,8 +15,11 @@ export class FixedWindowRateLimiter {
   consume(key: string, now = Date.now()): boolean {
     const current = this.buckets.get(key);
     if (!current || now - current.startedAt >= this.windowMs) {
+      if (!current && this.buckets.size >= 10_000) {
+        this.prune(now);
+        if (this.buckets.size >= 10_000) return false;
+      }
       this.buckets.set(key, { startedAt: now, count: 1 });
-      this.prune(now);
       return true;
     }
     if (current.count >= this.limit) return false;
