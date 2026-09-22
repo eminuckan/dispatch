@@ -141,7 +141,7 @@ export function ComposerAttachmentTray({
                           className="fill-muted/60"
                         />
                         <path
-                          d="M19 5Q22 2 22 6V14Q22 22 14 22H6Q2 22 5 19Z"
+                          d="M0 24Q0 20 3 17L17 3Q20 0 24 0V16Q24 24 16 24Z"
                           className="fill-foreground/15"
                         />
                       </svg>
