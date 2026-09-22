@@ -15,6 +15,8 @@ function Shell({
       className={cn(
         "@container/composer-surface group/composer-surface relative isolate mx-auto w-full max-w-3xl",
         "[--chat-composer-drawer-inset:1.375rem] [--chat-composer-glass-surface:var(--card)] [--chat-composer-outline:rgb(0_0_0/8%)]",
+        // Clear the main corner arc while sharing the editor and footer's leading edge.
+        "[--chat-composer-content-inset:calc(22px-1px)]",
         // Keep the inset available while the strip is hidden and measuring its controls.
         "[--chat-composer-context-inset:calc(16px-var(--control-radius))]",
         "dark:[--chat-composer-glass-surface:var(--surface-raised)] dark:[--chat-composer-highlight:rgb(255_255_255/3%)] dark:[--chat-composer-outline:color-mix(in_srgb,var(--color-white)_5%,transparent)]",
