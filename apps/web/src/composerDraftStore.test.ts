@@ -3188,7 +3188,7 @@ describe("composerDraftStore attachment references", () => {
     ).toEqual([]);
   });
 
-  it("strips references when an image or file is removed", () => {
+  it("strips explicit references when a tray attachment is removed", () => {
     const store = useComposerDraftStore.getState();
     store.setPrompt(threadRef, `see ${imageLink} and ${fileLink} ok`);
     store.addImages(threadRef, [
@@ -3241,7 +3241,7 @@ describe("composerDraftStore attachment references", () => {
     expect(draft?.prompt).toBe("see [notes.txt](t3-context://v1/file/file_fresh-1) ok");
   });
 
-  it("restores a file-only draft with a reference and preserves it through prompt edits", () => {
+  it("adds an explicit file reference on request and preserves it through prompt edits", () => {
     const store = useComposerDraftStore.getState();
     store.addFiles(
       threadRef,
@@ -3265,6 +3265,76 @@ describe("composerDraftStore attachment references", () => {
     const edited = draftFor(threadId, TEST_ENVIRONMENT_ID)!;
     expect(edited.files.map((file) => file.id)).toEqual(["restored"]);
     expect(edited.prompt).toContain("t3-context://v1/file/file_restored");
+  });
+
+  it("keeps a tray file while editing a prompt with no explicit reference", () => {
+    const store = useComposerDraftStore.getState();
+    const file = makeFile("tray-file");
+    store.addFiles(threadRef, [file]);
+    store.setPrompt(threadRef, "Explain the attachment");
+    store.setPrompt(threadRef, "Explain the attachment clearly");
+
+    const edited = draftFor(threadId, TEST_ENVIRONMENT_ID)!;
+    expect(edited.prompt).toBe("Explain the attachment clearly");
+    expect(edited.files).toEqual([file]);
+  });
+
+  it("hydrates tray files without synthesizing inline references", () => {
+    const merged = useComposerDraftStore.persist.getOptions().merge!(
+      {
+        draftsByThreadKey: {
+          [threadKeyFor(threadId, TEST_ENVIRONMENT_ID)]: {
+            prompt: "Explain the attachment",
+            attachments: [],
+            files: [
+              {
+                id: "tray-file",
+                name: "notes.txt",
+                mimeType: "text/plain",
+                sizeBytes: 3,
+                attachmentId: "uploaded",
+                environmentId: TEST_ENVIRONMENT_ID,
+              },
+            ],
+          },
+        },
+      },
+      useComposerDraftStore.getInitialState(),
+    );
+
+    const hydrated = merged.draftsByThreadKey[threadKeyFor(threadId, TEST_ENVIRONMENT_ID)]!;
+    expect(hydrated.prompt).toBe("Explain the attachment");
+    expect(hydrated.prompt).not.toContain("t3-context:");
+    expect(hydrated.files.map((file) => file.id)).toEqual(["tray-file"]);
+  });
+
+  it("preserves an explicit file reference while hydrating its tray attachment", () => {
+    const explicitReference = "[notes.txt](t3-context://v1/file/file_explicit-file)";
+    const merged = useComposerDraftStore.persist.getOptions().merge!(
+      {
+        draftsByThreadKey: {
+          [threadKeyFor(threadId, TEST_ENVIRONMENT_ID)]: {
+            prompt: `Use ${explicitReference} here`,
+            attachments: [],
+            files: [
+              {
+                id: "explicit-file",
+                name: "notes.txt",
+                mimeType: "text/plain",
+                sizeBytes: 3,
+                attachmentId: "uploaded",
+                environmentId: TEST_ENVIRONMENT_ID,
+              },
+            ],
+          },
+        },
+      },
+      useComposerDraftStore.getInitialState(),
+    );
+
+    const hydrated = merged.draftsByThreadKey[threadKeyFor(threadId, TEST_ENVIRONMENT_ID)]!;
+    expect(hydrated.prompt).toBe(`Use ${explicitReference} here`);
+    expect(hydrated.files.map((file) => file.id)).toEqual(["explicit-file"]);
   });
 
   it.each(["old.file:1", "file-1"])(
@@ -3327,7 +3397,7 @@ describe("composerDraftStore attachment references", () => {
     expect(draft.prompt).toContain(prompt);
   });
 
-  it("appends chips for persisted files that predate references", () => {
+  it("keeps legacy persisted files tray-only when they have no explicit reference", () => {
     const persistApi = useComposerDraftStore.persist as unknown as {
       getOptions: () => {
         merge: (
@@ -3350,7 +3420,9 @@ describe("composerDraftStore attachment references", () => {
       },
       useComposerDraftStore.getInitialState(),
     );
-    expect(mergedState.draftsByThreadKey[threadKeyFor(threadId)]?.prompt).toBe(`old ${fileLink} `);
+    const hydrated = mergedState.draftsByThreadKey[threadKeyFor(threadId)]!;
+    expect(hydrated.prompt).toBe("old");
+    expect(hydrated.files.map((file) => file.id)).toEqual(["file-1"]);
   });
 
   it("migrates legacy image references without doubling their image marker", () => {

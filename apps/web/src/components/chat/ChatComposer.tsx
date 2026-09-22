@@ -161,11 +161,9 @@ import {
 } from "@dispatch/client-runtime/state/attachments";
 import {
   attachmentsToReleaseOnUploadCapabilityLoss,
-  composerOtherFilesForPresentation,
   classifyComposerAttachmentFile,
   fileAttachmentCapabilityBlockReason,
   fileAttachmentStagingLimit,
-  isPreviewableComposerVideo,
   normalizeComposerImageFileMimeType,
   shouldHandleComposerAttachmentPaste,
 } from "./composerAttachmentFiles";
@@ -215,10 +213,8 @@ import { useOpenPrLink } from "~/lib/openPullRequestLink";
 import {
   collectInlineContextIds,
   type ComposerContextReference,
-  ensureInlineContextReferences,
   formatInlineContextReference,
   insertInlineContextReference,
-  inlineContextReferenceReplacement,
   toKindScopedComposerContextId,
 } from "~/lib/composerContextReferences";
 import {
@@ -226,7 +222,6 @@ import {
   composerContextImportLookupIds,
   isSameComposerContextPayload,
   uploadedAttachmentContextRecord,
-  fileContextReference,
   imageContextReference,
   previewAnnotationContextId,
   previewAnnotationContextRecord,
@@ -258,6 +253,7 @@ import { resolveModelPickerSelectedModel } from "./ModelPickerContent";
 import { type ComposerCommandItem, ComposerCommandMenu } from "./ComposerCommandMenu";
 import { ComposerPendingApprovalActions } from "./ComposerPendingApprovalActions";
 import { CompactComposerControlsMenu } from "./CompactComposerControlsMenu";
+import { ComposerAttachmentTray } from "./ComposerAttachmentTray";
 import { ComposerImageThumbnail } from "./ComposerImageThumbnail";
 import { ComposerPrimaryActions } from "./ComposerPrimaryActions";
 import { ComposerPendingApprovalPanel } from "./ComposerPendingApprovalPanel";
@@ -292,7 +288,6 @@ import {
   shouldReserveContextWindowMeter,
 } from "./ContextWindowMeter.logic";
 import {
-  attachVideoThumbnail,
   buildAttachmentVideoPreview,
   buildExpandedImagePreview,
   type ExpandedImagePreview,
@@ -327,29 +322,6 @@ import {
   resetComposerScrollGesture,
   suppressActiveComposerScrollGesture,
 } from "./composerScrollGesture";
-import { prepareVideoFirstFrame } from "../../lib/videoFirstFrame";
-
-function ComposerVideoThumbnail({ file }: { file: File }) {
-  const setVideo = useCallback(
-    (video: HTMLVideoElement | null) => {
-      if (!video) return;
-      return attachVideoThumbnail(video, file);
-    },
-    [file],
-  );
-
-  return (
-    <video
-      ref={setVideo}
-      muted
-      playsInline
-      preload="metadata"
-      aria-hidden="true"
-      onLoadedMetadata={(event) => prepareVideoFirstFrame(event.currentTarget)}
-      className="pointer-events-none absolute inset-0 size-full object-cover"
-    />
-  );
-}
 
 type ComposerCommandMenuPosition = {
   bottom: number;
@@ -943,7 +915,6 @@ import {
   CircleAlertIcon,
   PaperclipIcon,
   PencilRulerIcon,
-  PlayIcon,
   ShieldIcon,
   XIcon,
 } from "lucide-react";
@@ -1554,7 +1525,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     scheduleComposerFocus,
     setThreadError,
     onExpandImage,
-    onFileOpen,
   } = props;
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const activeTasksProgress = props.threadSyncPhase === null ? props.activeTasksProgress : null;
@@ -1588,25 +1558,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const [teamComposing, setTeamComposing] = useState(false);
   const composerImages = attachmentDraft.images;
   const composerFiles = attachmentDraft.files;
-  // A question answer has no chips: its files live in the question draft and show in the
-  // strip. Only the thread prompt's references decide which files leave the strip.
-  const inlineFileIdSet = useMemo(() => {
-    if (questionAttachmentTarget) return new Set<string>();
-    const contextIds = new Set(collectInlineContextIds(prompt));
-    return new Set(
-      composerFiles
-        .filter((file) => contextIds.has(toKindScopedComposerContextId("file", file.id)))
-        .map((file) => file.id),
-    );
-  }, [composerFiles, prompt, questionAttachmentTarget]);
-  const composerVideos = composerFiles.filter((file) =>
-    isPreviewableComposerVideo(file, environmentId),
-  );
-  const composerOtherFiles = composerOtherFilesForPresentation(
-    composerFiles,
-    environmentId,
-    inlineFileIdSet,
-  );
   const composerTerminalContexts = composerDraft.terminalContexts;
   const composerPreviewAnnotations = composerDraft.previewAnnotations;
   const composerReviewComments = composerDraft.reviewComments;
@@ -2687,9 +2638,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const addComposerFilesToDraft = useCallback(
     (files: ComposerFileAttachment[]) =>
       addComposerDraftFiles(attachmentDraftTarget, files, {
-        appendReference: questionAttachmentTarget === null,
+        appendReference: false,
       }),
-    [addComposerDraftFiles, attachmentDraftTarget, questionAttachmentTarget],
+    [addComposerDraftFiles, attachmentDraftTarget],
   );
 
   const removeComposerImageFromDraft = useCallback(
@@ -4311,7 +4262,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         }
         const restoredFiles = [...markerReplacements, ...filesToAppend];
         if (restoredFiles.length > 0) {
-          addComposerDraftFiles(composerDraftTarget, restoredFiles, { appendReference: true });
+          addComposerDraftFiles(composerDraftTarget, restoredFiles, { appendReference: false });
           const restoredFilePrompt = getComposerDraft(composerDraftTarget)?.prompt;
           if (restoredFilePrompt !== undefined && restoredFilePrompt !== promptRef.current) {
             promptRef.current = restoredFilePrompt;
@@ -4764,6 +4715,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const expandedComposerImages = isComposerResting
     ? standaloneComposerImages.filter((image) => pendingSnapShotIdSet.has(image.id))
     : standaloneComposerImages;
+  const snapshotComposerImages = expandedComposerImages.filter(
+    (image) => image.source?.kind === "snap-shot",
+  );
   // The relocated controls live in the context strip whenever the composer is
   // collapsed for any reason, the desktop resting layout or the phone
   // collapse. Both leave the footer unrendered, so the strip is the only place
@@ -5301,7 +5255,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       countQuestionAttachments(otherQuestionKeys)
     );
   };
-  /** Resolves true when at least one chip was inserted for the accepted attachments. */
+  /** Resolves true when at least one attachment was added to the draft. */
   const addComposerAttachments = async (
     files: File[],
     options?: {
@@ -5407,17 +5361,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       }
     }
     setThreadError(threadId, error);
-    let insertedAny = false;
+    let addedAny = false;
     if (acceptedFiles.length > 0) {
-      // Only files the draft actually took get a chip; a duplicate is deduped by the store
-      // and a chip for it would point at nothing.
+      // Do not consume a pasted selection unless its attachment was accepted.
       const storedIds = new Set(addComposerFilesToDraft(acceptedFiles));
       const storedFiles = acceptedFiles.filter((file) => storedIds.has(file.id));
-      if (storedFiles.length > 0) {
-        insertedAny = insertAttachmentReferences(
-          storedFiles.map(fileContextReference),
-          options?.selection,
-        );
+      addedAny = storedFiles.length > 0;
+      if (options?.source?._tag === "pasted-text" && storedFiles.length > 0) {
+        if (options.selection)
+          applyPromptReplacement(options.selection.start, options.selection.end, "");
       }
       if (options?.source?._tag === "pasted-text" && storedFiles.length > 0) {
         const attached = storedFiles[0]!;
@@ -5431,7 +5383,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         });
       }
     }
-    if (acceptedImages.length === 0) return insertedAny;
+    if (acceptedImages.length === 0) return addedAny;
 
     pendingImageCompressionsRef.current.set(
       attachmentTargetKey,
@@ -5483,10 +5435,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             : [],
       );
       const storedImages = nextImages.filter((image) => storedImageIds.has(image.id));
-      if (storedImages.length > 0) {
-        insertedAny =
-          insertAttachmentReferences(storedImages.map(imageContextReference)) || insertedAny;
-      }
+      addedAny = storedImages.length > 0 || addedAny;
       // Only failures are reported here. Success must not pass `null`: by
       // now other work (a failed send, an overlapping paste) may have set a
       // thread error this call knows nothing about, and clearing it would
@@ -5505,31 +5454,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         pendingImageCompressionsRef.current.delete(attachmentTargetKey);
       }
     }
-    return insertedAny;
-  };
-
-  /**
-   * Chips for freshly attached files land at the caret; when the editor cannot take
-   * input (approval, pending questions) they are appended so the file is never invisible.
-   */
-  const insertAttachmentReferences = (
-    references: ReadonlyArray<ComposerContextReference>,
-    selection?: { start: number; end: number },
-  ): boolean => {
-    if (references.length === 0) return false;
-    // Question answers carry attachments beside the answer, never as chips. Falling back to
-    // the thread prompt here would hide the file behind a reference the question never shows.
-    if (questionAttachmentTarget) return false;
-    if (selection) {
-      const edit = inlineContextReferenceReplacement(promptRef.current, selection, references);
-      return applyPromptReplacement(edit.start, edit.end, edit.text);
-    }
-    const text = references.map(formatInlineContextReference).join(" ");
-    const inserted = insertComposerText(`${text} `, "cursor", { ensureLeadingBoundary: true });
-    if (!inserted) {
-      setPrompt(ensureInlineContextReferences(promptRef.current, references));
-    }
-    return true;
+    return addedAny;
   };
 
   const removeComposerImage = (imageId: string) => {
@@ -5878,9 +5803,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         }
       },
       addDroppedFiles: (files: File[]) => {
-        void addComposerAttachments(files).then((inserted) => {
-          if (!inserted) focusComposer();
-        });
+        void addComposerAttachments(files).then(() => focusComposer());
       },
       addDroppedFolders: (folders: File[]) => {
         const target = folderDropTarget({
@@ -6501,19 +6424,16 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
 
                 {!isComposerCollapsedMobile &&
                   !isComposerApprovalState &&
-                  (uncommittedSnapShotIds.length > 0 ||
-                    composerVideos.length > 0 ||
-                    expandedComposerImages.length > 0) && (
+                  (uncommittedSnapShotIds.length > 0 || snapshotComposerImages.length > 0) && (
                     <div
                       className={cn(
                         "mb-3 flex max-w-full gap-2",
-                        pendingSnapShotIds.length > 0 ||
-                          expandedComposerImages.some((image) => image.source?.kind === "snap-shot")
+                        pendingSnapShotIds.length > 0 || snapshotComposerImages.length > 0
                           ? "snap-x snap-proximity overflow-x-auto overscroll-x-contain pb-1 [scrollbar-color:color-mix(in_srgb,var(--contrast-foreground)_18%,transparent)_transparent] [scrollbar-width:thin] [&::-webkit-scrollbar]:h-2.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:border-3 [&::-webkit-scrollbar-thumb]:border-transparent [&::-webkit-scrollbar-thumb]:bg-[color-mix(in_srgb,var(--contrast-foreground)_18%,transparent)] [&::-webkit-scrollbar-thumb]:bg-clip-content [&::-webkit-scrollbar-thumb:hover]:bg-[color-mix(in_srgb,var(--contrast-foreground)_28%,transparent)] [&::-webkit-scrollbar-track]:mx-1 [&::-webkit-scrollbar-track]:bg-transparent"
                           : "flex-wrap",
                       )}
                     >
-                      {expandedComposerImages
+                      {snapshotComposerImages
                         .map((image) => {
                           const upload = supportsAttachmentUploads
                             ? uploadsByImageId[image.id]
@@ -6675,169 +6595,41 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                             />
                           )),
                         )}
-                      {composerVideos.map((file) => {
-                        const fileCanUpload =
-                          supportsAttachmentUploads &&
-                          maxFileAttachmentBytes !== null &&
-                          file.sizeBytes <= maxFileAttachmentBytes;
-                        const upload = fileCanUpload ? uploadsByImageId[file.id] : undefined;
-                        return (
-                          <div
-                            key={file.id}
-                            className="relative h-16 w-16 shrink-0 snap-start overflow-hidden rounded-lg border border-border/80 bg-black"
-                          >
-                            <button
-                              type="button"
-                              className="flex h-full w-full cursor-zoom-in flex-col items-center justify-center gap-1 px-1 text-white"
-                              aria-label={`Play ${file.name}`}
-                              onClick={() => {
-                                if (file.file !== null) {
-                                  const preview = buildExpandedImagePreview([file], file.id);
-                                  if (preview) onExpandImage(preview);
-                                  return;
-                                }
-                                if (!file.uploadedAttachmentId) return;
-                                onFileOpen({ ...file, id: file.uploadedAttachmentId });
-                              }}
-                            >
-                              {file.file && (
-                                <>
-                                  <ComposerVideoThumbnail file={file.file} />
-                                  <span className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/70 via-black/10 to-black/10" />
-                                </>
-                              )}
-                              <PlayIcon className="relative z-10 size-4 fill-current drop-shadow-md" />
-                            </button>
-                            {upload?.status === "uploading" && (
-                              <span className="pointer-events-none absolute inset-x-0 bottom-0 bg-background/85 px-1 text-center text-[10px] text-foreground">
-                                {formatAttachmentUploadProgress(upload.progress)}
-                              </span>
-                            )}
-                            {upload?.status === "failed" && (
-                              <Tooltip>
-                                <TooltipTrigger
-                                  render={
-                                    <Button
-                                      variant="ghost"
-                                      size="icon-xs"
-                                      className="absolute bottom-1 left-1 bg-background/85 hover:bg-background/95"
-                                      onClick={() =>
-                                        retryAttachmentUpload({
-                                          environmentId,
-                                          image: file,
-                                          draftTarget: attachmentDraftTarget,
-                                        })
-                                      }
-                                      aria-label={`Retry upload for ${file.name}`}
-                                    />
-                                  }
-                                >
-                                  <RefreshIcon />
-                                </TooltipTrigger>
-                                <TooltipPopup
-                                  side="top"
-                                  className="max-w-64 whitespace-normal leading-tight"
-                                >
-                                  {upload.reason}
-                                </TooltipPopup>
-                              </Tooltip>
-                            )}
-                            <Button
-                              variant="ghost"
-                              size="icon-xs"
-                              className="absolute right-1 top-1 bg-background/80 hover:bg-background/90"
-                              onClick={() => removeComposerFileFromDraft(file.id)}
-                              aria-label={`Remove ${file.name}`}
-                            >
-                              <XIcon />
-                            </Button>
-                          </div>
-                        );
-                      })}
                     </div>
                   )}
 
-                {!isComposerCollapsedMobile &&
-                  !isComposerApprovalState &&
-                  composerOtherFiles.length > 0 && (
-                    <div className="mb-3 flex flex-col gap-1">
-                      {composerOtherFiles.map((file) => {
-                        const fileCanUpload =
-                          supportsAttachmentUploads &&
-                          maxFileAttachmentBytes !== null &&
-                          file.sizeBytes <= maxFileAttachmentBytes;
-                        const upload = fileCanUpload ? uploadsByImageId[file.id] : undefined;
-                        const needsReattach = composerFileNeedsReattach(file);
-                        const canReattachFile =
-                          fileStagingLimit !== null && file.sizeBytes <= fileStagingLimit;
-                        return (
-                          <div
-                            key={file.id}
-                            className="flex min-w-0 items-center gap-2 py-1 text-sm text-foreground"
-                          >
-                            <PierreEntryIcon
-                              pathValue={file.name}
-                              kind="file"
-                              theme={resolvedTheme}
-                            />
-                            <button
-                              type="button"
-                              disabled={needsReattach}
-                              className="min-w-0 flex-1 truncate text-left hover:underline focus-visible:outline-2"
-                              onClick={() => setPreviewFileId(file.id)}
-                            >
-                              {file.name}
-                            </button>
-                            <span className="shrink-0 text-xs text-secondary-label">
-                              {needsReattach
-                                ? canReattachFile
-                                  ? "Attach again"
-                                  : "Remove to send"
-                                : upload?.status === "uploading"
-                                  ? formatAttachmentUploadProgress(upload.progress)
-                                  : formatAttachmentSize(file.sizeBytes)}
-                            </span>
-                            {!needsReattach && upload?.status === "failed" ? (
-                              <Tooltip>
-                                <TooltipTrigger
-                                  render={
-                                    <Button
-                                      variant="ghost"
-                                      size="icon-xs"
-                                      onClick={() =>
-                                        retryAttachmentUpload({
-                                          environmentId,
-                                          image: file,
-                                          draftTarget: attachmentDraftTarget,
-                                        })
-                                      }
-                                      aria-label={`Retry upload for ${file.name}`}
-                                    />
-                                  }
-                                >
-                                  <RefreshIcon />
-                                </TooltipTrigger>
-                                <TooltipPopup
-                                  side="top"
-                                  className="max-w-64 whitespace-normal leading-tight"
-                                >
-                                  {upload.reason}
-                                </TooltipPopup>
-                              </Tooltip>
-                            ) : null}
-                            <Button
-                              variant="ghost"
-                              size="icon-xs"
-                              onClick={() => removeComposerFileFromDraft(file.id)}
-                              aria-label={`Remove ${file.name}`}
-                            >
-                              <XIcon />
-                            </Button>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
+                {!isComposerCollapsedMobile && !isComposerApprovalState && (
+                  <ComposerAttachmentTray
+                    attachments={[
+                      ...expandedComposerImages.filter(
+                        (image) => image.source?.kind !== "snap-shot",
+                      ),
+                      ...composerFiles,
+                    ]}
+                    uploads={uploadsByImageId}
+                    nonPersistedImageIds={nonPersistedComposerImageIdSet}
+                    theme={resolvedTheme}
+                    onPreview={(attachment) => {
+                      if (attachment.type === "image")
+                        composerContextActions.expandImage(attachment.id);
+                      else if (isVideoAttachment(attachment))
+                        composerContextActions.expandVideo(attachment.id);
+                      else setPreviewFileId(attachment.id);
+                    }}
+                    onRemove={(attachment) =>
+                      attachment.type === "image"
+                        ? removeComposerImage(attachment.id)
+                        : removeComposerFileFromDraft(attachment.id)
+                    }
+                    onRetry={(attachment) =>
+                      retryAttachmentUpload({
+                        environmentId,
+                        image: attachment,
+                        draftTarget: attachmentDraftTarget,
+                      })
+                    }
+                  />
+                )}
 
                 <div
                   className={cn(
@@ -7035,12 +6827,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                           onChange={(event) => {
                             const files = Array.from(event.currentTarget.files ?? []);
                             event.currentTarget.value = "";
-                            // Inserting a chip refocuses the editor after the draft renders;
-                            // focusing synchronously here would report the editor's stale text
-                            // over the prompt that was just written.
-                            void addComposerAttachments(files).then((inserted) => {
-                              if (!inserted) focusComposer();
-                            });
+                            // Restore editor focus after attachment preparation finishes.
+                            void addComposerAttachments(files).then(() => focusComposer());
                           }}
                         />
                         <Tooltip>

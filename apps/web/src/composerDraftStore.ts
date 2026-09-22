@@ -2446,11 +2446,11 @@ function toHydratedThreadDraft(
     })) ?? [];
 
   return {
-    // Files predating inline references get a chip appended; images stay shelf-only.
+    // Attachment membership belongs to the tray. Preserve explicit file references already
+    // present in the prompt, but do not synthesize one for every hydrated file.
     prompt: ensureInlineContextReferences(persistedDraft.prompt, [
       ...(persistedDraft.reviewComments ?? []).map(reviewCommentContextReference),
       ...(persistedDraft.previewAnnotations ?? []).map(previewAnnotationContextReference),
-      ...files.map(fileContextReference),
     ]),
     images: hydrateImagesFromPersisted(persistedDraft.attachments),
     files,

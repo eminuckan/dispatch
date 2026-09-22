@@ -2,11 +2,7 @@ import type { PreviewAnnotationPayload } from "@dispatch/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import type { ComposerFileAttachment, ComposerImageAttachment } from "../../composerDraftStore";
-import {
-  buildMessageContext,
-  fileContextReference,
-  previewAnnotationContextId,
-} from "../../lib/composerContextRecords";
+import { buildMessageContext, previewAnnotationContextId } from "../../lib/composerContextRecords";
 import {
   reconcileAttachmentContextReferences,
   type RetainedAttachmentContextPayloads,
@@ -53,40 +49,28 @@ function retention(): RetainedAttachmentContextPayloads {
 }
 
 describe("reconcileAttachmentContextReferences", () => {
-  it("restores file bytes after deleting and undoing its chip", () => {
+  it("leaves tray-owned file payloads alone when explicit references change", () => {
     const retained = retention();
-    const removed = reconcileAttachmentContextReferences({
+    const withoutReference = reconcileAttachmentContextReferences({
       referencedContextIds: new Set(),
       files: [file],
       images: [],
       previewAnnotations: [],
       retained,
     });
-    expect(removed.filesToRemove).toEqual(["file-1"]);
+    expect(withoutReference.filesToRemove).toEqual([]);
+    expect(withoutReference.filesToRestore).toEqual([]);
+    expect(retained.files.size).toBe(0);
 
-    const restored = reconcileAttachmentContextReferences({
-      referencedContextIds: new Set([fileContextReference(file).contextId]),
-      files: [],
+    const withReference = reconcileAttachmentContextReferences({
+      referencedContextIds: new Set(["file_file-1"]),
+      files: [file],
       images: [],
       previewAnnotations: [],
       retained,
     });
-    expect(restored.filesToRestore).toEqual([file]);
-    expect(restored.filesToRestore[0]?.file).toBe(file.file);
-    expect(
-      buildMessageContext({
-        terminalContexts: [],
-        reviewComments: [],
-        previewAnnotations: [],
-        attachments: [{ attachment: restored.filesToRestore[0]!, attachmentId: "uploaded-file" }],
-      })?.records,
-    ).toEqual([
-      expect.objectContaining({
-        kind: "file",
-        contextId: "file_file-1",
-        attachmentId: "uploaded-file",
-      }),
-    ]);
+    expect(withReference.filesToRemove).toEqual([]);
+    expect(withReference.filesToRestore).toEqual([]);
   });
 
   it("restores an annotation and its screenshot attachment after undo", () => {

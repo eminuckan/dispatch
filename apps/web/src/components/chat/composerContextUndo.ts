@@ -1,7 +1,7 @@
 import type { PreviewAnnotationPayload } from "@dispatch/contracts";
 
 import type { ComposerFileAttachment, ComposerImageAttachment } from "../../composerDraftStore";
-import { fileContextReference, previewAnnotationContextId } from "../../lib/composerContextRecords";
+import { previewAnnotationContextId } from "../../lib/composerContextRecords";
 
 interface RetainedPreviewAnnotation {
   annotation: PreviewAnnotationPayload;
@@ -25,21 +25,12 @@ export function reconcileAttachmentContextReferences(input: {
   annotationIdsToRemove: string[];
   annotationsToRestore: RetainedPreviewAnnotation[];
 } {
-  const liveFileContextIds = new Set<string>(
-    input.files.map((file) => fileContextReference(file).contextId),
-  );
+  // Files are owned by the attachment tray. Inline references are optional pointers to an
+  // attached file, so deleting or undoing a reference must not remove or restore its payload.
+  // Keep these compatibility fields until the composer call site drops the old reconciliation
+  // branches.
   const filesToRemove: string[] = [];
-  for (const file of input.files) {
-    const contextId = fileContextReference(file).contextId;
-    if (input.referencedContextIds.has(contextId)) continue;
-    input.retained.files.set(contextId, file);
-    filesToRemove.push(file.id);
-  }
-  const filesToRestore = [...input.referencedContextIds].flatMap((contextId) => {
-    if (liveFileContextIds.has(contextId)) return [];
-    const file = input.retained.files.get(contextId);
-    return file ? [file] : [];
-  });
+  const filesToRestore: ComposerFileAttachment[] = [];
 
   const imagesById = new Map(input.images.map((image) => [image.id, image]));
   const liveAnnotationContextIds = new Set<string>(
