@@ -1,6 +1,7 @@
 import { HostProcessArchitecture } from "@dispatch/shared/hostProcess";
 import * as Effect from "effect/Effect";
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect } from "vite-plus/test";
+import { it } from "@effect/vitest";
 import { MacUpdater } from "electron-updater/out/MacUpdater.js";
 import { findFile, Provider } from "electron-updater/out/providers/Provider.js";
 import type {
@@ -55,16 +56,18 @@ describe("electron-updater 6.8.9 channel/artifact contract", () => {
     }
   });
 
-  it("selects the current Windows architecture from a merged multi-arch manifest", () => {
-    const currentArch = Effect.runSync(HostProcessArchitecture) === "arm64" ? "arm64" : "x64";
-    const otherArch = currentArch === "arm64" ? "x64" : "arm64";
-    const selected = findFile(
-      [file(`Dispatch-1.2.3-${otherArch}.exe`), file(`Dispatch-1.2.3-${currentArch}.exe`)],
-      "exe",
-    );
+  it.effect("selects the current Windows architecture from a merged multi-arch manifest", () =>
+    Effect.gen(function* () {
+      const currentArch = (yield* HostProcessArchitecture) === "arm64" ? "arm64" : "x64";
+      const otherArch = currentArch === "arm64" ? "x64" : "arm64";
+      const selected = findFile(
+        [file(`Dispatch-1.2.3-${otherArch}.exe`), file(`Dispatch-1.2.3-${currentArch}.exe`)],
+        "exe",
+      );
 
-    expect(selected?.url.pathname).toContain(`-${currentArch}.exe`);
-  });
+      expect(selected?.url.pathname).toContain(`-${currentArch}.exe`);
+    }),
+  );
 
   it("filters merged macOS manifests to arm64 on Apple Silicon and x64 otherwise", () => {
     const files = [
