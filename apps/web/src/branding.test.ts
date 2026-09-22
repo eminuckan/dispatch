@@ -72,6 +72,23 @@ describe("branding", () => {
 });
 
 describe("branding logic", () => {
+  it("keeps Preview distinct from Nightly for a connected preview server", () => {
+    expect(
+      resolveServerBackedAppStageLabel({
+        primaryServerVersion: "0.0.43-preview.20260922.3",
+        fallbackStageLabel: "Alpha",
+      }),
+    ).toBe("Preview");
+    expect(
+      resolveServerBackedAppDisplayName({
+        baseName: "Dispatch",
+        fallbackDisplayName: "Dispatch (Alpha)",
+        fallbackStageLabel: "Alpha",
+        primaryServerVersion: "0.0.43-preview.20260922.3",
+      }),
+    ).toBe("Dispatch (Preview)");
+  });
+
   it("returns Nightly for nightly primary server versions", () => {
     expect(
       resolveServerBackedAppStageLabel({
