@@ -173,7 +173,10 @@ function AutocompleteList({ className, ...props }: AutocompletePrimitive.List.Pr
   return (
     <ScrollArea scrollbarGutter scrollFade>
       <AutocompletePrimitive.List
-        className={cn("not-empty:scroll-py-1 not-empty:p-1", className)}
+        className={cn(
+          "not-empty:scroll-py-(--popup-content-inset) not-empty:p-(--popup-content-inset)",
+          className,
+        )}
         data-slot="autocomplete-list"
         {...props}
       />

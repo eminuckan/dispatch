@@ -168,6 +168,9 @@ Full glossary with file links: `docs/internals/glossary.md`
 
 ## Taste
 
+- Apply the nested radius rule to every rounded surface in web, desktop, and mobile. For adjacent nested corners, keep them concentric: `outer radius = inner radius + total inset`. Include hover, pressed, selected, and keyboard-focus backgrounds in this check, even when the inner surface is transparent at rest.
+- Preserve existing radii when correcting spacing. Derive padding or margin from the radius difference and count every intervening layout border, wrapper, gap, and offset on both axes. For a bordered parent, `padding = outer radius - inner radius - border width`; an overlaid pseudo-element border consumes no layout space. Keep the two insets meeting each rounded corner equal, and update any dependent height, overlap, or clipping geometry together. Prefer the shared component and existing geometry tokens over local overrides.
+- Check actual corner pairs, not merely rounded descendants. Flush clipping layers share one contour. Nested circles and pills follow the same rule using their rendered, size-clamped radii; overlapping drawers and controls outside the parent's corner arc are separate surfaces. Layers separated by more than 24px may use independent radii. If preserving both radii makes a positive concentric inset impossible, move the inner content clear of the corner arc instead of changing the radii or clipping the hover/focus state. Review compact/expanded layouts, narrow widths, and scroll boundaries whenever those states exist.
 - Complexity belongs at the adapter boundary. Orchestration stays pure, UI stays dumb.
 - Inferred types over annotations. `any` is the enemy.
 - Comments describe how a thing is used, and move when the code moves. To be used mostly to describe functions, not to annotate every line of behavior.
