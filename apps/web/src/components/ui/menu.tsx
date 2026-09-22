@@ -60,7 +60,7 @@ function MenuPopup({
           data-slot="menu-popup"
           {...props}
         >
-          <div className="max-h-(--available-height) w-full overflow-y-auto p-(--popup-content-inset)">
+          <div className="max-h-(--available-height) w-full space-y-0.5 overflow-y-auto p-(--popup-content-inset)">
             {children}
           </div>
         </MenuPrimitive.Popup>
@@ -69,8 +69,14 @@ function MenuPopup({
   );
 }
 
-function MenuGroup(props: MenuPrimitive.Group.Props) {
-  return <MenuPrimitive.Group data-slot="menu-group" {...props} />;
+function MenuGroup({ className, ...props }: MenuPrimitive.Group.Props) {
+  return (
+    <MenuPrimitive.Group
+      className={cn("space-y-0.5", className)}
+      data-slot="menu-group"
+      {...props}
+    />
+  );
 }
 
 function MenuItem({
@@ -156,8 +162,14 @@ function MenuCheckboxItem({
   );
 }
 
-function MenuRadioGroup(props: MenuPrimitive.RadioGroup.Props) {
-  return <MenuPrimitive.RadioGroup data-slot="menu-radio-group" {...props} />;
+function MenuRadioGroup({ className, ...props }: MenuPrimitive.RadioGroup.Props) {
+  return (
+    <MenuPrimitive.RadioGroup
+      className={cn("space-y-0.5", className)}
+      data-slot="menu-radio-group"
+      {...props}
+    />
+  );
 }
 
 function MenuRadioItem({
