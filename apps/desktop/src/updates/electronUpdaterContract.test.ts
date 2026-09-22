@@ -1,3 +1,5 @@
+import { HostProcessArchitecture } from "@dispatch/shared/hostProcess";
+import * as Effect from "effect/Effect";
 import { describe, expect, it } from "vite-plus/test";
 import { MacUpdater } from "electron-updater/out/MacUpdater.js";
 import { findFile, Provider } from "electron-updater/out/providers/Provider.js";
@@ -54,7 +56,7 @@ describe("electron-updater 6.8.9 channel/artifact contract", () => {
   });
 
   it("selects the current Windows architecture from a merged multi-arch manifest", () => {
-    const currentArch = process.arch === "arm64" ? "arm64" : "x64";
+    const currentArch = Effect.runSync(HostProcessArchitecture) === "arm64" ? "arm64" : "x64";
     const otherArch = currentArch === "arm64" ? "x64" : "arm64";
     const selected = findFile(
       [file(`Dispatch-1.2.3-${otherArch}.exe`), file(`Dispatch-1.2.3-${currentArch}.exe`)],

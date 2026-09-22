@@ -1,5 +1,5 @@
 import { assert, describe, it } from "@effect/vitest";
-import { setTimeout as delay } from "node:timers/promises";
+import * as NodeTimersPromises from "node:timers/promises";
 import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
@@ -273,7 +273,7 @@ describe("DesktopUpdates", () => {
               releaseNotes: "# Dispatch 1.2.4\n\n- Fixed preview updates",
             });
             yield* flushCallbacks;
-            yield* Effect.promise(() => delay(25));
+            yield* Effect.promise(() => NodeTimersPromises.setTimeout(25));
             assert.isNull(yield* updates.getWhatsNew);
           }).pipe(Effect.provide(Layer.merge(TestClock.layer(), beforeInstall.layer))),
         );
