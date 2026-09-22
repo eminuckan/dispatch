@@ -333,7 +333,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
           )}
         </SidebarGroup>
       </SidebarContent>
-      <SidebarFooter className="px-[var(--sidebar-content-inset)] py-1">
+      <SidebarFooter>
         <SidebarUtilityMenu />
       </SidebarFooter>
     </>

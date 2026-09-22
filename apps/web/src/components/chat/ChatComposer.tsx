@@ -5089,7 +5089,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         triggerClassName={
           composerControlsInStrip
             ? "min-w-13 shrink text-xs! @max-[640px]/composer-surface:[&_[data-chat-provider-model-picker-label]]:w-0 @max-[640px]/composer-surface:[&_[data-chat-provider-model-picker-label]]:flex-none"
-            : "-ms-2.5"
+            : ""
         }
         terminalOpen={terminalOpen}
         open={isComposerModelPickerOpen}
@@ -6459,7 +6459,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 ref={setComposerMenuAnchor}
                 data-chat-composer-body="true"
                 className={cn(
-                  "relative px-3 pb-2 sm:px-4",
+                  "relative ps-(--chat-composer-content-inset) pe-3 pb-2 sm:pe-4",
                   "pt-3.5 sm:pt-4",
                   isComposerApprovalState && "pb-3 sm:pb-4",
                   isComposerCollapsedMobile && "hidden",
@@ -6992,7 +6992,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   data-chat-composer-footer="true"
                   data-chat-composer-footer-compact={isComposerFooterCompact ? "true" : "false"}
                   className={cn(
-                    "flex min-w-0 flex-nowrap items-center justify-between gap-2 overflow-visible px-3 pb-3 sm:px-4 sm:pb-4",
+                    "flex min-w-0 flex-nowrap items-center justify-between gap-2 overflow-visible pe-3 pb-3 sm:pe-4 sm:pb-4",
+                    // Keep rectangular hover/focus surfaces beyond the 22px corner arc;
+                    // their centers stay aligned with the taller circular send action.
+                    "ps-(--chat-composer-content-inset)",
                     pendingUserInputs.length > 0 && "pt-2",
                     isComposerFooterCompact ? "gap-1.5" : "gap-2 sm:gap-0",
                     showMobilePendingAnswerActions && "hidden sm:flex",
@@ -7005,7 +7008,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     data-chat-composer-controls="left"
                     data-chat-composer-footer-controls="true"
                     className={cn(
-                      "-m-1 -ms-3.5 flex min-w-0 flex-1 items-center gap-1 overflow-x-auto p-1 ps-3.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
+                      "-m-1 flex min-w-0 flex-1 items-center gap-1 overflow-x-auto p-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
                       isComposerResting && "hidden",
                     )}
                   >

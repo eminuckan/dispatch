@@ -232,7 +232,10 @@ function ComboboxList({ className, ...props }: ComboboxPrimitive.List.Props) {
   return (
     <ScrollArea scrollbarGutter scrollFade>
       <ComboboxPrimitive.List
-        className={cn("not-empty:scroll-py-1 not-empty:px-1 not-empty:py-1", className)}
+        className={cn(
+          "not-empty:scroll-py-(--popup-content-inset) not-empty:px-(--popup-content-inset) not-empty:py-(--popup-content-inset)",
+          className,
+        )}
         data-slot="combobox-list"
         {...props}
       />
@@ -247,7 +250,10 @@ function ComboboxList({ className, ...props }: ComboboxPrimitive.List.Props) {
 function ComboboxListVirtualized({ className, ...props }: ComboboxPrimitive.List.Props) {
   return (
     <ComboboxPrimitive.List
-      className={cn("not-empty:px-1 not-empty:py-1", className)}
+      className={cn(
+        "not-empty:px-(--popup-content-inset) not-empty:py-(--popup-content-inset)",
+        className,
+      )}
       data-slot="combobox-list"
       {...props}
     />

@@ -124,7 +124,10 @@ function CommandInput({
 function CommandList({ className, ...props }: React.ComponentProps<typeof AutocompleteList>) {
   return (
     <AutocompleteList
-      className={cn("not-empty:scroll-py-2 not-empty:p-2", className)}
+      className={cn(
+        "not-empty:scroll-py-(--command-shell-inset) not-empty:p-(--command-shell-inset)",
+        className,
+      )}
       data-slot="command-list"
       {...props}
     />

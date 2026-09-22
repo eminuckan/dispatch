@@ -97,8 +97,10 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(dispatch
     var(--sidebar)
   );
   --sidebar-row-content-inset: 0.625rem;
-  --command-shell-inset: 0.5rem;
-  --command-content-inset: 1rem;
+  /* Concentric painted corners: subtract the inner radius and the real border. */
+  --popup-content-inset: calc(var(--radius-lg) - var(--radius-sm) - 1px);
+  --command-shell-inset: calc(var(--radius-2xl) - var(--radius-sm) - 1px);
+  --command-content-inset: calc(var(--command-shell-inset) + 0.5rem);
   --floating-content-inset: 0.75rem;
   --glass-blur: 12px;
   --glass-opacity: 80%;
