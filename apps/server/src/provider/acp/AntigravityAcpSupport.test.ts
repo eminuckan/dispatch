@@ -300,6 +300,33 @@ it.layer(NodeServices.layer)("buildAntigravityPrompt", (it) => {
     }),
   );
 
+  it.effect.each(["image/svg+xml", "application/octet-stream", "application/xml"])(
+    "keeps SVG uploads reported as %s available by path without native image content",
+    (mimeType) =>
+      Effect.gen(function* () {
+        const fixture = yield* makeAttachmentFixture();
+        const attachment = {
+          ...textAttachment,
+          id: "thread-00000000-0000-4000-8000-000000000004-svg",
+          name: "logo.SVG",
+          mimeType,
+        } satisfies ChatAttachment;
+        const svg =
+          '<svg xmlns="http://www.w3.org/2000/svg"/>' +
+          " ".repeat(ANTIGRAVITY_MAX_TEXT_ATTACHMENT_BYTES);
+        const upload = yield* fixture.write(attachment, svg);
+        const input = `[Attached file "logo.SVG" is saved at: ${upload.filePath}]`;
+        const prompt = yield* buildAntigravityPrompt({
+          input,
+          attachments: [attachment],
+          attachmentsDir: fixture.attachmentsDir,
+        });
+
+        expect(prompt).toEqual([{ type: "text", text: input }]);
+        expect(yield* fixture.fs.readFileString(upload.filePath)).toBe(svg);
+      }),
+  );
+
   it.effect("rejects missing folded clipboard text", () =>
     Effect.gen(function* () {
       const fixture = yield* makeAttachmentFixture();
@@ -404,6 +431,15 @@ it.layer(NodeServices.layer)("buildAntigravityPrompt", (it) => {
     { attachment: textAttachment, bytes: ANTIGRAVITY_MAX_TEXT_ATTACHMENT_BYTES + 1 },
     { attachment: imageAttachment, bytes: PROVIDER_SEND_TURN_MAX_IMAGE_BYTES + 1 },
     { attachment: pdfAttachment, bytes: PROVIDER_SEND_TURN_MAX_FILE_BYTES + 1 },
+    {
+      attachment: {
+        ...textAttachment,
+        id: "thread-00000000-0000-4000-8000-000000000004-svg",
+        name: "logo.svg",
+        mimeType: "image/svg+xml",
+      },
+      bytes: PROVIDER_SEND_TURN_MAX_FILE_BYTES + 1,
+    },
   ])(
     "rejects oversized $attachment.name using file size instead of upload metadata",
     ({ attachment, bytes }) =>

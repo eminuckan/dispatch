@@ -47,10 +47,22 @@ describe("composer attachment files", () => {
     expect(classifyComposerAttachmentFile({ name: "photo.heic", type: "" })).toBe("image");
   });
 
-  it("rejects unsupported image types instead of attaching them as generic files", () => {
-    expect(classifyComposerAttachmentFile({ name: "diagram.svg", type: "image/svg+xml" })).toBe(
-      "unsupported-image",
+  it.each([
+    "image/svg+xml",
+    "image/svg+xml; charset=utf-8",
+    "",
+    "application/octet-stream",
+    "application/xml",
+  ])("accepts SVG as an original file when reported as %s", (type) => {
+    const file = new File(['<svg xmlns="http://www.w3.org/2000/svg"/>'], "diagram.SVG", { type });
+    expect(classifyComposerAttachmentFile(file)).toBe("file");
+    expect(normalizeComposerImageFileMimeType(file)).toBe(file);
+    expect(shouldHandleComposerAttachmentPaste({ files: [file], plainText: "Image caption" })).toBe(
+      true,
     );
+  });
+
+  it("still rejects other unsupported image types", () => {
     expect(classifyComposerAttachmentFile({ name: "photo.tiff", type: "image/tiff" })).toBe(
       "unsupported-image",
     );
@@ -71,10 +83,7 @@ describe("composer attachment files", () => {
   });
 
   it("claims unsupported image pastes so the composer can report them", () => {
-    const images = [
-      new File(["svg"], "diagram.svg", { type: "image/svg+xml" }),
-      new File(["tiff"], "photo.tiff", { type: "image/tiff" }),
-    ];
+    const images = [new File(["tiff"], "photo.tiff", { type: "image/tiff" })];
 
     for (const image of images) {
       expect(

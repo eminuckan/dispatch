@@ -61,12 +61,13 @@ const ASSET_TOKEN_TTL_MS = 60 * 60 * 1000;
 const PROJECT_FAVICON_TOKEN_BUCKET_MS = 30 * 60 * 1000;
 const PROJECT_FAVICON_VERSION_PREFIX = "v";
 const INLINE_VIDEO_MIME_TYPE_PATTERN = /^video\/[\w!#$&^.+-]+$/i;
-// Extensions a document viewer or audio player may request inline. The extension comes from
+// Extensions a file viewer or audio player may request inline. The extension comes from
 // the attachment id the server assigned, never from the client's mime type.
 const INLINE_PREVIEW_MIME_TYPES: Record<string, string> = {
   pdf: "application/pdf",
   html: "text/html",
   htm: "text/html",
+  svg: "image/svg+xml",
 };
 const inlinePreviewMimeTypeForExtension = (extension: string) =>
   INLINE_PREVIEW_MIME_TYPES[extension] ?? audioMimeTypeFromExtension(`.${extension}`) ?? undefined;

@@ -237,13 +237,15 @@ files show the copy that was attached to the message.
 ## Attached files
 
 Select a file chip in your draft or a sent message to preview it. Code and JSON use syntax
-highlighting; Markdown, HTML, CSV, and TSV offer rendered and raw views. Audio files have
-playback controls. Large text files show a limited preview; save the file to read it in full.
+highlighting; Markdown, HTML, CSV, and TSV offer rendered and raw views. SVG files open as
+vector previews, and audio files have playback controls. SVG uploads use the file size limit
+and keep their original format. On mobile, SVG previews are limited to 1 MB; larger SVGs can
+still be saved or shared. Large text files show a limited preview; save the file to read it in full.
 
 On web and desktop, files open beside the conversation with the same controls as a workspace
 file: a header row with the view toggle, **Copy contents** and **Save file**. On mobile, documents
 open in the same file screen as workspace files; its menu holds **Copy contents**, **Save or
-share** and **Open in file viewer**. Pictures, videos and PDFs keep their native viewers, and
+share** and **Open in file viewer**. Photos, videos and PDFs keep their native viewers, and
 other document formats such as Word or Pages open in the device's own viewer when it has one.
 If nothing on the device can show a format, save or share it to open it elsewhere.
 

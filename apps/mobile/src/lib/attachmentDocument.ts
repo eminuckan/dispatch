@@ -2,6 +2,7 @@ import { filePreviewDelimiter, parseDelimitedPreview } from "@dispatch/shared/de
 import type { EnvironmentId } from "@dispatch/contracts";
 import { readFilePreviewResponse } from "@dispatch/client-runtime/file-preview";
 import { filePreviewKind, FILE_TEXT_PREVIEW_MAX_BYTES } from "@dispatch/shared/filePreview";
+import { svgMimeType } from "@dispatch/shared/image";
 import { fetch } from "expo/fetch";
 import { File } from "expo-file-system";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -32,6 +33,7 @@ export function useAttachmentDocument(input: {
   readonly attachment: FileBackedComposerAttachment | null;
 }) {
   const kind = filePreviewKind(input);
+  const isSvg = svgMimeType(input) !== null;
   const delimiter = filePreviewDelimiter(input);
   const shareController = useRef<AbortController | null>(null);
   useEffect(() => () => shareController.current?.abort(), []);
@@ -62,6 +64,7 @@ export function useAttachmentDocument(input: {
   const [rendered, setRendered] = useState(true);
   const presentation = attachmentDocumentPresentation({
     kind,
+    isSvg,
     hasTable: table !== null,
     hasEnvironment: input.environmentId !== null,
     rendered,
@@ -122,7 +125,8 @@ export function useAttachmentDocument(input: {
     };
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Retry must reacquire a local file lease after a failed load.
   }, [attachment, revision]);
-  const needsText = kind === "text" || kind === "markdown" || (kind === "html" && !rendered);
+  const needsText =
+    isSvg || kind === "text" || kind === "markdown" || (kind === "html" && !rendered);
   const sizeBytes = input.sizeBytes;
   useEffect(() => {
     if (!uri || !needsText) return;
@@ -190,6 +194,7 @@ export function useAttachmentDocument(input: {
   };
   return {
     kind,
+    isSvg,
     ...presentation,
     uri,
     /** Native viewers resolve their own fresh URL from this instead of reusing `uri`. */

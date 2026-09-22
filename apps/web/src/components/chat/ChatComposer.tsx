@@ -1,3 +1,4 @@
+import { svgMimeType } from "@dispatch/shared/image";
 import {
   clearStartedTeamDraftIfUnchanged,
   TeamRoutingProvider,
@@ -5343,7 +5344,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       const attachmentKind = classifyComposerAttachmentFile(file);
       const fileMimeType =
         attachmentKind === "file"
-          ? (videoMimeType({ name: file.name, mimeType: file.type }) ??
+          ? (svgMimeType({ name: file.name, mimeType: file.type }) ??
+            videoMimeType({ name: file.name, mimeType: file.type }) ??
             (file.type || "application/octet-stream"))
           : file.type;
       const matchingReattachMarker =
@@ -5368,7 +5370,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         continue;
       }
       if (attachmentKind === "unsupported-image") {
-        error = `'${file.name}' is not a supported image type. Attach GIF, HEIC, HEIF, JPEG, PNG, or WebP images.`;
+        error = `'${file.name}' is not a supported image type. Attach GIF, HEIC, HEIF, JPEG, PNG, SVG, or WebP images.`;
         continue;
       }
       if (attachmentKind === "image") {
