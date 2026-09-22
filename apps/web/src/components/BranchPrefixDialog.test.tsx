@@ -139,6 +139,13 @@ vi.mock("./ui/button", () => ({ Button: "button" }));
 import { BranchPrefixDialog } from "./BranchPrefixDialog";
 
 let renderer: ReactTestRenderer | null = null;
+function deferredWrite() {
+  let resolve!: (value: boolean) => void;
+  const promise = new Promise<boolean>((complete) => {
+    resolve = complete;
+  });
+  return { promise, resolve };
+}
 function render() {
   act(() => {
     const dialog = (
@@ -208,7 +215,7 @@ afterEach(async () => {
 
 describe("branch prefix dialog", () => {
   it("retains a draft through an optimistic failed save, then closes only after a successful retry", async () => {
-    const write = Promise.withResolvers<boolean>();
+    const write = deferredWrite();
     state.save.mockImplementationOnce((_scope, patch) => {
       state.projectPrefix = patch.branchPrefix;
       return write.promise;
@@ -330,7 +337,7 @@ describe("branch prefix dialog", () => {
   });
 
   it("blocks target changes, dismissal, cancel, and duplicate submission while a write is pending", async () => {
-    const write = Promise.withResolvers<boolean>();
+    const write = deferredWrite();
     state.save.mockReturnValueOnce(write.promise);
     render();
     edit("Pending/");
