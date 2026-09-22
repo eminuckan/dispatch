@@ -1,3 +1,4 @@
+import { svgMimeType } from "./image.ts";
 import { videoMimeType } from "./video.ts";
 
 export type FilePreviewKind =
@@ -19,6 +20,7 @@ export function filePreviewKind(file: {
   const name = file.name.toLowerCase();
   const extension = name.slice(name.lastIndexOf("."));
   const generic = !mime || mime === "application/octet-stream" || mime === "text/plain";
+  if (svgMimeType({ name, mimeType: mime })) return "image";
   if (mime === "application/pdf") return "pdf";
   if (mime === "text/html") return "html";
   if (mime === "text/markdown" || mime === "text/x-markdown") return "markdown";

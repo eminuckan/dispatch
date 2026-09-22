@@ -316,6 +316,32 @@ describe("AttachmentUpload", () => {
     }).pipe(Effect.provide(testLayer)),
   );
 
+  it.effect("uploads SVG as an original file without converting it to a provider image", () =>
+    Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      const svg = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"><text>Logo</text></svg>');
+      const issued = yield* issueAttachmentUploadUrl({
+        type: "file",
+        name: "logo.SVG",
+        mimeType: "image/svg+xml",
+        sizeBytes: svg.length,
+      });
+      const token = issued.relativeUrl.slice(`${ATTACHMENT_UPLOAD_ROUTE_PREFIX}/`.length);
+      const claims = yield* validateAttachmentUploadToken(token);
+      if (!claims) throw new Error("Expected valid upload claims.");
+      expect(claims.type).toBe("file");
+      expect(issued.attachmentId).toMatch(/-svg$/);
+      expect(
+        yield* storeAttachmentUpload(claims, Stream.make(svg.subarray(0, 20), svg.subarray(20))),
+      ).toEqual({ ok: true });
+      expect(
+        NodeFS.readFileSync(NodePath.join(config.attachmentsDir, `${issued.attachmentId}.svg`)),
+      ).toEqual(svg);
+      yield* deletePendingAttachment(issued.attachmentId);
+      expect(NodeFS.readdirSync(config.attachmentsDir)).toEqual([]);
+    }).pipe(Effect.provide(testLayer)),
+  );
+
   it.effect("removes partial streamed uploads that exceed their signed size", () =>
     Effect.gen(function* () {
       const config = yield* ServerConfig.ServerConfig;

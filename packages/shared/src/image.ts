@@ -20,6 +20,24 @@ export const GENERIC_MIME_TYPES = new Set([
   "application/unknown",
 ]);
 
+/** SVG previews keep the original file; providers must not receive it as a raster image. */
+export function svgMimeType(attachment: {
+  readonly name: string;
+  readonly mimeType: string;
+}): "image/svg+xml" | null {
+  const mimeType = attachment.mimeType.split(";", 1)[0]?.trim().toLowerCase() ?? "";
+  if (mimeType === "image/svg+xml") return mimeType;
+  if (
+    mimeType !== "" &&
+    !GENERIC_MIME_TYPES.has(mimeType) &&
+    mimeType !== "text/plain" &&
+    mimeType !== "text/xml" &&
+    mimeType !== "application/xml"
+  )
+    return null;
+  return /\.svg$/i.test(attachment.name) ? "image/svg+xml" : null;
+}
+
 /**
  * Recognizes pictures even when the picker omitted their MIME type. A picture chosen through
  * the document picker arrives typed as a plain file, so what it *is* has to come from its own

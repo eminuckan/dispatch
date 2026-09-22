@@ -6,6 +6,7 @@ import {
   type ProviderSendTurnInput,
   type RuntimeMode,
 } from "@dispatch/contracts";
+import { svgMimeType } from "@dispatch/shared/image";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -246,7 +247,7 @@ const TEXT_FILE_EXTENSIONS = new Set([
 export const ANTIGRAVITY_MAX_TEXT_ATTACHMENT_BYTES = 1024 * 1024;
 const MAX_TOTAL_ATTACHMENT_BYTES = PROVIDER_SEND_TURN_MAX_FILE_BYTES;
 
-/** Sends uploads as native ACP content instead of workspace path hints. */
+/** Builds native ACP content while keeping tool-readable uploads as prompt path references. */
 export const buildAntigravityPrompt = Effect.fn("buildAntigravityPrompt")(function* (input: {
   readonly input: ProviderSendTurnInput["input"];
   readonly attachments: ProviderSendTurnInput["attachments"];
@@ -275,14 +276,15 @@ export const buildAntigravityPrompt = Effect.fn("buildAntigravityPrompt")(functi
     const image = attachment.type === "image" && IMAGE_MIME_TYPES.has(mimeType);
     const audio = attachment.type === "file" && AUDIO_MIME_TYPES.has(mimeType);
     const pdf = attachment.type === "file" && mimeType === "application/pdf";
+    const svg = attachment.type === "file" && svgMimeType(attachment) !== null;
     const textFile =
       attachment.type === "file" &&
       (mimeType.startsWith("text/") ||
         TEXT_MIME_TYPES.has(mimeType) ||
         TEXT_FILE_EXTENSIONS.has(path.extname(attachment.name).toLowerCase()));
-    if (!image && !audio && !pdf && !textFile) {
+    if (!image && !audio && !pdf && !svg && !textFile) {
       return yield* EffectAcpErrors.AcpRequestError.invalidParams(
-        `Antigravity does not support '${attachment.name}' (${attachment.mimeType}). Attach a BMP, JPEG, PNG, WebP, PDF, audio, or text file.`,
+        `Antigravity does not support '${attachment.name}' (${attachment.mimeType}). Attach a BMP, JPEG, PNG, SVG, WebP, PDF, audio, or text file.`,
       );
     }
     const attachmentPath = resolveAttachmentPath({
@@ -316,7 +318,7 @@ export const buildAntigravityPrompt = Effect.fn("buildAntigravityPrompt")(functi
       ? PROVIDER_SEND_TURN_MAX_IMAGE_BYTES
       : audio
         ? ANTIGRAVITY_MAX_AUDIO_ATTACHMENT_BYTES
-        : pdf
+        : pdf || svg
           ? PROVIDER_SEND_TURN_MAX_FILE_BYTES
           : ANTIGRAVITY_MAX_TEXT_ATTACHMENT_BYTES;
     totalBytes += size;
@@ -325,6 +327,9 @@ export const buildAntigravityPrompt = Effect.fn("buildAntigravityPrompt")(functi
         `Attachment '${attachment.name}' is too large. Antigravity accepts text files up to 1 MiB, images up to 10 MiB, audio up to 20 MiB, and 50 MiB total attachments.`,
       );
     }
+    // ProviderService includes the original SVG path in the prompt. Keep vector files
+    // available to tools without handing unsupported image bytes to the model.
+    if (svg) continue;
     const uri = yield* path.toFileUrl(attachmentPath).pipe(
       Effect.map((url) => url.href),
       Effect.mapError(() =>

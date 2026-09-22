@@ -23,6 +23,7 @@ import { FilePreviewLoading, FilePreviewNotice } from "./FilePreviewFeedback";
 import { FileMarkdownPreview } from "./FileMarkdownPreview";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { SourceFileSurface } from "./SourceFileSurface";
+import { SvgAttachmentPreview } from "./SvgAttachmentPreview";
 import { WorkspaceFileWebPreview } from "./WorkspaceFileWebPreview";
 
 /**
@@ -43,7 +44,8 @@ export type AttachmentFileRouteParams = {
 type AttachmentFileScreenProps = StaticScreenProps<AttachmentFileRouteParams>;
 
 /** Kinds this screen cannot render itself; the platform viewer is the primary presentation. */
-function nativeViewerKind(kind: ReturnType<typeof useAttachmentDocument>["kind"]) {
+function nativeViewerKind(kind: ReturnType<typeof useAttachmentDocument>["kind"], isSvg: boolean) {
+  if (isSvg) return null;
   if (kind === "image") return "image" as const;
   if (kind === "pdf") return "pdf" as const;
   if (kind === "video" || kind === "unsupported") return "document" as const;
@@ -86,7 +88,9 @@ function AttachmentDocumentBody(props: {
             Preview limited to the first 1 MB. Save or share the file to read it in full.
           </FilePreviewNotice>
         ) : null}
-        {table && document.activeMode === "table" ? (
+        {document.activeMode === "svg" ? (
+          <SvgAttachmentPreview content={content} />
+        ) : table && document.activeMode === "table" ? (
           <ScrollView className="flex-1">
             {table.truncated ? (
               <FilePreviewNotice>
@@ -184,7 +188,7 @@ export function AttachmentFileScreen(props: AttachmentFileScreenProps) {
   const [nativeOpen, setNativeOpen] = useState(false);
   // A format we cannot render goes straight to the system viewer; this screen is only the
   // launch pad and, when no viewer can show it, the honest fallback.
-  const nativeKind = nativeViewerKind(document.kind);
+  const nativeKind = nativeViewerKind(document.kind, document.isSvg);
   const [nativeViewer, setNativeViewer] = useState<"pending" | "open" | "unavailable" | null>(
     nativeKind ? "pending" : null,
   );

@@ -4,6 +4,7 @@ import { attachmentDocumentPresentation } from "./attachmentDocumentPresentation
 it.each([
   {
     kind: "markdown",
+    isSvg: false,
     hasTable: false,
     hasEnvironment: false,
     rendered: true,
@@ -12,6 +13,7 @@ it.each([
   },
   {
     kind: "markdown",
+    isSvg: false,
     hasTable: false,
     hasEnvironment: true,
     rendered: true,
@@ -20,6 +22,7 @@ it.each([
   },
   {
     kind: "markdown",
+    isSvg: false,
     hasTable: false,
     hasEnvironment: true,
     rendered: false,
@@ -28,6 +31,7 @@ it.each([
   },
   {
     kind: "text",
+    isSvg: false,
     hasTable: false,
     hasEnvironment: true,
     rendered: true,
@@ -36,6 +40,7 @@ it.each([
   },
   {
     kind: "text",
+    isSvg: false,
     hasTable: true,
     hasEnvironment: false,
     rendered: true,
@@ -44,6 +49,7 @@ it.each([
   },
   {
     kind: "text",
+    isSvg: false,
     hasTable: true,
     hasEnvironment: true,
     rendered: false,
@@ -52,6 +58,7 @@ it.each([
   },
   {
     kind: "html",
+    isSvg: false,
     hasTable: false,
     hasEnvironment: false,
     rendered: true,
@@ -60,10 +67,38 @@ it.each([
   },
   {
     kind: "html",
+    isSvg: false,
     hasTable: false,
     hasEnvironment: true,
     rendered: false,
     renderedMode: "html",
+    activeMode: "source",
+  },
+  {
+    kind: "image",
+    isSvg: true,
+    hasTable: false,
+    hasEnvironment: false,
+    rendered: true,
+    renderedMode: "svg",
+    activeMode: "svg",
+  },
+  {
+    kind: "image",
+    isSvg: true,
+    hasTable: false,
+    hasEnvironment: true,
+    rendered: false,
+    renderedMode: "svg",
+    activeMode: "source",
+  },
+  {
+    kind: "image",
+    isSvg: false,
+    hasTable: false,
+    hasEnvironment: true,
+    rendered: true,
+    renderedMode: null,
     activeMode: "source",
   },
 ] as const)("matches the available preview for %j", ({ renderedMode, activeMode, ...input }) => {

@@ -77,6 +77,13 @@ describe("media path parsing", () => {
 
 describe("attachment preview classification", () => {
   it.each([
+    ["logo.svg", "image/svg+xml", "image"],
+    ["logo.SVG", "", "image"],
+    ["logo.svg", "application/octet-stream", "image"],
+    ["logo.svg", "text/plain", "image"],
+    ["logo.svg", "application/xml", "image"],
+    ["logo.svg", "text/xml", "image"],
+    ["misleading.svg", "application/pdf", "pdf"],
     ["example.json", "application/octet-stream", "text"],
     ["README.md", "text/plain", "markdown"],
     ["component.tsx", "", "text"],

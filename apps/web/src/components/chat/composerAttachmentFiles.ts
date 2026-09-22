@@ -7,6 +7,7 @@ import {
   clampFileAttachmentUploadBytes,
   fileAttachmentTooLargeMessage,
 } from "@dispatch/client-runtime/state/attachments";
+import { svgMimeType } from "@dispatch/shared/image";
 
 import type { ComposerFileAttachment, ComposerImageAttachment } from "../../composerDraftStore";
 import { isHeicImageFile } from "../../lib/imageCompression";
@@ -65,6 +66,9 @@ export function normalizeComposerImageFileMimeType(file: File): File {
 export function classifyComposerAttachmentFile(
   file: Pick<File, "name" | "type">,
 ): ComposerAttachmentFileKind {
+  if (svgMimeType({ name: file.name, mimeType: file.type })) {
+    return "file";
+  }
   if (isHeicImageFile(file)) {
     return "image";
   }
@@ -163,7 +167,11 @@ export function shouldHandleComposerAttachmentPaste(input: {
   if (
     input.files.some((file) => {
       const classification = classifyComposerAttachmentFile(file);
-      return classification === "image" || classification === "unsupported-image";
+      return (
+        classification === "image" ||
+        classification === "unsupported-image" ||
+        svgMimeType({ name: file.name, mimeType: file.type }) !== null
+      );
     })
   ) {
     return true;

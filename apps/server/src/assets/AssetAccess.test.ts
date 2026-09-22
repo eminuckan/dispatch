@@ -851,6 +851,55 @@ describe("AssetAccess", () => {
     }).pipe(Effect.provide(testLayer)),
   );
 
+  it.effect(
+    "previews SVG attachments inline with their original bytes and keeps downloads explicit",
+    () =>
+      Effect.gen(function* () {
+        const config = yield* ServerConfig.ServerConfig;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const attachmentId = "thread-1-00000000-0000-4000-8000-000000000004-svg";
+        const attachmentPath = path.join(config.attachmentsDir, `${attachmentId}.svg`);
+        const svg =
+          '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><path d="M0 0h10v10z"/></svg>';
+        yield* fileSystem.makeDirectory(config.attachmentsDir, { recursive: true });
+        yield* fileSystem.writeFileString(attachmentPath, svg);
+
+        for (const disposition of ["inline", "attachment"] as const) {
+          const issued = yield* issueAssetUrl({
+            resource: {
+              _tag: "attachment",
+              attachmentId,
+              fileName: "logo.SVG",
+              mimeType: "application/octet-stream",
+              disposition,
+            },
+          });
+          const suffix = issued.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+          const separator = suffix.indexOf("/");
+          const asset = yield* resolveAsset(
+            suffix.slice(0, separator),
+            suffix.slice(separator + 1),
+          );
+          if (asset?.kind !== "file") throw new Error("Expected an SVG attachment.");
+          const response = HttpServerResponse.toWeb(yield* assetFileResponse(asset));
+          expect(response.status).toBe(200);
+          expect(response.headers.get("content-type")).toBe(
+            disposition === "inline" ? "image/svg+xml" : "application/octet-stream",
+          );
+          expect(response.headers.get("content-disposition")).toBe(
+            disposition === "inline" ? null : 'attachment; filename="logo.SVG"',
+          );
+          expect(response.headers.get("content-security-policy")).toBe(
+            disposition === "inline"
+              ? "default-src 'none'; style-src 'unsafe-inline'; sandbox"
+              : "default-src 'none'; sandbox",
+          );
+          expect(yield* Effect.promise(() => response.text())).toBe(svg);
+        }
+      }).pipe(Effect.provide(testLayer)),
+  );
+
   it.effect("keeps inline requests for other attachment types as downloads", () =>
     Effect.gen(function* () {
       const config = yield* ServerConfig.ServerConfig;

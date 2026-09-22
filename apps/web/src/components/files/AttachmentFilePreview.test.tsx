@@ -24,10 +24,94 @@ vi.mock("./fileSurfaceChrome", () => ({
   FileSurfaceAction: ({ label, onPress }: { label: string; onPress: () => void }) => (
     <button aria-label={label} onClick={onPress} />
   ),
-  FileSurfaceFailure: ({ message }: { message: string }) => <div role="alert">{message}</div>,
+  FileSurfaceFailure: ({ message, onRetry }: { message: string; onRetry: () => void }) => (
+    <div>
+      <div role="alert">{message}</div>
+      <button onClick={onRetry}>Try again</button>
+    </div>
+  ),
   FileSurfaceLoading: () => <div role="status">Loading</div>,
   FileSurfaceNotice: ({ children }: { children: ReactNode }) => <div>{children}</div>,
 }));
+
+describe("SVG attachment preview", () => {
+  let renderer: ReactTestRenderer | undefined;
+
+  beforeEach(() => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    refresh.mockReset();
+  });
+
+  afterEach(async () => {
+    if (renderer) await act(() => renderer?.unmount());
+    renderer = undefined;
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it("previews untyped draft SVG bytes with the correct MIME and releases the local URL", async () => {
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg"><path d="M0 0h10v10z"/></svg>';
+    const file = new Blob([svg], { type: "application/octet-stream" });
+    const createUrl = vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:svg-preview");
+    const revokeUrl = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined);
+
+    await act(async () => {
+      renderer = create(
+        <AttachmentFilePreview
+          name="logo.SVG"
+          mimeType={file.type}
+          sizeBytes={file.size}
+          file={file}
+        />,
+      );
+    });
+    const previewBlob = createUrl.mock.calls[0]?.[0];
+    if (!(previewBlob instanceof Blob)) throw new Error("Expected SVG preview bytes.");
+    expect(previewBlob.type).toBe("image/svg+xml");
+    expect(await previewBlob.text()).toBe(svg);
+    expect(renderer!.root.findByType("img").props.src).toBe("blob:svg-preview");
+    expect(refresh).not.toHaveBeenCalled();
+
+    await act(() => renderer!.unmount());
+    renderer = undefined;
+    expect(revokeUrl).toHaveBeenCalledExactlyOnceWith("blob:svg-preview");
+  });
+
+  it("reauthorizes an uploaded SVG after a failed preview", async () => {
+    const originalUrl = "https://environment.test/original.svg";
+    const renewedUrl = "https://environment.test/renewed.svg";
+    refresh.mockResolvedValueOnce(originalUrl).mockResolvedValueOnce(renewedUrl);
+    await act(async () => {
+      renderer = create(
+        <AttachmentFilePreview
+          name="logo.svg"
+          mimeType="image/svg+xml"
+          sizeBytes={100}
+          asset={{
+            environmentId: EnvironmentId.make("test-environment"),
+            attachmentId: "logo-svg",
+          }}
+        />,
+      );
+    });
+    expect(renderer!.root.findByType("img").props.src).toBe(originalUrl);
+    expect(renderer!.root.findAllByType("iframe")).toHaveLength(0);
+    await act(() => renderer!.root.findByType("img").props.onError());
+    expect(renderer!.root.findByProps({ role: "alert" }).children).toEqual([
+      "Unable to load image.",
+    ]);
+
+    await act(async () => {
+      renderer!.root
+        .findAllByType("button")
+        .find((button) => button.children.includes("Try again"))!
+        .props.onClick();
+    });
+    expect(refresh).toHaveBeenCalledTimes(2);
+    expect(renderer!.root.findAllByProps({ role: "alert" })).toHaveLength(0);
+    expect(renderer!.root.findByType("img").props.src).toBe(renewedUrl);
+  });
+});
 
 describe("attachment HTML preview recovery", () => {
   const originalUrl = "https://environment.test/original.html";

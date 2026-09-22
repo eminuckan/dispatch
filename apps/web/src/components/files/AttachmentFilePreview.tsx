@@ -3,6 +3,7 @@ import type { EnvironmentId } from "@dispatch/contracts";
 import { formatAttachmentSize } from "@dispatch/client-runtime/state/attachments";
 import { readFilePreviewResponse } from "@dispatch/client-runtime/file-preview";
 import { filePreviewKind, FILE_TEXT_PREVIEW_MAX_BYTES } from "@dispatch/shared/filePreview";
+import { svgMimeType } from "@dispatch/shared/image";
 import {
   CheckIcon,
   ChevronRightIcon,
@@ -73,6 +74,7 @@ export function AttachmentFilePreview(props: {
   onClose?: () => void;
 }) {
   const kind = filePreviewKind(props);
+  const svgType = svgMimeType(props);
   const delimiter = filePreviewDelimiter(props);
   const renderedMode =
     kind === "markdown" ? "markdown" : kind === "html" ? "html" : delimiter ? "table" : null;
@@ -113,11 +115,15 @@ export function AttachmentFilePreview(props: {
   const authorizedAt = useRef(0);
   useEffect(() => {
     if (!props.file) return;
-    const url = URL.createObjectURL(props.file);
+    const file =
+      svgType && props.file.type !== svgType
+        ? props.file.slice(0, props.file.size, svgType)
+        : props.file;
+    const url = URL.createObjectURL(file);
     // oxlint-disable-next-line react/set-state-in-effect -- Publish an object URL only after its cleanup is registered for this Blob.
     setLocalUrl(url);
     return () => URL.revokeObjectURL(url);
-  }, [props.file]);
+  }, [props.file, svgType]);
   useEffect(() => {
     if (props.file) return;
     let cancelled = false;

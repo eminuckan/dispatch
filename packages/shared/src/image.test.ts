@@ -1,6 +1,36 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { imageMimeType } from "./image.ts";
+import { imageMimeType, svgMimeType } from "./image.ts";
+
+describe("svgMimeType", () => {
+  it.each([
+    ["logo.svg", "image/svg+xml"],
+    ["logo.SVG", " IMAGE/SVG+XML; charset=utf-8 "],
+    ["logo.svg", ""],
+    ["logo.SVG", "application/octet-stream"],
+    ["logo.svg", "binary/octet-stream"],
+    ["logo.svg", "application/unknown"],
+    ["logo.svg", "text/plain"],
+    ["logo.svg", "text/xml"],
+    ["logo.svg", "application/xml"],
+  ])(
+    "recognizes %s (%s) for preview without promoting it to a provider image",
+    (name, mimeType) => {
+      expect(svgMimeType({ name, mimeType })).toBe("image/svg+xml");
+      expect(imageMimeType({ name, mimeType })).toBeNull();
+    },
+  );
+
+  it.each([
+    ["logo.svg", "application/pdf"],
+    ["logo.svg", "image/png"],
+    ["logo.svg", "image/tiff"],
+    ["document.xml", "application/xml"],
+    ["logo.svg.txt", "text/plain"],
+  ])("does not override conflicting types or extensions for %s (%s)", (name, mimeType) => {
+    expect(svgMimeType({ name, mimeType })).toBeNull();
+  });
+});
 
 describe("imageMimeType", () => {
   it("recognizes a picture the file picker left untyped", () => {
