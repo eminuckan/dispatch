@@ -1,79 +1,10 @@
 import { EnvironmentAuthInvalidError } from "@dispatch/contracts";
-import {
-  RelayAuthInvalidError,
-  RelayEnvironmentEndpointTimedOutError,
-} from "@dispatch/contracts/relay";
 import { describe, expect, it } from "@effect/vitest";
 
-import {
-  mapManagedRelayError,
-  mapRemoteDpopEnvironmentError,
-  mapRemoteEnvironmentError,
-} from "./errors.ts";
-import { DPOP_RETRY_HINT, DPOP_UNKNOWN_HINT } from "../relay/errorPresentation.ts";
-import { ManagedRelayRequestFailedError } from "../relay/managedRelay.ts";
+import { mapRemoteDpopEnvironmentError, mapRemoteEnvironmentError } from "./errors.ts";
+import { DPOP_RETRY_HINT, DPOP_UNKNOWN_HINT } from "../authorization/dpopErrors.ts";
 import { NETWORK_BLOCKING_HINT } from "../errors/network.ts";
 import { RemoteEnvironmentAuthFetchError, RemoteEnvironmentAuthTimeoutError } from "../rpc/http.ts";
-
-describe("mapManagedRelayError", () => {
-  it("keeps a timeout reported by the relay distinct from a local network failure", () => {
-    const relayError = new RelayEnvironmentEndpointTimedOutError({
-      code: "environment_endpoint_timed_out",
-      traceId: "trace-server-timeout",
-    });
-    const mapped = mapManagedRelayError(
-      new ManagedRelayRequestFailedError({
-        action: "connect relay environment",
-        cause: relayError,
-        relayError,
-      }),
-    );
-    expect(mapped).toMatchObject({
-      reason: "timeout",
-      detail: "Relay timed out while contacting the environment endpoint.",
-      traceId: "trace-server-timeout",
-    });
-  });
-
-  it("presents clock skew as one possible cause for a generic DPoP error", () => {
-    const mapped = mapManagedRelayError(
-      new ManagedRelayRequestFailedError({
-        action: "connect relay environment",
-        cause: new Error("request failed"),
-        relayError: new RelayAuthInvalidError({
-          code: "auth_invalid",
-          reason: "invalid_dpop",
-          traceId: "trace-1",
-        }),
-        traceId: "trace-1",
-      }),
-    );
-
-    expect(mapped).toMatchObject({
-      _tag: "ConnectionBlockedError",
-      reason: "authentication",
-      detail: `Relay rejected the DPoP proof. ${DPOP_UNKNOWN_HINT}`,
-      traceId: "trace-1",
-    });
-  });
-
-  it("uses a neutral hint when the relay identifies a non-clock DPoP error", () => {
-    const mapped = mapManagedRelayError(
-      new ManagedRelayRequestFailedError({
-        action: "connect relay environment",
-        cause: new Error("request failed"),
-        relayError: new RelayAuthInvalidError({
-          code: "auth_invalid",
-          reason: "invalid_dpop",
-          dpopFailureReason: "key_mismatch",
-          traceId: "trace-1",
-        }),
-      }),
-    );
-
-    expect(mapped.message).toBe(`Relay rejected the DPoP proof. ${DPOP_RETRY_HINT}`);
-  });
-});
 
 describe("mapRemoteDpopEnvironmentError", () => {
   it("keeps relay descriptor auth failures distinct from DPoP proof failures", () => {

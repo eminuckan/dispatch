@@ -96,8 +96,7 @@ vi.mock("react-native", () => ({
 }));
 
 import {
-  loadAgentAwarenessDeviceId,
-  loadAgentAwarenessRegistrationRecord,
+  loadOrCreateMobileClientId,
   loadPreferences,
   loadRecentThreadShortcuts,
   loadSavedConnections,
@@ -190,11 +189,7 @@ describe("mobile connection storage", () => {
     );
 
     await expect(loadSavedConnections()).resolves.toEqual([connection]);
-    await expect(loadAgentAwarenessDeviceId()).resolves.toBe("legacy-device-id");
-    await expect(loadAgentAwarenessRegistrationRecord()).resolves.toEqual({
-      identity: "legacy-identity",
-      signature: "legacy-signature",
-    });
+    await expect(loadOrCreateMobileClientId()).resolves.toBe("legacy-device-id");
     await expect(loadRecentThreadShortcuts()).resolves.toEqual([
       { environmentId: "environment-1", threadId: "thread-1", title: "Legacy thread" },
     ]);
@@ -203,18 +198,14 @@ describe("mobile connection storage", () => {
       connections: [connection],
     });
     expect(mocks.getStoredValue("dispatch.agent-awareness.device-id")).toBe("legacy-device-id");
-    expect(JSON.parse(mocks.getStoredValue("dispatch.agent-awareness.registration") ?? "")).toEqual(
-      {
-        identity: "legacy-identity",
-        signature: "legacy-signature",
-      },
+    expect(mocks.getStoredValue("t3code.agent-awareness.registration")).toBe(
+      JSON.stringify({ identity: "legacy-identity", signature: "legacy-signature" }),
     );
     expect(JSON.parse(mocks.getStoredValue("dispatch.recent-thread-shortcuts") ?? "")).toEqual({
       threads: [{ environmentId: "environment-1", threadId: "thread-1", title: "Legacy thread" }],
     });
     expect(mocks.getStoredValue("t3code.connections")).toBeNull();
     expect(mocks.getStoredValue("t3code.agent-awareness.device-id")).toBeNull();
-    expect(mocks.getStoredValue("t3code.agent-awareness.registration")).toBeNull();
     expect(mocks.getStoredValue("t3code.recent-thread-shortcuts")).toBeNull();
   });
 

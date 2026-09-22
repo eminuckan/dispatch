@@ -5,7 +5,7 @@ import { Platform, Pressable, View } from "react-native";
 
 import { SymbolView } from "../../../components/AppSymbol";
 import { AppText as Text } from "../../../components/AppText";
-import type { SettingsLegalDocumentTarget, SettingsSheetTarget } from "./settings-sheet-targets";
+import type { SettingsSheetTarget } from "./settings-sheet-targets";
 import { cn } from "../../../lib/cn";
 
 type SymbolName = ComponentProps<typeof SymbolView>["name"];
@@ -17,7 +17,6 @@ export function SettingsRow(props: {
   readonly value?: string;
   readonly valuePosition?: "below" | "trailing";
   readonly target?: SettingsSheetTarget;
-  readonly fullScreenTarget?: SettingsLegalDocumentTarget;
   readonly onPress?: () => void;
 }) {
   const navigation = useNavigation();
@@ -52,7 +51,6 @@ export function SettingsRow(props: {
               screen: "SettingsContent",
               params: { screen: props.target },
             });
-          else if (props.fullScreenTarget) navigation.navigate(props.fullScreenTarget);
           else props.onPress?.();
         }}
       />
@@ -106,20 +104,6 @@ export function SettingsRow(props: {
             params: { screen: target },
           })
         }
-      >
-        {content}
-      </Pressable>
-    );
-  }
-
-  const fullScreenTarget = props.fullScreenTarget;
-  if (fullScreenTarget) {
-    return (
-      <Pressable
-        accessibilityLabel={props.label}
-        accessibilityRole="button"
-        disabled={props.disabled}
-        onPress={() => navigation.navigate(fullScreenTarget)}
       >
         {content}
       </Pressable>

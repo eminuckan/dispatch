@@ -1,7 +1,9 @@
+import * as OpenApi from "effect/unstable/httpapi/OpenApi";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
   EnvironmentAuthInvalidError,
+  EnvironmentHttpApi,
   EnvironmentInternalError,
   EnvironmentOperationForbiddenError,
   EnvironmentRequestInvalidError,
@@ -58,5 +60,20 @@ describe("environment HTTP errors", () => {
     errors.forEach((error, index) => {
       expect(error.message).toContain(details[index]);
     });
+  });
+});
+
+describe("environment connection API", () => {
+  it("exposes explicit Dispatch pairing without the retired account bootstrap endpoints", () => {
+    const paths = OpenApi.fromApi(EnvironmentHttpApi).paths;
+    expect(paths["/api/auth/dispatch-connect/pairing"]?.post).toBeDefined();
+    expect(paths["/api/auth/dispatch-connect/identity"]?.get).toBeDefined();
+    expect(paths["/api/auth/dispatch-connect/configure"]?.post).toBeDefined();
+    expect(paths["/oauth/token"]?.post).toBeDefined();
+    expect(
+      Object.keys(paths).some(
+        (path) => path.startsWith("/api/connect/") || path.startsWith("/api/t3-connect/"),
+      ),
+    ).toBe(false);
   });
 });

@@ -93,7 +93,7 @@ function decodeDesktopUpdateMetadata(raw: string): DesktopUpdateMetadata {
   });
 }
 
-export function resolveDesktopWhatsNew(
+function resolveDesktopWhatsNew(
   metadata: DesktopUpdateMetadata,
   installedVersion: string,
 ): DesktopWhatsNew | null {

@@ -23,6 +23,7 @@ export class BearerConnectionTarget extends Schema.TaggedClass<BearerConnectionT
   },
 ) {}
 
+/** Kept readable for saved catalogs; connection attempts require explicit re-pairing. */
 export class RelayConnectionTarget extends Schema.TaggedClass<RelayConnectionTarget>()(
   "RelayConnectionTarget",
   {
@@ -102,8 +103,6 @@ export class ConnectionBlockedError extends Schema.TaggedError<ConnectionBlocked
 }
 
 export type ConnectionAttemptError = ConnectionTransientError | ConnectionBlockedError;
-
-export const DPOP_ACCESS_TOKEN_REFRESH_SKEW_MS = 60_000;
 
 export type PreparedHttpAuthorization =
   | {

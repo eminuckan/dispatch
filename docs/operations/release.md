@@ -5,8 +5,8 @@ Dispatch releases are published from the canonical repository:
 `https://github.com/eminuckan/dispatch`
 
 The core release contract is the GitHub Release produced by `.github/workflows/release.yml`.
-Publishing to services outside GitHub is safe by default: T3 Connect configuration, the legacy npm
-packages, the compatibility AUR package, the hosted web app, and the marketing site are all skipped
+Publishing to services outside GitHub is safe by default: the legacy npm packages, the compatibility
+AUR package, the hosted web app, and the marketing site are all skipped
 unless their Dispatch-owned repository gate is explicitly set to `true`.
 
 The platform build implementation lives in `.github/workflows/release-desktop.yml`. It packages the
@@ -45,19 +45,17 @@ The normal graph is:
 1. `resolve_commit` chooses the commit and applies the channel source rules.
 2. `preflight` resolves the release version, tag, previous tag, prerelease state, and release name.
 3. `quality` runs `vp check`, `vp run typecheck`, and `vp run test`.
-4. `relay_public_config` either resolves upstream T3 Connect production configuration when explicitly
-   enabled or is skipped.
-5. `build_bundle` aligns package versions and builds the platform-independent server, web client, and
+4. `build_bundle` aligns package versions and builds the platform-independent server, web client, and
    Electron main process once.
-6. Six platform jobs call `release-desktop.yml` to package that shared bundle and build native pieces.
-7. `publish_cli` optionally publishes the legacy npm compatibility packages. A skipped job is valid.
-8. `release` publishes the GitHub Release after quality and all platform jobs succeed. It explicitly
+5. Six platform jobs call `release-desktop.yml` to package that shared bundle and build native pieces.
+6. `publish_cli` optionally publishes the legacy npm compatibility packages. A skipped job is valid.
+7. `release` publishes the GitHub Release after quality and all platform jobs succeed. It explicitly
    accepts `publish_cli` as either successful or skipped.
-9. AUR, hosted web, marketing, stable version finalization, and Discord announcement run afterward
+8. AUR, hosted web, marketing, stable version finalization, and Discord announcement run afterward
    according to their own conditions.
 
-GitHub Release publication therefore does not require npm, AUR, a hosted web deployment, a marketing
-deployment, or T3 Connect. Enabling one of those integrations can make that integration's own job a
+GitHub Release publication therefore does not require npm, AUR, a hosted web deployment, or a marketing
+deployment. Enabling one of those integrations can make that integration's own job a
 release dependency where the workflow says so; leaving its gate unset keeps the independent Dispatch
 release path available.
 
@@ -96,17 +94,12 @@ Preview manifests and fails if `latest*` or `nightly*` manifests leak into that 
 All gates below are GitHub repository variables. The workflow requires the literal string `true`.
 Any other value, including an unset variable, leaves the integration disabled.
 
-| Integration                              | Repository gate                       | Channels                 | When disabled                                                               |
-| ---------------------------------------- | ------------------------------------- | ------------------------ | --------------------------------------------------------------------------- |
-| Upstream T3 Connect public configuration | `DISPATCH_RELEASE_ENABLE_T3_CONNECT`  | stable, nightly, preview | `relay_public_config` is skipped and the clients are built cloud-disabled.  |
-| Legacy npm compatibility packages        | `DISPATCH_RELEASE_PUBLISH_LEGACY_NPM` | stable, nightly, preview | npm publication is skipped and the GitHub Release can still publish.        |
-| Legacy AUR compatibility package         | `DISPATCH_RELEASE_PUBLISH_AUR_COMPAT` | stable, nightly          | AUR publication is skipped. Preview never publishes AUR.                    |
-| Hosted web deployment                    | `DISPATCH_RELEASE_DEPLOY_WEB`         | stable, nightly          | hosted web deployment is skipped. Preview never deploys hosted web.         |
-| Marketing deployment                     | `DISPATCH_RELEASE_DEPLOY_MARKETING`   | nightly only             | marketing deployment is skipped. Stable and preview never deploy marketing. |
-
-These gates are independent. For example, hosted web deployment can be enabled while T3 Connect is
-disabled; in that case the hosted build receives empty T3 Connect public configuration and remains
-disconnected from that upstream integration. Dispatch Connect is separate and is described below.
+| Integration                       | Repository gate                       | Channels                 | When disabled                                                               |
+| --------------------------------- | ------------------------------------- | ------------------------ | --------------------------------------------------------------------------- |
+| Legacy npm compatibility packages | `DISPATCH_RELEASE_PUBLISH_LEGACY_NPM` | stable, nightly, preview | npm publication is skipped and the GitHub Release can still publish.        |
+| Legacy AUR compatibility package  | `DISPATCH_RELEASE_PUBLISH_AUR_COMPAT` | stable, nightly          | AUR publication is skipped. Preview never publishes AUR.                    |
+| Hosted web deployment             | `DISPATCH_RELEASE_DEPLOY_WEB`         | stable, nightly          | hosted web deployment is skipped. Preview never deploys hosted web.         |
+| Marketing deployment              | `DISPATCH_RELEASE_DEPLOY_MARKETING`   | nightly only             | marketing deployment is skipped. Stable and preview never deploy marketing. |
 
 ### Dispatch Connect public origin
 
@@ -121,38 +114,6 @@ This release default does not change source/dev or self-hosted behavior. Outside
 workflows, leaving `DISPATCH_CONNECT_URL` unset continues to mean that Dispatch Connect is optional and
 must be configured by the operator. `CONNECT_JEV_API_KEY`, environment credentials, account sessions,
 and every other Connect server secret remain server-side and are never added to release build env.
-
-### Upstream T3 Connect
-
-T3 Connect is the upstream-operated service and keeps its existing name. Dispatch does not enable it
-implicitly.
-
-Set `DISPATCH_RELEASE_ENABLE_T3_CONNECT=true` only when this repository is intentionally authorized
-to consume the production T3 Connect configuration. The resolver expects the GitHub Actions
-variables and secrets visible to the `production` environment, including:
-
-- variables `CLOUDFLARE_ACCOUNT_ID`, `RELAY_API_ZONE_NAME`, `CLERK_PUBLISHABLE_KEY`,
-  `CLERK_JWT_TEMPLATE`, and `CLERK_CLI_OAUTH_CLIENT_ID`;
-- optional variable `RELAY_DOMAIN` to override the derived relay host;
-- secret `CLOUDFLARE_API_TOKEN`;
-- readable production relay state for the client tracing URL, dataset, and token.
-
-The resolver writes the client-facing build configuration under canonical Dispatch names:
-
-- `DISPATCH_CLERK_PUBLISHABLE_KEY`
-- `DISPATCH_CLERK_JWT_TEMPLATE`
-- `DISPATCH_CLERK_CLI_OAUTH_CLIENT_ID`
-- `DISPATCH_RELAY_URL`
-- `DISPATCH_RELAY_CLIENT_OTLP_TRACES_URL`
-- `DISPATCH_RELAY_CLIENT_OTLP_TRACES_DATASET`
-- `DISPATCH_RELAY_CLIENT_OTLP_TRACES_TOKEN`
-
-The tracing loader can read the corresponding `T3CODE_RELAY_CLIENT_OTLP_TRACES_*` fields from an old
-artifact during migration, but new workflow writers emit `DISPATCH_*` names.
-
-If the T3 Connect gate is enabled and its production configuration cannot be resolved, the bundle is
-not built. If the gate is disabled, the resolver is skipped and the core release proceeds with empty
-cloud configuration.
 
 ### Legacy npm compatibility publication
 
@@ -268,13 +229,8 @@ build as Preview.
 Release writers use Dispatch-owned names for current product configuration. The main values operators
 are likely to see are:
 
-- Clerk/relay: `DISPATCH_CLERK_PUBLISHABLE_KEY`, `DISPATCH_CLERK_JWT_TEMPLATE`,
-  `DISPATCH_CLERK_CLI_OAUTH_CLIENT_ID`, and `DISPATCH_RELAY_URL`.
-- Relay client tracing: `DISPATCH_RELAY_CLIENT_OTLP_TRACES_URL`,
-  `DISPATCH_RELAY_CLIENT_OTLP_TRACES_DATASET`, and `DISPATCH_RELAY_CLIENT_OTLP_TRACES_TOKEN`.
+- Dispatch Connect: `DISPATCH_CONNECT_URL`.
 - Desktop update repository: `DISPATCH_DESKTOP_UPDATE_REPOSITORY`.
-- macOS signing inputs used by the artifact builder: `DISPATCH_APPLE_TEAM_ID`,
-  `DISPATCH_MACOS_PROVISIONING_PROFILE`, and `DISPATCH_CLERK_PASSKEY_RP_DOMAINS`.
 - CLI macOS signing identity: `DISPATCH_CLI_MAC_SIGN_IDENTITY`.
 - native build-cache reuse: `DISPATCH_DESKTOP_REUSE_RESOURCE_MONITOR` and
   `DISPATCH_DESKTOP_REUSE_LINUX_CAPTURE_HELPERS`.
@@ -294,26 +250,13 @@ present:
 - `APPLE_API_KEY_ID`
 - `APPLE_API_ISSUER`
 
-When those are present, the workflow also requires repository variable `APPLE_TEAM_ID` and secret
-`MACOS_PROVISIONING_PROFILE`. It maps them into the artifact builder as
-`DISPATCH_APPLE_TEAM_ID` and `DISPATCH_MACOS_PROVISIONING_PROFILE`.
-
-The profile must belong to the Dispatch app ID and include the required Associated Domains
-entitlement. The current desktop app ID is `com.eminuckan.dispatch`.
-
-For passkeys, repository variable `CLERK_PASSKEY_RP_DOMAINS` is exported as
-`DISPATCH_CLERK_PASSKEY_RP_DOMAINS`. A signed independent build should configure this explicitly when
-it is not deriving the RP domain from a T3 Connect `DISPATCH_CLERK_PUBLISHABLE_KEY`.
-
 The CLI archive imports the same `CSC_LINK` certificate, discovers its Developer ID identity, and
 writes that identity as `DISPATCH_CLI_MAC_SIGN_IDENTITY`. Without a Developer ID identity the macOS
 CLI archive is ad-hoc signed. With the identity and Apple API key values present, the CLI archive is
 also submitted for notarization.
 
-For local migration only, the builders still understand the previous
-`T3CODE_APPLE_TEAM_ID`, `T3CODE_MACOS_PROVISIONING_PROFILE`,
-`T3CODE_CLERK_PASSKEY_RP_DOMAINS`, `T3CODE_CLERK_PUBLISHABLE_KEY`, and
-`T3CODE_CLI_MAC_SIGN_IDENTITY` inputs. Prefer the Dispatch names for new configuration.
+For local migration only, the CLI builder still accepts `T3CODE_CLI_MAC_SIGN_IDENTITY`.
+Prefer `DISPATCH_CLI_MAC_SIGN_IDENTITY` for new configuration.
 
 ## Windows signing
 
@@ -413,11 +356,6 @@ repository identity.
 
 ## Troubleshooting
 
-- **T3 Connect resolver skipped:** check `DISPATCH_RELEASE_ENABLE_T3_CONNECT`. Skipped is the expected
-  default for an independent cloud-disabled Dispatch release.
-- **T3 Connect resolver enabled but failed:** verify the production relay/Clerk variables, Cloudflare
-  credentials, and readable production relay state. Because the gate was explicitly enabled, this
-  failure blocks the bundle build.
 - **GitHub Release did not run after legacy npm:** when
   `DISPATCH_RELEASE_PUBLISH_LEGACY_NPM=true`, npm publication must succeed. Disable the gate if the
   repository does not own/configure the legacy npm names.
@@ -425,9 +363,8 @@ repository identity.
   required. There are no domain defaults.
 - **Marketing job fails immediately:** configure `DISPATCH_MARKETING_VERCEL_PROJECT_ID` plus the
   Vercel token/org credentials. The workflow does not discover a project by name.
-- **macOS signing is unexpectedly disabled:** check the complete Apple secret set. If signing is
-  enabled, also check `APPLE_TEAM_ID`, `MACOS_PROVISIONING_PROFILE`, and passkey RP-domain
-  configuration.
+- **macOS signing is unexpectedly disabled:** check the complete certificate and Apple notarization
+  secret set above.
 - **Windows signing is unexpectedly disabled:** check the complete Azure Trusted Signing secret set.
 - **Desktop updates point at the wrong repository in a local build:** set
   `DISPATCH_DESKTOP_UPDATE_REPOSITORY=eminuckan/dispatch`. The release workflow already supplies the

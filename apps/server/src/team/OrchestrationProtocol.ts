@@ -96,7 +96,7 @@ export function reviewCoversAll(criteria: ReadonlyArray<string>, review: ReviewR
   );
 }
 
-export function taskDependenciesSettled(run: TeamRun, task: TeamTask): boolean {
+function taskDependenciesSettled(run: TeamRun, task: TeamTask): boolean {
   return task.dependencies.every(
     (dependency) =>
       run.tasks.find((candidate) => candidate.id === dependency)?.status === "settled",

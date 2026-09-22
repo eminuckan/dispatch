@@ -161,53 +161,6 @@ A session with an open connection stays listed after its access credential expir
 Treat pairing URLs and authorization codes as passwords. Do not include them in screenshots, logs, or
 bug reports.
 
-## Legacy T3 Connect compatibility
-
-T3 Connect and Clerk remain optional compatibility for deployments that still use the upstream
-authenticated relay. They are cloud-disabled by default in Dispatch and are not the normal setup path.
-Dispatch does not expose a product account, login, logout, or profile UI for this compatibility mode.
-Keep this path only for existing upstream-compatible deployments that still depend on it.
-
-An existing legacy deployment may still have a previously established authenticated relay session.
-When that session is available, Dispatch can keep using it for managed relay discovery, environment
-connectivity, and relay-backed mobile push. New users should use direct pairing, Tailscale, or SSH
-instead of establishing a T3 Connect account.
-
-The legacy CLI surface remains available where the build includes the required cloud configuration:
-
-```bash
-dispatch connect legacy-t3
-dispatch connect legacy-t3 status
-dispatch connect legacy-t3 unlink
-dispatch connect legacy-t3 logout
-```
-
-These commands exist only for compatibility with the upstream relay workflow. Do not configure upstream
-T3 Connect values in a normal Dispatch Connect deployment just to enable them.
-
-### Legacy relay troubleshooting
-
-`dispatch connect legacy-t3 status` reports saved legacy authorization and link configuration; it is not a live
-reachability check. If a previously linked environment appears offline, run `dispatch service status`
-and read the displayed log. If the service disappears when SSH closes, see
-[background-service troubleshooting](./background-service.md#troubleshooting).
-
-| Error                                                     | Recovery                                                                                                                         |
-| --------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| `environment_link_limit_exceeded` or managed tunnel limit | Deregister an unused environment using the legacy deployment's administration path, then restart Dispatch on the host.           |
-| `auth_invalid` or `invalid_bearer`                        | The stored legacy relay authorization is no longer usable. Restore it only through the deployment's existing compatibility flow. |
-| Expired or invalid link proof                             | Check the host's date and time, update Dispatch, then restart it.                                                                |
-| HTTP 403 without a recognized error                       | Check relay access, proxies, and firewall rules. Keep any Cloudflare Ray ID for a bug report.                                    |
-| HTTP 408, 429, or 5xx                                     | Check network and relay availability. Startup retries temporary failures for up to ten minutes.                                  |
-
-After fixing a permanent rejection, restart the host's server. On Linux, use
-`systemctl --user restart t3code.service` for the compatibility service identifier. For a foreground
-server, stop it and run `dispatch serve` again with your usual options. Include the diagnostic message
-and trace ID when reporting a persistent failure.
-
-For a connection that still fails after linking, check the date and time on both devices. For server
-version warnings, follow [Updating Dispatch](./updating.md).
-
 ## Using the Desktop App as a Remote Only
 
 If a computer should only drive work running elsewhere, turn off its local environment. In the desktop

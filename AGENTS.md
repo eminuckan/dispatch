@@ -18,7 +18,7 @@ Performance is a product constraint. Watch for regressions caused by sending too
 
 ### 3. Remote ready
 
-Dispatch's websocket layer and canonical `dispatch` CLI support remote workflows. Users may connect directly over their local network, through Tailscale, SSH, or optional Dispatch Connect. Dispatch Connect accounts are convenience/discovery identity, not environment authority: a device still needs an explicit environment pairing grant. The upstream T3 Connect service is legacy compatibility only. New features should account for remote clients where reasonable.
+Dispatch's websocket layer and canonical `dispatch` CLI support remote workflows. Users may connect directly over their local network, through Tailscale, SSH, or optional Dispatch Connect. Dispatch Connect accounts are convenience/discovery identity, not environment authority: a device still needs an explicit environment pairing grant. Dispatch Connect uses Dispatch-owned authentication and pairing; do not restore the retired Clerk or upstream T3 Connect integration. New features should account for remote clients where reasonable.
 
 ### 4. Multi-surface
 

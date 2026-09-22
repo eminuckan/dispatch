@@ -52,6 +52,8 @@ export class ElectronApp extends Context.Service<
     readonly systemLocale: Effect.Effect<string>;
     readonly whenReady: Effect.Effect<void, ElectronAppWhenReadyError>;
     readonly quit: Effect.Effect<void>;
+    readonly requestSingleInstanceLock: Effect.Effect<boolean>;
+    readonly releaseSingleInstanceLock: Effect.Effect<void>;
     readonly exit: (code: number) => Effect.Effect<void>;
     readonly relaunch: (options: Electron.RelaunchOptions) => Effect.Effect<void>;
     readonly setPath: (
@@ -64,11 +66,6 @@ export class ElectronApp extends Context.Service<
     ) => Effect.Effect<void>;
     readonly setAppUserModelId: (id: string) => Effect.Effect<void>;
     readonly getAppMetrics: Effect.Effect<ReadonlyArray<Electron.ProcessMetric>>;
-    readonly setAsDefaultProtocolClient: (
-      protocol: string,
-      path?: string,
-      args?: readonly string[],
-    ) => Effect.Effect<boolean>;
     readonly setDesktopName: (desktopName: string) => Effect.Effect<void>;
     readonly setDockIcon: (iconPath: string) => Effect.Effect<void>;
     readonly appendCommandLineSwitch: (switchName: string, value?: string) => Effect.Effect<void>;
@@ -99,6 +96,8 @@ const addScopedAppListener = <Args extends ReadonlyArray<unknown>>(
 
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = ElectronApp.of({
+  requestSingleInstanceLock: Effect.sync(() => Electron.app.requestSingleInstanceLock()),
+  releaseSingleInstanceLock: Effect.sync(() => Electron.app.releaseSingleInstanceLock()),
   metadata: Effect.gen(function* () {
     const appVersion = yield* Effect.try({
       try: () => Electron.app.getVersion(),
@@ -165,13 +164,6 @@ export const make = ElectronApp.of({
       Electron.app.setAppUserModelId(id);
     }),
   getAppMetrics: Effect.sync(() => Electron.app.getAppMetrics()),
-  setAsDefaultProtocolClient: (protocol, path, args) =>
-    Effect.sync(() => {
-      if (path === undefined) {
-        return Electron.app.setAsDefaultProtocolClient(protocol);
-      }
-      return Electron.app.setAsDefaultProtocolClient(protocol, path, [...(args ?? [])]);
-    }),
   setDesktopName: (desktopName) =>
     Effect.sync(() => {
       const linuxApp = Electron.app as Electron.App & {

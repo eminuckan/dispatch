@@ -5,7 +5,6 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
@@ -13,7 +12,6 @@ import * as TestClock from "effect/testing/TestClock";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import * as RelayClient from "@dispatch/shared/relayClient";
 
-import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ManagedEndpointRuntime from "./ManagedEndpointRuntime.ts";
 
 const relayClientAvailableLayer = Layer.succeed(
@@ -34,13 +32,7 @@ const runtimeDependencies = (
   spawner: ReturnType<typeof ChildProcessSpawner.make>,
   relayClientLayer = relayClientAvailableLayer,
 ) =>
-  Layer.mergeAll(
-    Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
-    relayClientLayer,
-    Layer.mock(ServerSecretStore.ServerSecretStore)({
-      get: () => Effect.succeed(Option.none()),
-    }),
-  );
+  Layer.mergeAll(Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner), relayClientLayer);
 
 const buildCloudManagedEndpointRuntime = (
   spawner: ReturnType<typeof ChildProcessSpawner.make>,
@@ -169,38 +161,6 @@ describe("CloudManagedEndpointRuntime", () => {
       expect(spawned.map((command) => command.options.shell)).toEqual([false, false]);
       expect(killed).toEqual([100, 101]);
       expect(stopped).toEqual({ status: "disabled" });
-    }),
-  );
-
-  it.effect("stops an active connector when a non-Cloudflare runtime config is applied", () =>
-    Effect.gen(function* () {
-      const killed: Array<number> = [];
-      const spawner = ChildProcessSpawner.make(() =>
-        Effect.gen(function* () {
-          const handle = makeHandle({
-            pid: 200,
-            onKill: () => {
-              killed.push(200);
-            },
-          });
-          yield* Effect.addFinalizer(() => handle.kill().pipe(Effect.ignore));
-          return handle;
-        }),
-      );
-      const runtime = yield* buildCloudManagedEndpointRuntime(spawner);
-
-      const started = yield* runtime.applyConfig({
-        providerKind: "cloudflare_tunnel",
-        connectorToken: "token",
-      });
-      const unsupported = yield* runtime.applyConfig({
-        providerKind: "manual",
-        connectorToken: "manual-token",
-      });
-
-      expect(started.status).toBe("running");
-      expect(unsupported).toEqual({ status: "unsupported", providerKind: "manual" });
-      expect(killed).toEqual([200]);
     }),
   );
 

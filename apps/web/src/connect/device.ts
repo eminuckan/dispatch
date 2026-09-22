@@ -4,7 +4,7 @@ import {
   generateBrowserDpopKey,
   readStoredBrowserDpopKey,
   writeStoredBrowserDpopKey,
-} from "../cloud/dpop";
+} from "./dpop";
 import { listDispatchConnectDevices, registerDispatchConnectDevice } from "./dispatchConnect";
 
 const DEVICE_STORAGE_KEY = "dispatch.connect.device.v1";

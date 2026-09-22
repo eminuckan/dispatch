@@ -16,13 +16,12 @@ This app has three variants:
 
 Run commands from `apps/mobile`.
 
-T3 Connect and Clerk remain optional legacy compatibility for authenticated relay transport. A fresh
-clone has no cloud configuration and the mobile product exposes no Dispatch account, login, logout,
-or profile flow. Direct pairing over LAN or Tailscale is the default remote workflow.
+Use a Dispatch pairing code or direct pairing link to connect over LAN or Tailscale. Optional
+Dispatch Connect accounts are available in Settings > Environments when `DISPATCH_CONNECT_URL` is
+configured. Signing in never replaces the environment's pairing grant.
 
-When maintaining a legacy T3 Connect deployment, public transport configuration belongs in the
-repository-root `.env` or `.env.local`, not an `apps/mobile/.env` file. See
-[`../../.env.example`](../../.env.example).
+Public configuration belongs in the repository-root `.env` or `.env.local`, not an
+`apps/mobile/.env` file. See [`../../.env.example`](../../.env.example).
 
 ## Development
 
@@ -72,7 +71,7 @@ previous directory.
 
 If your Xcode account only has a Personal Team, use a bundle identifier you control and opt into the
 reduced-capability local build. Personal Team builds omit the widget and share extensions, push
-entitlement, and legacy Clerk Apple-auth capability; builds without this opt-in are unchanged.
+entitlement; builds without this opt-in are unchanged.
 
 ```bash
 DISPATCH_IOS_PERSONAL_TEAM=1 \
@@ -128,12 +127,6 @@ The native lint task runs SwiftLint for Swift plus ktlint and detekt for Kotlin.
 Preview and production variants use Expo fingerprinting so OTA updates only reach binaries with matching native dependencies, config plugins, and patches. CI uses the `preview:dev` profile to reuse a compatible native build when possible.
 
 The development variant uses `appVersion` to avoid recalculating the native fingerprint for each Metro launch manifest. `MOBILE_VERSION_POLICY` can override either default. If you distribute a custom Release build with the development identity and publish OTA updates to it, set `MOBILE_VERSION_POLICY=fingerprint` for both its build and updates. Changing the runtime policy requires a native rebuild for OTA matching; an existing dev client can still load local Metro bundles.
-
-Only legacy T3 Connect compatibility builds need `DISPATCH_CLERK_PUBLISHABLE_KEY`,
-`DISPATCH_CLERK_JWT_TEMPLATE`, and `DISPATCH_RELAY_URL` in their EAS environment. These values support
-the existing authenticated relay transport; they do not enable a product account UI. Expo config maps
-the canonical values into the mobile build while still accepting the legacy `T3CODE_*` names for
-compatibility.
 
 Create a PR preview dev-client build manually:
 

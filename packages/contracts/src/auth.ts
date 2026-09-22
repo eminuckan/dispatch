@@ -68,8 +68,8 @@ export type ServerAuthBootstrapMethod = typeof ServerAuthBootstrapMethod.Type;
  *   app after bootstrap/pairing
  * - `bearer-access-token`: scoped token suitable for non-cookie or
  *   non-browser clients
- * - `dpop-access-token`: scoped proof-of-possession token used by managed
- *   relay connections
+ * - `dpop-access-token`: scoped proof-of-possession token bound to the
+ *   paired client key
  */
 export const ServerAuthSessionMethod = Schema.Literals([
   "browser-session-cookie",

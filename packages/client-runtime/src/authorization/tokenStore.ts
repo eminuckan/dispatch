@@ -1,12 +1,5 @@
-import { EnvironmentId } from "@dispatch/contracts";
-import { RelayManagedEndpoint } from "@dispatch/contracts/relay";
-import * as Context from "effect/Context";
-import type * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
-import type * as Option from "effect/Option";
+import { EnvironmentId, TrimmedNonEmptyString } from "@dispatch/contracts";
 import * as Schema from "effect/Schema";
-
-import type { ConnectionAttemptError } from "../connection/model.ts";
 
 export class RemoteDpopAccessToken extends Schema.Class<RemoteDpopAccessToken>(
   "@dispatch/client-runtime/authorization/RemoteDpopAccessToken",
@@ -14,25 +7,13 @@ export class RemoteDpopAccessToken extends Schema.Class<RemoteDpopAccessToken>(
   environmentId: EnvironmentId,
   accountId: Schema.optionalKey(Schema.String),
   label: Schema.String,
-  endpoint: RelayManagedEndpoint,
+  // Preserve old saved catalogs without using these credentials for authorization.
+  endpoint: Schema.Struct({
+    httpBaseUrl: TrimmedNonEmptyString,
+    wsBaseUrl: TrimmedNonEmptyString,
+    providerKind: Schema.Literals(["manual", "cloudflare_tunnel", "t3_relay"]),
+  }),
   accessToken: Schema.String,
   expiresAtEpochMs: Schema.Number,
   dpopThumbprint: Schema.String,
 }) {}
-
-export class RemoteDpopAccessTokenStore extends Context.Service<
-  RemoteDpopAccessTokenStore,
-  {
-    readonly get: (
-      environmentId: EnvironmentId,
-    ) => Effect.Effect<Option.Option<RemoteDpopAccessToken>, ConnectionAttemptError>;
-    readonly put: (token: RemoteDpopAccessToken) => Effect.Effect<void, ConnectionAttemptError>;
-    readonly remove: (environmentId: EnvironmentId) => Effect.Effect<void, ConnectionAttemptError>;
-  }
->()("@dispatch/client-runtime/authorization/tokenStore/RemoteDpopAccessTokenStore") {}
-
-export const make = (service: RemoteDpopAccessTokenStore["Service"]) =>
-  RemoteDpopAccessTokenStore.of(service);
-
-export const layer = (service: RemoteDpopAccessTokenStore["Service"]) =>
-  Layer.succeed(RemoteDpopAccessTokenStore, make(service));

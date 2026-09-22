@@ -3,15 +3,9 @@
 The environment issues its own sessions and enforces their capabilities. This
 authentication layer is deliberately account-independent: Dispatch does not need
 a product login to pair a client, issue scoped sessions, or secure LAN/Tailscale/
-direct remote access. Cloud identity and relay credentials belong to a separate
-trust boundary, described in [T3 Connect](./t3-connect.md). A relay token is never
-an environment login.
-
-Dispatch's product direction is accountless. Do not make environment authorization
-depend on Clerk or another hosted account provider. The legacy T3 Connect path may
-continue to use its existing cloud identity while an accountless relay principal is
-designed, but that compatibility layer must remain optional and isolated from the
-core pairing/session model.
+direct remote access. Optional account identity and environment discovery belong to a separate
+trust boundary, described in [Dispatch Connect](./dispatch-connect.md). An account session
+never grants environment access: each device still needs an explicit pairing grant.
 
 ## Authority survives transport changes
 

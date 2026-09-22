@@ -60,11 +60,3 @@ sudo loginctl enable-linger "$(id -un)"
 ```
 
 The Linux service name and macOS LaunchAgent identifier currently retain their compatibility spellings, including `t3code.service` and `com.t3tools.t3code.service.plist`. Those are service identifiers, not the Dispatch product name.
-
-## Legacy T3 Connect compatibility
-
-Builds that still carry upstream T3 Connect support may use the same background service to keep a
-legacy authenticated relay connection available. That compatibility path is cloud-disabled by
-default and is separate from installing or managing the local Dispatch service. See
-[legacy T3 Connect compatibility](./remote-access.md#legacy-t3-connect-compatibility) only when
-operating an existing relay deployment.

@@ -25,7 +25,7 @@ it.layer(NodeServices.layer)("getOrCreateEnvironmentKeyPairFromSecretStore", (it
       const second = yield* getOrCreateEnvironmentKeyPairFromSecretStore(secretStore);
 
       assert.deepEqual(second, first);
-      assert.isTrue(Option.isSome(yield* secretStore.get("cloud-link-ed25519-key-pair")));
+      assert.isTrue(Option.isSome(yield* secretStore.get("dispatch-connect-ed25519-key-pair")));
       assert.isTrue(Option.isNone(yield* secretStore.get("cloud-link-ed25519-private-key")));
       assert.isTrue(Option.isNone(yield* secretStore.get("cloud-link-ed25519-public-key")));
     }).pipe(Effect.provide(makeServerSecretStoreLayer())),
@@ -41,8 +41,30 @@ it.layer(NodeServices.layer)("getOrCreateEnvironmentKeyPairFromSecretStore", (it
         privateKey: "private",
         publicKey: "public",
       });
-      assert.isTrue(Option.isSome(yield* secretStore.get("cloud-link-ed25519-key-pair")));
+      assert.isTrue(Option.isSome(yield* secretStore.get("dispatch-connect-ed25519-key-pair")));
     }).pipe(Effect.provide(makeServerSecretStoreLayer())),
+  );
+
+  it.effect(
+    "retains the registered environment identity when adopting an existing atomic keypair",
+    () =>
+      Effect.gen(function* () {
+        const secretStore = yield* ServerSecretStore.ServerSecretStore;
+        const legacyKeyPair = '{"privateKey":"registered-private","publicKey":"registered-public"}';
+        yield* secretStore.set(
+          "cloud-link-ed25519-key-pair",
+          new TextEncoder().encode(legacyKeyPair),
+        );
+
+        const keyPair = yield* getOrCreateEnvironmentKeyPairFromSecretStore(secretStore);
+        assert.deepEqual(keyPair, {
+          privateKey: "registered-private",
+          publicKey: "registered-public",
+        });
+        const persisted = yield* secretStore.get("dispatch-connect-ed25519-key-pair");
+        assert.equal(new TextDecoder().decode(Option.getOrThrow(persisted)), legacyKeyPair);
+        assert.isTrue(Option.isSome(yield* secretStore.get("cloud-link-ed25519-key-pair")));
+      }).pipe(Effect.provide(makeServerSecretStoreLayer())),
   );
 
   it.effect("uses the persisted keypair when a concurrent creator wins", () =>
@@ -54,7 +76,7 @@ it.layer(NodeServices.layer)("getOrCreateEnvironmentKeyPairFromSecretStore", (it
       const secretStore = {
         get: (name) =>
           Effect.sync(() =>
-            name === "cloud-link-ed25519-key-pair" && createAttempted
+            name === "dispatch-connect-ed25519-key-pair" && createAttempted
               ? Option.some(winner)
               : Option.none(),
           ),
@@ -71,7 +93,7 @@ it.layer(NodeServices.layer)("getOrCreateEnvironmentKeyPairFromSecretStore", (it
                     _tag: "AlreadyExists",
                     module: "FileSystem",
                     method: "open",
-                    pathOrDescriptor: "cloud-link-ed25519-key-pair.bin",
+                    pathOrDescriptor: "dispatch-connect-ed25519-key-pair.bin",
                   }),
                 }),
               ),

@@ -127,11 +127,6 @@ function AppSettingsSection() {
         label="Open source licenses"
         target="SettingsOpenSourceLicenses"
       />
-      <SettingsRow
-        icon="doc.text"
-        label="Upstream T3 Code legal reference"
-        fullScreenTarget="SettingsLegal"
-      />
       {updateCheckAvailable ? (
         <Pressable
           accessibilityLabel={`Version ${versionLabel}`}

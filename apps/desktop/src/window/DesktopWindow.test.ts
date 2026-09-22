@@ -155,6 +155,8 @@ const desktopClientSettingsLayer = Layer.mock(DesktopClientSettings.DesktopClien
 
 const electronAppLayer = Layer.mock(ElectronApp.ElectronApp)({
   quit: Effect.void,
+  requestSingleInstanceLock: Effect.succeed(true),
+  releaseSingleInstanceLock: Effect.void,
 });
 
 const desktopAssetsLayer = Layer.succeed(DesktopAssets.DesktopAssets, {

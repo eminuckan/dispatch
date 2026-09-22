@@ -58,14 +58,7 @@ to create zones, API tokens, or tunnel configuration just to pair another device
 ## Hosted metadata boundary
 
 Connect may store display names, ownership/membership, device public keys, environment public keys,
-online/last-seen state, endpoint metadata, pairing state, and push-registration metadata. Project and
+online/last-seen state, endpoint metadata, and pairing state. Project and
 thread content is environment-local by default. If a future product feature caches project metadata for
 faster mobile discovery, that is a separate explicit data decision rather than an accidental
 consequence of remote access.
-
-## Legacy T3 Connect
-
-`infra/relay` and Clerk-backed T3 Connect remain compatibility code for existing upstream-style
-deployments. They are not the Dispatch Connect implementation and must not be required by new Dispatch
-builds. New deployment work belongs to the self-hosted Dispatch Connect service; old relay deployment
-is manual/opt-in only during the compatibility window.

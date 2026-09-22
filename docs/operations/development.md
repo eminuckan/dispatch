@@ -2,7 +2,7 @@
 
 ## First checkout
 
-Install `vp` using the [root README](../../README.md#install-vp). The checkout requires Node 24;
+Install `vp` using the [root README](../../README.md#requirements). The checkout requires Node 24;
 Bun is optional. From the repository root:
 
 ```sh
@@ -202,10 +202,9 @@ rustup target add aarch64-pc-windows-msvc
 
 NSIS is downloaded by electron-builder. WSL support additionally needs the Linux CLI archive
 passed as `--wsl-runtime`; see the
-[release runbook](./release.md#windows-payload-topology-and-update-validation).
+[release runbook](./release.md#produced-artifacts).
 
-### Signing and passkeys
+### Signing
 
 Add `--signed` after configuring the platform credentials in the
-[release runbook](./release.md). macOS passkeys need a signed, provisioned app; follow the
-[Connect setup](./connect-setup.md#desktop-passkeys) for local signing and renderer HMR.
+[release runbook](./release.md#macos-signing-and-notarization).

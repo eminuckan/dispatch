@@ -20,7 +20,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { HostProcessArchitecture, HostProcessPlatform } from "./hostProcess.ts";
 
 export const CLOUDFLARED_VERSION = "2026.5.2";
-const CLOUDFLARED_PATH_ENV_NAME = "T3CODE_CLOUDFLARED_PATH";
+const CLOUDFLARED_PATH_ENV_NAME = "DISPATCH_CLOUDFLARED_PATH";
 
 export type RelayClientExecutableSource = "override" | "managed" | "path";
 
@@ -114,7 +114,10 @@ const trimmedString = (name: string) =>
   );
 
 const CloudflaredConfig = Config.all({
-  executableOverride: trimmedString(CLOUDFLARED_PATH_ENV_NAME),
+  executableOverride: Config.all({
+    dispatch: trimmedString(CLOUDFLARED_PATH_ENV_NAME),
+    legacy: trimmedString("T3CODE_CLOUDFLARED_PATH"),
+  }).pipe(Config.map(({ dispatch, legacy }) => Option.orElse(dispatch, () => legacy))),
   path: trimmedString("PATH"),
 });
 

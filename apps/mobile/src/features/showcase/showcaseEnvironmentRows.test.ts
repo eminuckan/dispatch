@@ -5,8 +5,6 @@ import type { ConnectedEnvironmentSummary } from "../../state/remote-runtime-typ
 import {
   applyShowcaseLocalEnvironmentDisplayUrls,
   resolveShowcaseEnvironmentUpdateDisplayUrl,
-  SHOWCASE_AVAILABLE_CLOUD_ENVIRONMENTS,
-  SHOWCASE_CONNECTED_CLOUD_ENVIRONMENTS,
 } from "./showcaseEnvironmentRows";
 
 function environment(
@@ -39,23 +37,6 @@ it("presents showcase transports as remote endpoints", () => {
       "https://moonbase.dispatch.test/",
       "https://suspense-station.dispatch.test/",
       "http://100.82.16.5:3773/",
-    ],
-  );
-});
-
-it("uses reserved Dispatch test domains for synthetic cloud endpoints", () => {
-  assert.deepStrictEqual(
-    SHOWCASE_CONNECTED_CLOUD_ENVIRONMENTS.map(({ displayUrl }) => displayUrl),
-    ["https://aurora-gpu.dispatch.test"],
-  );
-  assert.deepStrictEqual(
-    SHOWCASE_AVAILABLE_CLOUD_ENVIRONMENTS.map(({ environment }) => environment.endpoint),
-    [
-      {
-        httpBaseUrl: "https://pocket-pi.dispatch.test",
-        wsBaseUrl: "wss://pocket-pi.dispatch.test",
-        providerKind: "t3_relay",
-      },
     ],
   );
 });

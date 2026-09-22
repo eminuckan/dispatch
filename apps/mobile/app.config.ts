@@ -22,15 +22,6 @@ const personalTeamBundleIdentifier = firstNonEmpty(
   repoEnv.T3CODE_IOS_PERSONAL_TEAM_BUNDLE_ID,
 );
 const appleTeamId = firstNonEmpty(repoEnv.DISPATCH_APPLE_TEAM_ID);
-const passkeyRelyingParties = firstNonEmpty(
-  repoEnv.DISPATCH_CLERK_PASSKEY_RP_DOMAINS,
-  repoEnv.T3CODE_CLERK_PASSKEY_RP_DOMAINS,
-  repoEnv.DISPATCH_CLERK_PASSKEY_RP_DOMAIN,
-  repoEnv.T3CODE_CLERK_PASSKEY_RP_DOMAIN,
-)
-  ?.split(",")
-  .map((domain) => domain.trim())
-  .filter(Boolean);
 const easOwner = firstNonEmpty(repoEnv.DISPATCH_EXPO_OWNER);
 const easProjectId = firstNonEmpty(repoEnv.DISPATCH_EXPO_PROJECT_ID);
 const mobileUpdatesUrl = firstNonEmpty(repoEnv.DISPATCH_MOBILE_UPDATES_URL);
@@ -38,7 +29,6 @@ const androidGoogleServicesFile = firstNonEmpty(
   repoEnv.DISPATCH_ANDROID_GOOGLE_SERVICES_FILE,
   repoEnv.T3CODE_ANDROID_GOOGLE_SERVICES_FILE,
 );
-const relayUrl = firstNonEmpty(repoEnv.DISPATCH_RELAY_URL, repoEnv.T3CODE_RELAY_URL);
 const mobileUpdatesEnabled =
   firstNonEmpty(repoEnv.DISPATCH_MOBILE_UPDATES_ENABLED, repoEnv.T3CODE_MOBILE_UPDATES_ENABLED) !==
     "0" && mobileUpdatesUrl !== undefined;
@@ -195,12 +185,6 @@ const widgetsPlugin: NonNullable<ExpoConfig["plugins"]>[number] = [
           "accessoryRectangular",
         ],
       },
-      {
-        name: "AgentActivity",
-        displayName: "Agent Activity",
-        description: "Shows the current state of active Dispatch agents.",
-        supportedFamilies: ["systemSmall", "systemMedium", "accessoryRectangular"],
-      },
     ],
   },
 ];
@@ -264,14 +248,7 @@ const config: ExpoConfig = {
     requireFullScreen: isShowcaseCaptureBuild,
     bundleIdentifier: iosBundleIdentifier,
     ...(appleTeamId ? { appleTeamId } : {}),
-    ...(passkeyRelyingParties?.length
-      ? {
-          associatedDomains: passkeyRelyingParties.flatMap((domain) => [
-            `applinks:${domain}`,
-            `webcredentials:${domain}`,
-          ]),
-        }
-      : {}),
+
     entitlements: {
       "keychain-access-groups": [`$(AppIdentifierPrefix)${iosBundleIdentifier}`],
     },
@@ -357,15 +334,6 @@ const config: ExpoConfig = {
         icon: variant.assets.androidNotificationIcon,
         color: variant.assets.androidNotificationColor,
         mode: APP_VARIANT === "development" ? "development" : "production",
-      },
-    ],
-    // appleSignIn must be gated here: withoutIosPersonalTeamCapabilities.cjs runs before
-    // plugins earlier in this array, so it cannot strip the entitlement Clerk would add.
-    [
-      "@clerk/expo",
-      {
-        theme: "./clerk-theme.json",
-        appleSignIn: !isIosPersonalTeamBuild && appleTeamId !== undefined,
       },
     ],
     "expo-web-browser",
@@ -462,27 +430,6 @@ const config: ExpoConfig = {
   extra: {
     appVariant: APP_VARIANT,
     iosPersonalTeamBuild: isIosPersonalTeamBuild,
-    relay: {
-      url: relayUrl ?? null,
-    },
-    clerk: {
-      publishableKey: repoEnv.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY ?? null,
-      jwtTemplate: repoEnv.EXPO_PUBLIC_CLERK_JWT_TEMPLATE ?? null,
-    },
-    // Native Google sign-in credentials. @clerk/expo reads these from `extra`
-    // under their exact env-var names (not nested), and its config plugin reads
-    // the iOS URL scheme at prebuild to register it in Info.plist.
-    // Unset values must be omitted (not null): the public manifest serializes
-    // null to {}, which is truthy and would defeat Clerk's fallback checks.
-    EXPO_PUBLIC_CLERK_GOOGLE_WEB_CLIENT_ID: repoEnv.EXPO_PUBLIC_CLERK_GOOGLE_WEB_CLIENT_ID,
-    EXPO_PUBLIC_CLERK_GOOGLE_IOS_CLIENT_ID: repoEnv.EXPO_PUBLIC_CLERK_GOOGLE_IOS_CLIENT_ID,
-    EXPO_PUBLIC_CLERK_GOOGLE_ANDROID_CLIENT_ID: repoEnv.EXPO_PUBLIC_CLERK_GOOGLE_ANDROID_CLIENT_ID,
-    EXPO_PUBLIC_CLERK_GOOGLE_IOS_URL_SCHEME: repoEnv.EXPO_PUBLIC_CLERK_GOOGLE_IOS_URL_SCHEME,
-    observability: {
-      tracesUrl: repoEnv.EXPO_PUBLIC_OTLP_TRACES_URL ?? "https://api.axiom.co/v1/traces",
-      tracesDataset: repoEnv.EXPO_PUBLIC_OTLP_TRACES_DATASET ?? null,
-      tracesToken: repoEnv.EXPO_PUBLIC_OTLP_TRACES_TOKEN ?? null,
-    },
     ...(easProjectId ? { eas: { projectId: easProjectId } } : {}),
   },
   ...(easOwner ? { owner: easOwner } : {}),

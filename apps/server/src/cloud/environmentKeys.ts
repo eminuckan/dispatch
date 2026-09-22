@@ -5,7 +5,8 @@ import * as Schema from "effect/Schema";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 
-const CLOUD_LINK_KEY_PAIR = "cloud-link-ed25519-key-pair";
+const ENVIRONMENT_KEY_PAIR = "dispatch-connect-ed25519-key-pair";
+const LEGACY_ENVIRONMENT_KEY_PAIR = "cloud-link-ed25519-key-pair";
 const CLOUD_LINK_PRIVATE_KEY = "cloud-link-ed25519-private-key";
 const CLOUD_LINK_PUBLIC_KEY = "cloud-link-ed25519-public-key";
 
@@ -41,7 +42,7 @@ const keyPairConcurrentReadError = (): ServerSecretStore.SecretStoreConcurrentRe
 const readEnvironmentKeyPair = Effect.fn("readEnvironmentKeyPair")(function* (
   secrets: ServerSecretStore.ServerSecretStore["Service"],
 ) {
-  const encoded = yield* secrets.get(CLOUD_LINK_KEY_PAIR);
+  const encoded = yield* secrets.get(ENVIRONMENT_KEY_PAIR);
   if (Option.isNone(encoded)) {
     return Option.none<EnvironmentKeyPair>();
   }
@@ -58,7 +59,7 @@ const persistEnvironmentKeyPair = Effect.fn("persistEnvironmentKeyPair")(functio
   const encoded = yield* encodeEnvironmentKeyPair(keyPair).pipe(
     Effect.mapError(keyPairEncodeError),
   );
-  return yield* secrets.create(CLOUD_LINK_KEY_PAIR, stringToBytes(encoded)).pipe(
+  return yield* secrets.create(ENVIRONMENT_KEY_PAIR, stringToBytes(encoded)).pipe(
     Effect.as(keyPair),
     Effect.catchIf(ServerSecretStore.isSecretStoreError, (error) =>
       ServerSecretStore.isSecretAlreadyExistsError(error)
@@ -81,6 +82,15 @@ export const getOrCreateEnvironmentKeyPairFromSecretStore = Effect.fn(function* 
   const existing = yield* readEnvironmentKeyPair(secrets);
   if (Option.isSome(existing)) {
     return existing.value;
+  }
+
+  // Preserve the signing identity of environments registered before the Dispatch key name.
+  const legacy = yield* secrets.get(LEGACY_ENVIRONMENT_KEY_PAIR);
+  if (Option.isSome(legacy)) {
+    const keyPair = yield* decodeEnvironmentKeyPair(bytesToString(legacy.value)).pipe(
+      Effect.mapError(keyPairDecodeError),
+    );
+    return yield* persistEnvironmentKeyPair(secrets, keyPair);
   }
 
   const existingPrivate = yield* secrets.get(CLOUD_LINK_PRIVATE_KEY);

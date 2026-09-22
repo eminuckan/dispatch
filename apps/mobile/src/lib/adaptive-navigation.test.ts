@@ -73,7 +73,7 @@ describe("resolveThreadSelectionOverlayState", () => {
     key: "workspace",
     type: "stack",
     stale: false as const,
-    routeNames: ["Home", "Thread", "ThreadFiles", "SettingsSheet", "SettingsLegal"],
+    routeNames: ["Home", "Thread", "ThreadFiles", "SettingsSheet", "ThreadSettingsSheet"],
   };
   const home = { key: "home", name: "Home" };
   const thread = {
@@ -91,7 +91,13 @@ describe("resolveThreadSelectionOverlayState", () => {
         state: {
           ...stack,
           index: 4,
-          routes: [home, thread, files, settings, { key: "legal", name: "SettingsLegal" }],
+          routes: [
+            home,
+            thread,
+            files,
+            settings,
+            { key: "thread-settings", name: "ThreadSettingsSheet" },
+          ],
         },
         workspaceRouteKey: files.key,
         action: "replace",

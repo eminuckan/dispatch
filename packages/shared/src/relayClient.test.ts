@@ -70,48 +70,54 @@ const makeSpawnerLayer = (commands: Array<string>) =>
   );
 
 describe("RelayClient", () => {
-  it.effect.skipIf(windowsHost)(
-    "resolves explicit overrides before managed and PATH executables",
-    () =>
-      Effect.gen(function* () {
-        const fileSystem = yield* FileSystem.FileSystem;
-        const baseDir = yield* fileSystem.makeTempDirectoryScoped({
-          prefix: "t3-cloudflared-test-",
-        });
-        const overridePath = `${baseDir}/override-cloudflared`;
-        yield* fileSystem.writeFileString(overridePath, "override");
-        yield* fileSystem.chmod(overridePath, 0o755);
-        const manager = yield* makeCloudflaredRelayClient({
-          baseDir,
-        });
+  for (const overrideName of ["DISPATCH_CLOUDFLARED_PATH", "T3CODE_CLOUDFLARED_PATH"]) {
+    it.effect.skipIf(windowsHost)(
+      `resolves ${overrideName} before managed and PATH executables`,
+      () =>
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+            prefix: "t3-cloudflared-test-",
+          });
+          const overridePath = `${baseDir}/override-cloudflared`;
+          yield* fileSystem.writeFileString(overridePath, "override");
+          yield* fileSystem.chmod(overridePath, 0o755);
+          const manager = yield* makeCloudflaredRelayClient({
+            baseDir,
+          });
 
-        expect(
-          yield* manager.resolve.pipe(
-            Effect.provideService(
-              ConfigProvider.ConfigProvider,
-              ConfigProvider.fromEnv({
-                env: { PATH: "", T3CODE_CLOUDFLARED_PATH: overridePath },
-              }),
+          expect(
+            yield* manager.resolve.pipe(
+              Effect.provideService(
+                ConfigProvider.ConfigProvider,
+                ConfigProvider.fromEnv({
+                  env: {
+                    PATH: "",
+                    T3CODE_CLOUDFLARED_PATH: "/missing-legacy-override",
+                    [overrideName]: overridePath,
+                  },
+                }),
+              ),
+            ),
+          ).toEqual({
+            status: "available",
+            executablePath: overridePath,
+            source: "override",
+            version: CLOUDFLARED_VERSION,
+          });
+        }).pipe(
+          Effect.scoped,
+          Effect.provide(
+            Layer.mergeAll(
+              NodeServices.layer,
+              makeHttpClientLayer(new Uint8Array()),
+              makeSpawnerLayer([]),
+              hostRuntimeLayer(),
             ),
           ),
-        ).toEqual({
-          status: "available",
-          executablePath: overridePath,
-          source: "override",
-          version: CLOUDFLARED_VERSION,
-        });
-      }).pipe(
-        Effect.scoped,
-        Effect.provide(
-          Layer.mergeAll(
-            NodeServices.layer,
-            makeHttpClientLayer(new Uint8Array()),
-            makeSpawnerLayer([]),
-            hostRuntimeLayer(),
-          ),
         ),
-      ),
-  );
+    );
+  }
 
   it.effect.skipIf(windowsHost)(
     "downloads, verifies, validates, and atomically installs the managed executable",

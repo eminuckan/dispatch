@@ -18,7 +18,7 @@ import { ProviderService } from "../provider/Services/ProviderService.ts";
 import { OrchestrationAdvisor } from "./OrchestrationAdvisor.ts";
 import { OrchestrationStore } from "./OrchestrationStore.ts";
 
-export const defaultOrchestrationPolicy: TeamPolicy = {
+const defaultOrchestrationPolicy: TeamPolicy = {
   revision: 0,
   enabled: false,
   flowMode: "standard",

@@ -4,7 +4,6 @@ import { Platform, View } from "react-native";
 import { deriveProjectGroupLabel } from "@dispatch/client-runtime/state/project-grouping";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { hasCloudPublicConfig } from "../cloud/publicConfig";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import { NativeHeaderToolbar } from "../../native/StackHeader";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
@@ -20,11 +19,7 @@ import { useSettingsEnvironmentFilter } from "./settings-environment-filter";
 export function SettingsRouteScreen() {
   const navigation = useNavigation();
   const { layout } = useAdaptiveWorkspaceLayout();
-  const content = hasCloudPublicConfig() ? (
-    <ConfiguredSettingsRouteScreen />
-  ) : (
-    <LocalSettingsRouteScreen />
-  );
+  const content = <LocalSettingsRouteScreen />;
 
   return (
     <>
@@ -46,36 +41,6 @@ export function SettingsRouteScreen() {
         content
       )}
     </>
-  );
-}
-
-function ConfiguredSettingsRouteScreen() {
-  const insets = useSafeAreaInsets();
-  const { savedConnectionsById } = useSavedRemoteConnections();
-
-  return (
-    <View collapsable={false} className="flex-1 bg-sheet">
-      <ScrollView
-        contentInsetAdjustmentBehavior="automatic"
-        showsVerticalScrollIndicator={false}
-        className="flex-1"
-        contentContainerClassName="gap-4 px-5 pt-4"
-        contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
-      >
-        <SettingsSection title="Connections">
-          <SettingsRow
-            icon="desktopcomputer"
-            label="Environments"
-            value={`${Object.keys(savedConnectionsById).length}`}
-            valuePosition="trailing"
-            target="SettingsEnvironments"
-          />
-          <SettingsRow icon="bell.badge" label="Notifications" target="SettingsNotifications" />
-        </SettingsSection>
-
-        <SettingsIndexSections />
-      </ScrollView>
-    </View>
   );
 }
 

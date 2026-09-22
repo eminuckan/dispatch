@@ -49,9 +49,12 @@ export function ConnectionEnvironmentRow(props: {
   const serverConfig = useAtomValue(
     serverEnvironment.configValueAtom(props.environment.environmentId),
   );
-  const unsupported = props.environment.connectionState === "unsupported";
+  const unsupported =
+    props.environment.isRelayManaged || props.environment.connectionState === "unsupported";
   const enabled = props.environment.isEnabled && !unsupported;
-  const statusLabel = connectionStatusLabel(props.environment);
+  const statusLabel = props.environment.isRelayManaged
+    ? "Re-pair this environment with Dispatch"
+    : connectionStatusLabel(props.environment);
   const statusTraceId = enabled ? props.environment.connectionErrorTraceId : null;
   // Unsupported is a compatibility note, not a failure, so it stays muted.
   const hasConnectionFailure = enabled && props.environment.connectionError !== null;
@@ -149,7 +152,8 @@ export function ConnectionEnvironmentRow(props: {
         >
           {props.environment.isRelayManaged ? (
             <Text className="text-sm text-foreground-muted">
-              Managed by T3 Connect. Tunnel details update automatically.
+              This legacy connection is no longer supported. Add this environment again using a
+              Dispatch pairing code or direct pairing link.
             </Text>
           ) : (
             <>

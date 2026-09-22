@@ -454,7 +454,7 @@ it.layer(NodeServices.layer)("bin cli parsing", (it) => {
       const { output } = yield* captureStdout(runCli(["connect", "--help"]));
 
       assert.include(output, "Set up Dispatch Connect for this machine.");
-      assert.include(output, "legacy-t3");
+      assert.notInclude(output, "legacy-t3");
       assert.notInclude(output, "T3 Connect is unavailable");
     }).pipe(Effect.provide(Layer.mergeAll(CliRuntimeLayer, TestConsole.layer))),
   );
@@ -494,95 +494,6 @@ it.layer(NodeServices.layer)("bin cli parsing", (it) => {
       assert.equal(status.environmentId, null);
       assert.equal(status.serverRunning, false);
     }).pipe(Effect.provide(DisconnectedLauncherChildLayer)),
-  );
-
-  it.effect("keeps legacy T3 status under the explicit legacy-t3 command", () =>
-    Effect.gen(function* () {
-      const baseDir = NodeFS.mkdtempSync(
-        NodePath.join(NodeOS.tmpdir(), "dispatch-cli-legacy-t3-status-test-"),
-      );
-      const { output } = yield* captureStdout(
-        runConnectCli(["connect", "legacy-t3", "status", "--base-dir", baseDir]),
-      );
-
-      assert.include(output, "T3 Connect\n  Exposure: disabled");
-      assert.include(output, "  Authorization: missing");
-      assert.include(output, "  Environment link: not provisioned");
-      assert.include(
-        output,
-        "Next: Run `dispatch connect legacy-t3 link` to authorize and enable T3 Connect.",
-      );
-    }),
-  );
-
-  it.effect("keeps the legacy T3 headless login override nested under legacy-t3", () =>
-    Effect.gen(function* () {
-      const baseDir = NodeFS.mkdtempSync(
-        NodePath.join(NodeOS.tmpdir(), "t3-cli-cloud-login-test-"),
-      );
-      const { secretsDir } = yield* ServerConfig.deriveServerPaths(baseDir, undefined);
-      NodeFS.mkdirSync(secretsDir, { recursive: true });
-      NodeFS.writeFileSync(
-        NodePath.join(secretsDir, "cloud-cli-oauth-token.bin"),
-        // @effect-diagnostics-next-line preferSchemaOverJson:off - Test fixture matches the persisted CLI token representation.
-        JSON.stringify({
-          accessToken: "access-token",
-          refreshToken: "refresh-token",
-          expiresAtEpochMs: Number.MAX_SAFE_INTEGER,
-        }),
-      );
-
-      const login = yield* captureStdout(
-        runConnectCli(["connect", "legacy-t3", "login", "--base-dir", baseDir, "--headless"]),
-      );
-      const status = yield* captureStdout(
-        runConnectCli(["connect", "legacy-t3", "status", "--base-dir", baseDir, "--json"]),
-      );
-      // @effect-diagnostics-next-line preferSchemaOverJson:off - CLI JSON output is decoded as a presentation DTO.
-      const decoded = JSON.parse(status.output) as {
-        readonly desired: boolean;
-        readonly authenticated: boolean;
-      };
-
-      assert.equal(login.output, "✓ Signed in");
-      assert.isFalse(decoded.desired);
-      assert.isTrue(decoded.authenticated);
-    }),
-  );
-
-  it.effect("disables legacy T3 Connect without a running server", () =>
-    Effect.gen(function* () {
-      const baseDir = NodeFS.mkdtempSync(
-        NodePath.join(NodeOS.tmpdir(), "t3-cli-cloud-unlink-test-"),
-      );
-      const { output } = yield* captureStdout(
-        runConnectCli(["connect", "legacy-t3", "unlink", "--base-dir", baseDir]),
-      );
-
-      assert.equal(output, "T3 Connect is disabled locally.");
-    }),
-  );
-
-  it.effect("logs out of legacy T3 Connect and removes the stored CLI authorization", () =>
-    Effect.gen(function* () {
-      const baseDir = NodeFS.mkdtempSync(
-        NodePath.join(NodeOS.tmpdir(), "t3-cli-cloud-logout-test-"),
-      );
-      const { secretsDir } = yield* ServerConfig.deriveServerPaths(baseDir, undefined);
-      const tokenPath = NodePath.join(secretsDir, "cloud-cli-oauth-token.bin");
-      NodeFS.mkdirSync(secretsDir, { recursive: true });
-      NodeFS.writeFileSync(tokenPath, "invalid persisted token");
-
-      const { output } = yield* captureStdout(
-        runConnectCli(["connect", "legacy-t3", "logout", "--base-dir", baseDir]),
-      );
-
-      assert.equal(
-        output,
-        "Signed out of T3 Connect locally.\nThe background service is managed separately with `dispatch service`.",
-      );
-      assert.isFalse(NodeFS.existsSync(tokenPath));
-    }),
   );
 
   it.effect("executes auth pairing subcommands and redacts secrets from list output", () =>

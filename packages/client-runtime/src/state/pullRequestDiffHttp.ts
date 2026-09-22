@@ -10,9 +10,8 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { HttpClient } from "effect/unstable/http";
 
-import { RemoteEnvironmentAuthorization } from "../authorization/service.ts";
 import type { PreparedConnection } from "../connection/model.ts";
-import { ManagedRelayDpopSigner } from "../relay/managedRelay.ts";
+import { DpopSigner } from "../authorization/dpop.ts";
 import {
   makeEnvironmentHttpApiUrlBuilder,
   type RemoteEnvironmentRequestError,
@@ -44,8 +43,7 @@ export const fetchEnvironmentPullRequestDiff = Effect.fn(
 )(function* (input: {
   readonly prepared: PreparedConnection;
   readonly diff: PullRequestDiffInput;
-  readonly signer: Option.Option<ManagedRelayDpopSigner["Service"]>;
-  readonly remoteAuthorization?: Option.Option<RemoteEnvironmentAuthorization["Service"]>;
+  readonly signer: Option.Option<DpopSigner["Service"]>;
   readonly timeoutMs?: number;
 }) {
   return yield* executeAuthenticatedEnvironmentHttpRequest({
@@ -87,15 +85,13 @@ export const pullRequestDiffLoaderLayer: Layer.Layer<
   PullRequestDiffLoader,
   Effect.gen(function* () {
     const httpClient = yield* HttpClient.HttpClient;
-    const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
-    const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
+    const signer = yield* Effect.serviceOption(DpopSigner);
     return PullRequestDiffLoader.of({
       load: (prepared, input) =>
         fetchEnvironmentPullRequestDiff({
           prepared,
           diff: input,
           signer,
-          remoteAuthorization,
         }).pipe(Effect.provideService(HttpClient.HttpClient, httpClient)),
     });
   }),

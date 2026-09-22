@@ -187,8 +187,7 @@ jobs:
           esac
 
       # Read only the desktop version from the built commit through the contents
-      # API as data. Preview packaging is cloud-disabled by default; it must not
-      # recover upstream T3 Connect values from PR-controlled configuration.
+      # API as data. Public service configuration comes from the trusted workflow.
       - id: version
         name: Resolve preview version
         if: steps.gate.outputs.eligible == 'true'
@@ -272,16 +271,11 @@ jobs:
       APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
       APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
       APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
-      MACOS_PROVISIONING_PROFILE: ${{ secrets.MACOS_PROVISIONING_PROFILE }}
     with:
       version: ${{ needs.resolve.outputs.version }}
       ref: ${{ github.sha }}
       release_channel: preview
-      relay_client_tracing: false
-      clerk_publishable_key: ""
-      clerk_jwt_template: ""
-      clerk_cli_oauth_client_id: ""
-      relay_url: ""
+      connect_url: ${{ vars.DISPATCH_CONNECT_URL || 'https://connect.opendispatch.dev' }}
       label: macOS arm64 preview
       runner: blacksmith-12vcpu-macos-26
       platform: mac
@@ -434,7 +428,7 @@ jobs:
               `Version: ${process.env.PREVIEW_VERSION}`,
               `Commit: ${process.env.HEAD_SHA.slice(0, 7)}`,
               "",
-              "Signed and notarized, with T3 Connect enabled. The app bundle (server, web client, Electron main) is built from this PR; packaging, native helpers, and desktop dependencies come from `main`.",
+              "Signed and notarized, with Dispatch Connect available. The app bundle (server, web client, Electron main) is built from this PR; packaging, native helpers, and desktop dependencies come from `main`.",
               "",
               "No GitHub sign-in is needed. The download stays available until this PR closes. The `preview:mac` label was consumed by this build; a maintainer applies it again to build a newer commit.",
             ].join("\n");

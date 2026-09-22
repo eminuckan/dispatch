@@ -196,8 +196,8 @@ The upstream MIT copyright and license notice are retained.
 ### Compatibility note
 
 Some compatibility identifiers intentionally keep their upstream spelling, including the `t3` CLI alias,
-legacy `.t3` state adoption, selected `T3CODE_*` environment fallbacks, native/runtime ABI names, and
-the explicitly labeled legacy T3 Connect path. Those names exist to keep upgrades and upstream-compatible
+legacy `.t3` state adoption, selected `T3CODE_*` environment fallbacks, and native/runtime ABI names.
+Those names exist to keep upgrades and upstream-compatible
 workflows functioning; they are not current Dispatch branding.
 
 ## License

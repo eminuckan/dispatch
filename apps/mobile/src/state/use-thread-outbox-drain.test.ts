@@ -329,11 +329,21 @@ describe("thread outbox attachment preparation", () => {
   });
 });
 
+async function preserveLegacyArchive(message: QueuedThreadMessage): Promise<void> {
+  await composerDrafts.waitForComposerDraftsLoaded();
+  appAtomRegistry.set(composerDrafts.composerCloudDraftsAtom, {
+    accountId: "account-a",
+    signedOut: { "account-a": { drafts: {}, queuedMessages: [message] } },
+  });
+  composerDrafts.setComposerDraftText("direct-environment:thread-1", "Live draft");
+  await composerDrafts.flushComposerDrafts();
+}
+
 describe("thread outbox drain delivery cleanup", () => {
-  it("removes an acknowledged outbox item even when the sign-out archive write fails", async () => {
+  it("removes an acknowledged outbox item even when the legacy archive write fails", async () => {
     const message = queuedMessage({ messageId: "archive-write-failure", text: "Delivered" });
     await harness.manager.enqueue(message);
-    await composerDrafts.archiveCloudComposerDrafts("account-a", new Set([message.environmentId]));
+    await preserveLegacyArchive(message);
     harness.draftFile.setWriteError(new Error("Draft storage unavailable"));
 
     await expect(
@@ -345,12 +355,12 @@ describe("thread outbox drain delivery cleanup", () => {
     await composerDrafts.flushComposerDrafts();
     appAtomRegistry.set(composerDrafts.composerCloudDraftsAtom, { accountId: null, signedOut: {} });
     composerDrafts.resetComposerDraftsLoadState();
-    await composerDrafts.restoreCloudComposerDrafts("account-a");
+    await composerDrafts.waitForComposerDraftsLoaded();
     expect(remainingMessages()).toEqual([]);
   });
 
   it.each([false, true])(
-    "does not restore a message delivered after the sign-out snapshot (outbox already cleared: %s)",
+    "removes a delivered message from a legacy archive (outbox already cleared: %s)",
     async (cleared) => {
       const message = queuedMessage({
         messageId: "delivered-during-sign-out",
@@ -358,10 +368,7 @@ describe("thread outbox drain delivery cleanup", () => {
       });
       await harness.manager.enqueue(message);
       const deliveryRevision = harness.manager.revisionOf(message.messageId);
-      await composerDrafts.archiveCloudComposerDrafts(
-        "account-a",
-        new Set([message.environmentId]),
-      );
+      await preserveLegacyArchive(message);
       expect(
         appAtomRegistry.get(composerDrafts.composerCloudDraftsAtom).signedOut["account-a"]
           ?.queuedMessages,
@@ -372,13 +379,13 @@ describe("thread outbox drain delivery cleanup", () => {
         cleared ? "edited" : "removed",
       );
 
-      // Restart before signing back in: the archived copy must be removed on disk too.
+      // Restart: the archived copy must be removed on disk too.
       appAtomRegistry.set(composerDrafts.composerCloudDraftsAtom, {
         accountId: null,
         signedOut: {},
       });
       composerDrafts.resetComposerDraftsLoadState();
-      await composerDrafts.restoreCloudComposerDrafts("account-a");
+      await composerDrafts.waitForComposerDraftsLoaded();
       expect(remainingMessages()).toEqual([]);
     },
   );
@@ -389,11 +396,15 @@ describe("thread outbox drain delivery cleanup", () => {
     const deliveryRevision = harness.manager.revisionOf(message.messageId);
     const edited = { ...message, text: "Keep this edit" };
     await harness.manager.update(edited);
-    await composerDrafts.archiveCloudComposerDrafts("account-a", new Set([message.environmentId]));
+    await preserveLegacyArchive(edited);
     await harness.manager.clearEnvironment(message.environmentId);
     await expect(completeQueuedMessageDelivery(message, deliveryRevision)).resolves.toBe("edited");
-    await composerDrafts.restoreCloudComposerDrafts("account-a");
-    expect(remainingMessages()).toEqual([edited]);
+    await composerDrafts.waitForComposerDraftsLoaded();
+    expect(remainingMessages()).toEqual([]);
+    expect(
+      appAtomRegistry.get(composerDrafts.composerCloudDraftsAtom).signedOut["account-a"]
+        ?.queuedMessages,
+    ).toEqual([edited]);
   });
 
   it("retries only cleanup after an acknowledged send removal fails", async () => {

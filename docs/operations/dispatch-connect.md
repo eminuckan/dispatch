@@ -81,13 +81,6 @@ Cloudflare credentials, when managed tunnel provisioning is enabled, belong to t
 deployment rather than to individual end users. Keep those credentials server-side. A self-hosted operator
 may choose to use only Tailscale and omit Cloudflare entirely.
 
-## Legacy relay
-
-[`infra/relay`](../../infra/relay) is the upstream T3 Connect compatibility service. It is not required for
-Dispatch Connect. Its GitHub deployment workflow is manual and guarded by
-`DISPATCH_RELEASE_ENABLE_T3_CONNECT`; do not configure Clerk/PlanetScale/Axiom merely to operate the new
-Connect service.
-
 ## Hosted Smart Routing
 
 Flow Standard runs entirely through the environment's saved agent profiles. Auto uses this Connect

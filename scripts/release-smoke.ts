@@ -22,7 +22,7 @@ const workspaceFiles = [
   "apps/mobile/modules/t3-review-diff/package.json",
   "apps/mobile/modules/t3-terminal/package.json",
   "apps/marketing/package.json",
-  "infra/relay/package.json",
+  "infra/connect/package.json",
   "oxlint-plugin-dispatch/package.json",
   "packages/client-runtime/package.json",
   "packages/contracts/package.json",
@@ -210,12 +210,6 @@ try {
     desktopReleaseWorkflow,
     "DISPATCH_CONNECT_URL: ${{ inputs.connect_url }}",
     "Reusable desktop/CLI builds must receive the Dispatch Connect public origin.",
-  );
-
-  NodeChildProcess.execFileSync(
-    process.execPath,
-    ["--test", NodePath.resolve(repoRoot, ".github/scripts/relay-state-output.test.cjs")],
-    { stdio: "inherit" },
   );
 
   copyWorkspaceManifestFixture(tempRoot);

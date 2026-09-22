@@ -102,9 +102,10 @@ describe("DesktopPreReadyPlatform", () => {
             );
             const identity = yield* Effect.promise(() => portalIdentity);
             assert.equal(identity.desktopName, "com.eminuckan.Dispatch.desktop");
-            assert.include(identity.desktopEntry ?? "", 'Exec="/Applications/current.AppImage" %U');
+            assert.include(identity.desktopEntry ?? "", 'Exec="/Applications/current.AppImage"');
             assert.include(identity.desktopEntry ?? "", "Name=Dispatch (Alpha)");
-            assert.include(identity.desktopEntry ?? "", "MimeType=x-scheme-handler/dispatch;");
+            assert.notInclude(identity.desktopEntry ?? "", "MimeType=");
+            assert.notInclude(identity.desktopEntry ?? "", "%U");
           }),
         ).pipe(Effect.ensuring(Effect.sync(() => vi.unstubAllEnvs())));
       },
@@ -124,11 +125,11 @@ describe("DesktopPreReadyPlatform", () => {
   });
 
   it.effect(
-    "acquires a synchronous pre-ready layer before an asynchronous Clerk-shaped layer",
+    "acquires a synchronous pre-ready layer before an asynchronous single-instance layer",
     () =>
       Effect.gen(function* () {
-        class ClerkShaped extends Context.Service<ClerkShaped, { readonly ready: true }>()(
-          "@dispatch/desktop/app/DesktopPreReadyPlatform.test/ClerkShaped",
+        class SingleInstance extends Context.Service<SingleInstance, { readonly ready: true }>()(
+          "@dispatch/desktop/app/DesktopPreReadyPlatform.test/SingleInstance",
         ) {}
 
         const events: Array<string> = [];
@@ -140,34 +141,34 @@ describe("DesktopPreReadyPlatform", () => {
           Layer.provide(Layer.succeed(HostProcessPlatform, "darwin")),
         );
 
-        const clerkShapedLayer = Layer.effect(
-          ClerkShaped,
+        const singleInstanceLayer = Layer.effect(
+          SingleInstance,
           Effect.promise(() => Promise.resolve()).pipe(
             Effect.map(() => {
-              events.push("clerk");
+              events.push("single-instance");
               return { ready: true as const };
             }),
           ),
         );
 
-        const runtimeLayer = clerkShapedLayer.pipe(
-          Layer.flatMap((clerkContext) => Layer.succeedContext(clerkContext)),
+        const runtimeLayer = singleInstanceLayer.pipe(
+          Layer.flatMap((singleInstanceContext) => Layer.succeedContext(singleInstanceContext)),
           Layer.provideMerge(preReadyLayer),
         );
 
         const result = yield* Effect.all({
-          clerk: ClerkShaped,
+          singleInstance: SingleInstance,
           preReady: DesktopPreReadyPlatform.DesktopPreReadyElectronOptions,
         }).pipe(Effect.provide(runtimeLayer));
 
         assert.deepEqual(result, {
-          clerk: { ready: true },
+          singleInstance: { ready: true },
           preReady: {
             linux: null,
             linuxPasswordStoreCommandLine: null,
           },
         });
-        assert.deepEqual(events, ["pre-ready", "clerk"]);
+        assert.deepEqual(events, ["pre-ready", "single-instance"]);
         assert.equal(registerSchemesMock.mock.calls.length, 1);
         assert.equal(appendSwitchMock.mock.calls.length, 0);
         assert.equal(setDesktopNameMock.mock.calls.length, 0);

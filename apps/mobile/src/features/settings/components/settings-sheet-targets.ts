@@ -1,6 +1,5 @@
 export type SettingsSheetTarget =
   | "SettingsEnvironments"
-  | "SettingsNotifications"
   | "SettingsThreads"
   | "SettingsAbout"
   | "SettingsArchive"
@@ -17,5 +16,3 @@ export type SettingsSheetTarget =
   | "SettingsDiagnostics"
   | "SettingsOpenSourceLicenses"
   | "SettingsUsage";
-
-export type SettingsLegalDocumentTarget = "SettingsLegal";

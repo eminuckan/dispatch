@@ -1,7 +1,7 @@
 import * as SecureStore from "expo-secure-store";
 import * as Effect from "effect/Effect";
 
-import { cryptoLayer, loadOrCreateDpopProofKeyPair } from "../cloud/dpop";
+import { cryptoLayer, loadOrCreateDpopProofKeyPair } from "./dpop";
 import { listDispatchConnectDevices, registerDispatchConnectDevice } from "./dispatchConnect";
 
 const DEVICE_STORAGE_KEY = "dispatch.connect.device.v1";

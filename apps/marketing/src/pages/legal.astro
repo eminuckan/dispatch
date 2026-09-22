@@ -4,42 +4,35 @@ import Layout from "../layouts/Layout.astro";
 const documents = [
   {
     number: "01",
-    title: "Upstream Privacy Policy",
-    description: "Reference copy of the T3 Code privacy policy inherited from upstream.",
-    href: "/privacy-policy",
+    title: "Dispatch license",
+    description: "The MIT license and copyright notices for Dispatch and its upstream contributors.",
+    href: "https://github.com/eminuckan/dispatch/blob/main/LICENSE",
   },
   {
     number: "02",
-    title: "Upstream Terms of Service",
-    description: "Reference copy of the T3 Code terms inherited from upstream.",
-    href: "/terms-of-service",
-  },
-  {
-    number: "03",
-    title: "Upstream Security Policy",
-    description: "Reference copy of the T3 Code security policy inherited from upstream.",
-    href: "/security-policy",
+    title: "Upstream project",
+    description: "T3 Code, the open-source project from which Dispatch originated.",
+    href: "https://github.com/pingdotgg/t3code",
   },
 ] as const;
 ---
 
 <Layout
-  title="Legal & upstream references — Dispatch"
-  description="Upstream legal references retained by the independent Dispatch project for provenance."
+  title="License & attribution — Dispatch"
+  description="Dispatch license and upstream attribution."
   pageClass="legal-document-page"
 >
   <div class="legal-index">
     <header class="legal-index-hero">
-      <p class="eyebrow">Dispatch / Legal & upstream</p>
-      <h1>Legal</h1>
+      <p class="eyebrow">Dispatch / License & attribution</p>
+      <h1>License & attribution</h1>
       <p>
-        Dispatch is an independent MIT-licensed project that originated from T3 Code. The documents
-        below are retained as clearly labeled upstream references and describe T3 Code / T3 Tools
-        services, not services operated by Dispatch.
+        Dispatch is an independent MIT-licensed project derived from T3 Code. Its license preserves
+        the original copyright notices alongside the contributions made to Dispatch.
       </p>
     </header>
 
-    <nav class="document-list" aria-label="Legal documents">
+    <nav class="document-list" aria-label="License and attribution">
       {documents.map((document) => (
         <a href={document.href} class="document-card">
           <span class="document-number">{document.number}</span>
