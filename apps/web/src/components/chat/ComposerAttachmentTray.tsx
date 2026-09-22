@@ -109,7 +109,7 @@ export function ComposerAttachmentTray({
           return (
             <li
               key={attachment.id}
-              className="group/attachment relative min-w-0 [width:clamp(6rem,calc((100cqw-(var(--attachment-count)-1)*0.5rem)/var(--attachment-count)),10rem)] @max-[440px]/attachment-tray:w-full"
+              className="@container/attachment group/attachment relative min-w-0 [width:clamp(6rem,calc((100cqw-(var(--attachment-count)-1)*0.5rem)/var(--attachment-count)),10rem)] @max-[440px]/attachment-tray:w-full"
             >
               <button
                 type="button"
@@ -157,7 +157,9 @@ export function ComposerAttachmentTray({
                 <span
                   className={cn(
                     "absolute inset-x-0 bottom-0 flex h-9 min-w-0 items-center gap-1.5 px-2 text-xs @max-[440px]/attachment-tray:static @max-[440px]/attachment-tray:flex @max-[440px]/attachment-tray:h-11 @max-[440px]/attachment-tray:w-full",
-                    hideName && "hidden",
+                    "@max-[127px]/attachment:hidden",
+                    (attachment.type === "image" || svgMimeType(attachment)) &&
+                      "bg-black/55 text-white @max-[440px]/attachment-tray:bg-transparent @max-[440px]/attachment-tray:text-foreground",
                   )}
                 >
                   <PierreEntryIcon pathValue={attachment.name} kind="file" theme={theme} />
