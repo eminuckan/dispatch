@@ -6,7 +6,7 @@ import * as Schema from "effect/Schema";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import { type CursorSettings, type ModelSelection } from "@dispatch/contracts";
-import { sanitizeBranchFragment, sanitizeFeatureBranchName } from "@dispatch/shared/git";
+import { sanitizeBranchFragment } from "@dispatch/shared/git";
 import { extractJsonObject } from "@dispatch/shared/schemaJson";
 
 import { TextGenerationError } from "@dispatch/contracts";
@@ -187,7 +187,7 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
         subject: sanitizeCommitSubject(generated.subject),
         body: generated.body.trim(),
         ...("branch" in generated && typeof generated.branch === "string"
-          ? { branch: sanitizeFeatureBranchName(generated.branch) }
+          ? { branch: sanitizeBranchFragment(generated.branch) }
           : {}),
       };
     });

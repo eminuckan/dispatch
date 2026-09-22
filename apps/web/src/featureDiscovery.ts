@@ -7,7 +7,14 @@ const DISMISSED_FEATURES_STORAGE_KEY = "dispatch:feature-discovery-dismissed:v1"
 const DismissedFeatureIds = Schema.Array(Schema.String);
 
 export const FEATURE_DISCOVERIES = {
-  flow: { id: "dispatch-flow-v1" },
+  flow: {
+    id: "dispatch-flow-v1",
+    title: "Introducing Dispatch Flow",
+    description: "Plan, delegate, and review work with your selected agents.",
+    actionLabel: "Explore Flow",
+    to: "/settings/orchestration",
+    capability: "teamRouting",
+  },
 } as const;
 
 export function useFeatureDiscoveryDismissal(id: string) {

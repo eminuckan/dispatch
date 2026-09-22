@@ -1,3 +1,5 @@
+import "./SidebarGalaxyBackdrop.css";
+
 import { useAtomValue } from "@effect/atom-react";
 import { useId } from "react";
 
@@ -23,14 +25,6 @@ export function resolveSidebarStageBackdropVariant(
   return null;
 }
 
-export function resolveSidebarStageFocusRingOffsetClass(
-  variant: SidebarStageBackdropVariant,
-): string {
-  return variant === "nightly"
-    ? "focus-visible:ring-offset-(--stage-night-bottom)"
-    : "focus-visible:ring-offset-(--stage-art-bottom)";
-}
-
 export function resolveEnvironmentIdentificationPillLabel(
   stageLabel: string,
 ): EnvironmentIdentificationPillLabel | null {
@@ -54,14 +48,25 @@ export function useSidebarStageBackdropVariant(enabled = true): SidebarStageBack
   return resolveSidebarStageBackdropVariant(useEnvironmentStageLabel(), enabled);
 }
 
-/** Stage-channel header art; palettes mirror the per-channel app icons in `assets/`. */
-export function SidebarStageBackdrop({ variant }: { variant: SidebarStageBackdropVariant }) {
+/** The transparent lower edge blends into any sidebar theme without a hard header seam. */
+export function SidebarGalaxyBackdrop() {
   return (
     <div
       aria-hidden
-      className="sidebar-stage-backdrop pointer-events-none absolute inset-x-0 top-0 z-0 h-20 select-none overflow-hidden"
+      className="sidebar-galaxy pointer-events-none absolute inset-x-0 top-0 z-0 select-none overflow-hidden"
     >
-      <StageBackdropArt variant={variant} />
+      <img
+        src="/artwork/sidebar-galaxy.webp"
+        alt=""
+        width={1024}
+        height={341}
+        draggable={false}
+        className="sidebar-galaxy-image h-full w-full object-cover object-center"
+      />
+      <span className="sidebar-galaxy-star sidebar-galaxy-star-one" />
+      <span className="sidebar-galaxy-star sidebar-galaxy-star-two" />
+      <span className="sidebar-galaxy-star sidebar-galaxy-star-three" />
+      <span className="sidebar-galaxy-meteor" />
     </div>
   );
 }

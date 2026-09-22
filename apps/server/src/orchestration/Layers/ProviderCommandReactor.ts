@@ -15,11 +15,7 @@ import {
 } from "@dispatch/contracts";
 import { assistantCitationsToPlainText } from "@dispatch/shared/assistantCitations";
 import { projectComposerContextForProvider } from "@dispatch/shared/composerContextReferences";
-import {
-  isTemporaryWorktreeBranch,
-  LEGACY_WORKTREE_BRANCH_PREFIX,
-  WORKTREE_BRANCH_PREFIX,
-} from "@dispatch/shared/git";
+import { buildGeneratedBranchName, isTemporaryWorktreeBranch } from "@dispatch/shared/git";
 import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
@@ -28,6 +24,7 @@ import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -188,30 +185,6 @@ function stalePendingRequestDetail(
   return `Stale pending ${requestKind} request: ${requestId}. Provider callback state does not survive app restarts or recovered sessions. Restart the turn to continue.`;
 }
 
-function buildGeneratedWorktreeBranchName(raw: string): string {
-  const normalized = raw
-    .trim()
-    .toLowerCase()
-    .replace(/^refs\/heads\//, "")
-    .replace(/['"`]/g, "");
-
-  const matchedPrefix = [WORKTREE_BRANCH_PREFIX, LEGACY_WORKTREE_BRANCH_PREFIX].find((prefix) =>
-    normalized.startsWith(`${prefix}/`),
-  );
-  const withoutPrefix = matchedPrefix ? normalized.slice(`${matchedPrefix}/`.length) : normalized;
-
-  const branchFragment = withoutPrefix
-    .replace(/[^a-z0-9/_-]+/g, "-")
-    .replace(/\/+/g, "/")
-    .replace(/-+/g, "-")
-    .replace(/^[./_-]+|[./_-]+$/g, "")
-    .slice(0, 64)
-    .replace(/[./_-]+$/g, "");
-
-  const safeFragment = branchFragment.length > 0 ? branchFragment : "update";
-  return `${WORKTREE_BRANCH_PREFIX}/${safeFragment}`;
-}
-
 const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
   const orchestrationEngine = yield* OrchestrationEngineService;
@@ -225,6 +198,7 @@ const make = Effect.gen(function* () {
   const vcsStatusBroadcaster = yield* VcsStatusBroadcaster;
   const textGeneration = yield* TextGeneration;
   const serverSettingsService = yield* ServerSettingsService;
+  const branchGenerationFibers = new Set<Fiber.Fiber<void>>();
   /** Environment settings with the thread's project overrides applied. */
   const projectSettingsForThread = Effect.fnUntraced(function* (threadId: ThreadId) {
     const settings = yield* serverSettingsService.getSettings;
@@ -919,18 +893,45 @@ const make = Effect.gen(function* () {
       });
       if (!generated) return;
 
-      const targetBranch = buildGeneratedWorktreeBranchName(generated.branch);
+      const targetBranch = buildGeneratedBranchName(generated.branch, settings.branchPrefix);
       if (targetBranch === oldBranch) return;
 
-      const renamed = yield* gitWorkflow.renameBranch({ cwd, oldBranch, newBranch: targetBranch });
-      yield* orchestrationEngine.dispatch({
-        type: "thread.meta.update",
-        commandId: yield* serverCommandId("worktree-branch-rename"),
-        threadId: input.threadId,
-        branch: renamed.branch,
-        worktreePath: cwd,
-      });
-      yield* vcsStatusBroadcaster.refreshStatus(cwd).pipe(Effect.ignoreCause({ log: true }));
+      yield* withWorkspaceLease(
+        path.resolve(cwd),
+        Effect.gen(function* () {
+          // Generation runs beside the turn. A user or provider can switch
+          // branches, move the thread, or share the worktree while it runs.
+          yield* gitWorkflow.invalidateLocalStatus(cwd);
+          const status = yield* gitWorkflow.localStatus({ cwd });
+          if (status.refName !== oldBranch) return;
+          const shell = yield* projectionSnapshotQuery.getShellSnapshot();
+          const current = shell.threads.find((thread) => thread.id === input.threadId);
+          if (current?.branch !== oldBranch || current.worktreePath !== cwd) return;
+          if (
+            shell.threads.some(
+              (thread) =>
+                thread.id !== input.threadId &&
+                thread.worktreePath !== null &&
+                path.resolve(thread.worktreePath) === path.resolve(cwd),
+            )
+          )
+            return;
+
+          const renamed = yield* gitWorkflow.renameBranch({
+            cwd,
+            oldBranch,
+            newBranch: targetBranch,
+          });
+          yield* orchestrationEngine.dispatch({
+            type: "thread.meta.update",
+            commandId: yield* serverCommandId("worktree-branch-rename"),
+            threadId: input.threadId,
+            branch: renamed.branch,
+            expectedBranch: oldBranch,
+          });
+          yield* vcsStatusBroadcaster.refreshStatus(cwd).pipe(Effect.ignoreCause({ log: true }));
+        }),
+      );
     }).pipe(
       Effect.catchCause((cause) =>
         Effect.logWarning("provider command reactor failed to generate or rename worktree branch", {
@@ -1343,12 +1344,14 @@ const make = Effect.gen(function* () {
         ...(event.payload.titleSeed !== undefined ? { titleSeed: event.payload.titleSeed } : {}),
       };
 
-      yield* maybeGenerateAndRenameWorktreeBranchForFirstTurn({
+      const branchGeneration = yield* maybeGenerateAndRenameWorktreeBranchForFirstTurn({
         threadId: event.payload.threadId,
         branch: thread.branch,
         worktreePath: thread.worktreePath,
         ...generationInput,
       }).pipe(Effect.forkScoped);
+      branchGenerationFibers.add(branchGeneration);
+      branchGeneration.addObserver(() => branchGenerationFibers.delete(branchGeneration));
 
       if (
         thread.titleState?.source !== "manual" &&
@@ -1956,6 +1959,7 @@ const make = Effect.gen(function* () {
     start,
     drain: Effect.gen(function* () {
       yield* worker.drain;
+      yield* Fiber.awaitAll([...branchGenerationFibers]);
       yield* threadTitleRegenerationWorker.drain;
     }),
   } satisfies ProviderCommandReactorShape;

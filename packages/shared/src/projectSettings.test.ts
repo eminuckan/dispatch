@@ -19,6 +19,23 @@ const projectId = ProjectId.make("project-a");
 const otherProjectId = ProjectId.make("project-b");
 
 describe("resolveProjectSettings", () => {
+  it("keeps an empty branch prefix override until the project override is cleared", () => {
+    const settings = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      branchPrefix: "Team/",
+      projectSettingsOverrides: { [projectId]: { branchPrefix: "" } },
+    });
+    expect(resolveProjectSettings(settings, projectId).settings.branchPrefix).toBe("");
+    expect(resolveProjectSettings(settings, projectId).sources.branchPrefix).toBe("project");
+    expect(resolveProjectSettings(settings, otherProjectId).settings.branchPrefix).toBe("Team/");
+    const cleared = applyServerSettingsPatch(settings, {
+      projectSettingsOverrides: {
+        [projectId]: clearProjectSettingsOverrides(settings, projectId, ["branchPrefix"]),
+      },
+    });
+    expect(resolveProjectSettings(cleared, projectId).settings.branchPrefix).toBe("Team/");
+    expect(resolveProjectSettings(cleared, projectId).sources.branchPrefix).toBe("environment");
+  });
+
   it("inherits every scopable key when the project has no overrides", () => {
     const resolved = resolveProjectSettings(DEFAULT_SERVER_SETTINGS, projectId);
     expect(resolved.settings).toBe(DEFAULT_SERVER_SETTINGS);

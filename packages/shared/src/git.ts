@@ -6,12 +6,13 @@ import type {
   VcsStatusResult,
   VcsStatusStreamEvent,
 } from "@dispatch/contracts";
+import { normalizeBranchPrefix } from "@dispatch/contracts";
 import * as Arr from "effect/Array";
 import * as Result from "effect/Result";
 import { detectSourceControlProviderFromRemoteUrl } from "./sourceControl.ts";
 
 export const WORKTREE_BRANCH_PREFIX = "dispatch";
-export const LEGACY_WORKTREE_BRANCH_PREFIX = "t3code";
+const LEGACY_WORKTREE_BRANCH_PREFIX = "t3code";
 // Canonical form is `dispatch/<8 hex>`. Older builds generated `t3code/<8 hex>`
 // and `t3code/<uuid>` via Crypto.randomUUID() (always RFC 4122 v4), so the matcher
 // accepts both prefixes and the exact legacy UUID shape for recovery.
@@ -41,44 +42,39 @@ export function sanitizeBranchFragment(raw: string): string {
   return branchFragment.length > 0 ? branchFragment : "update";
 }
 
-/**
- * Sanitize a string into a `feature/…` refName name.
- * Preserves an existing `feature/` prefix or slash-separated namespace.
- */
-export function sanitizeFeatureBranchName(raw: string): string {
-  const sanitized = sanitizeBranchFragment(raw);
-  if (sanitized.includes("/")) {
-    return sanitized.startsWith("feature/") ? sanitized : `feature/${sanitized}`;
+/** Apply the configured namespace once to an automatically generated suffix. */
+export function buildGeneratedBranchName(raw: string, prefix = "dispatch/"): string {
+  const normalizedPrefix = normalizeBranchPrefix(prefix);
+  let suffix = raw
+    .trim()
+    .replace(/['"`]/g, "")
+    .replace(/^refs\/heads\//i, "");
+  const generatedPrefixes = [normalizedPrefix, "dispatch/", "t3code/", "feature/"]
+    .filter((candidate) => candidate !== "")
+    .sort((left, right) => right.length - left.length);
+  // Providers can return repeated generated namespaces in a suggestion.
+  for (;;) {
+    const matched = generatedPrefixes.find((candidate) =>
+      suffix.toLowerCase().startsWith(candidate.toLowerCase()),
+    );
+    if (!matched) break;
+    suffix = suffix.slice(matched.length);
   }
-  return `feature/${sanitized}`;
+  return `${normalizedPrefix}${sanitizeBranchFragment(suffix)}`;
 }
 
-const AUTO_FEATURE_BRANCH_FALLBACK = "feature/update";
-
-/**
- * Resolve a unique `feature/…` refName name that doesn't collide with
- * any existing refName. Appends a numeric suffix when needed.
- */
-export function resolveAutoFeatureBranchName(
+export function resolveAutoBranchName(
   existingBranchNames: readonly string[],
   preferredBranch?: string,
+  prefix = "dispatch/",
 ): string {
-  const preferred = preferredBranch?.trim();
-  const resolvedBase = sanitizeFeatureBranchName(
-    preferred && preferred.length > 0 ? preferred : AUTO_FEATURE_BRANCH_FALLBACK,
-  );
-  const existingNames = new Set(existingBranchNames.map((refName) => refName.toLowerCase()));
-
-  if (!existingNames.has(resolvedBase)) {
-    return resolvedBase;
+  const base = buildGeneratedBranchName(preferredBranch ?? "update", prefix);
+  const existingNames = new Set(existingBranchNames.map((name) => name.toLowerCase()));
+  let candidate = base;
+  for (let suffix = 2; existingNames.has(candidate.toLowerCase()); suffix++) {
+    candidate = `${base}-${suffix}`;
   }
-
-  let suffix = 2;
-  while (existingNames.has(`${resolvedBase}-${suffix}`)) {
-    suffix += 1;
-  }
-
-  return `${resolvedBase}-${suffix}`;
+  return candidate;
 }
 
 /**

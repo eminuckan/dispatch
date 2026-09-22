@@ -14,7 +14,7 @@ import {
   type ServerProviderModel,
   TextGenerationError,
 } from "@dispatch/contracts";
-import { sanitizeBranchFragment, sanitizeFeatureBranchName } from "@dispatch/shared/git";
+import { sanitizeBranchFragment } from "@dispatch/shared/git";
 import { resolveSpawnCommand } from "@dispatch/shared/shell";
 
 import { resolveAttachmentPath } from "../attachmentStore.ts";
@@ -333,7 +333,7 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
         subject: sanitizeCommitSubject(generated.subject),
         body: generated.body.trim(),
         ...("branch" in generated && typeof generated.branch === "string"
-          ? { branch: sanitizeFeatureBranchName(generated.branch) }
+          ? { branch: sanitizeBranchFragment(generated.branch) }
           : {}),
       };
     });

@@ -988,12 +988,58 @@ export const WorktreeCleanup = Schema.NullOr(
 );
 export type WorktreeCleanup = typeof WorktreeCleanup.Type;
 
+/** Canonical namespace for generated branches; empty means no namespace. */
+export function normalizeBranchPrefix(value: string): string {
+  const trimmed = value.trim();
+  return trimmed === "" ? "" : `${trimmed.replace(/\/+$/, "")}/`;
+}
+
+export function getBranchPrefixValidationError(value: string): string | null {
+  const prefix = normalizeBranchPrefix(value);
+  if (prefix === "") return null;
+  if (
+    prefix.includes("@{") ||
+    [...prefix].some(
+      (character) =>
+        character.charCodeAt(0) <= 0x20 ||
+        character.charCodeAt(0) === 0x7f ||
+        "~^:?*[\\".includes(character),
+    )
+  ) {
+    return "Branch prefixes cannot contain spaces, control characters, or Git ref special characters.";
+  }
+  const namespace = prefix.slice(0, -1);
+  if (
+    namespace.startsWith("-") ||
+    namespace.includes("..") ||
+    namespace
+      .split("/")
+      .some((part) => part === "" || part.startsWith(".") || part.endsWith(".lock"))
+  ) {
+    return "Use Git branch namespaces without empty segments, leading dots or dashes, '..', or '.lock' endings.";
+  }
+  return null;
+}
+
+const BranchPrefix = Schema.String.check(
+  Schema.makeFilter((value) => getBranchPrefixValidationError(value) ?? true),
+).pipe(
+  Schema.decodeTo(
+    Schema.String,
+    SchemaTransformation.transform({
+      decode: normalizeBranchPrefix,
+      encode: normalizeBranchPrefix,
+    }),
+  ),
+);
+
 export const PROJECT_SCOPED_SERVER_SETTING_KEYS = [
   "worktreeCleanup",
   "defaultModelSelection",
   "defaultRuntimeMode",
   "defaultThreadEnvMode",
   "newWorktreesStartFromOrigin",
+  "branchPrefix",
   "defaultAutoPull",
   "defaultProjectScripts",
   "enableAgentBrowserAccess",
@@ -1020,6 +1066,7 @@ export const ProjectSettingsOverrides = Schema.Struct({
   defaultRuntimeMode: Schema.optionalKey(RuntimeMode),
   defaultThreadEnvMode: Schema.optionalKey(ThreadEnvMode),
   newWorktreesStartFromOrigin: Schema.optionalKey(Schema.Boolean),
+  branchPrefix: Schema.optionalKey(BranchPrefix),
   defaultAutoPull: Schema.optionalKey(Schema.Boolean),
   defaultProjectScripts: Schema.optionalKey(Schema.Array(ProjectScript)),
   enableAgentBrowserAccess: Schema.optionalKey(Schema.Boolean),
@@ -1176,6 +1223,7 @@ export const ServerSettings = Schema.Struct({
   newWorktreesStartFromOrigin: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(true)),
   ),
+  branchPrefix: BranchPrefix.pipe(Schema.withDecodingDefault(Effect.succeed("dispatch/"))),
   addProjectBaseDirectory: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   textGenerationModelSelection: ModelSelection.pipe(
     Schema.withDecodingDefault(
@@ -1467,6 +1515,7 @@ export const ServerSettingsPatch = Schema.Struct({
   environmentIcon: Schema.optionalKey(Schema.NullOr(EnvironmentMachineKind)),
   defaultThreadEnvMode: Schema.optionalKey(ThreadEnvMode),
   newWorktreesStartFromOrigin: Schema.optionalKey(Schema.Boolean),
+  branchPrefix: Schema.optionalKey(BranchPrefix),
   addProjectBaseDirectory: Schema.optionalKey(TrimmedString),
   textGenerationModelSelection: Schema.optionalKey(ModelSelectionPatch),
   sourceControlWritingStyle: Schema.optionalKey(

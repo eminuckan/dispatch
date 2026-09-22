@@ -8,6 +8,23 @@ const environmentId = EnvironmentId.make("laptop");
 const projectId = ProjectId.make("project");
 
 describe("settingInheritanceLayers", () => {
+  it("distinguishes no prefix from inherited values and the built-in namespace", () => {
+    const settings = {
+      ...DEFAULT_SERVER_SETTINGS,
+      branchPrefix: "Luna/Tasks/",
+      projectSettingsOverrides: { [projectId]: { branchPrefix: "" } },
+    };
+    const layers = settingInheritanceLayers(
+      { environmentId, label: "Laptop", projectId, ...resolveProjectSettings(settings, projectId) },
+      settings,
+      "branchPrefix",
+    );
+    expect(layers.map((layer) => [layer.value, layer.effective])).toEqual([
+      ["No prefix", true],
+      ["Luna/Tasks/", false],
+      ["dispatch/", false],
+    ]);
+  });
   it("marks the built-in default effective when nothing is set", () => {
     const resolved = resolveProjectSettings(DEFAULT_SERVER_SETTINGS, null);
     const layers = settingInheritanceLayers(

@@ -15,7 +15,7 @@ import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { type ClaudeSettings, type ModelSelection } from "@dispatch/contracts";
-import { sanitizeBranchFragment, sanitizeFeatureBranchName } from "@dispatch/shared/git";
+import { sanitizeBranchFragment } from "@dispatch/shared/git";
 import { resolveSpawnCommand } from "@dispatch/shared/shell";
 
 import { TextGenerationError } from "@dispatch/contracts";
@@ -336,7 +336,7 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
         subject: sanitizeCommitSubject(generated.subject),
         body: generated.body.trim(),
         ...("branch" in generated && typeof generated.branch === "string"
-          ? { branch: sanitizeFeatureBranchName(generated.branch) }
+          ? { branch: sanitizeBranchFragment(generated.branch) }
           : {}),
       };
     });

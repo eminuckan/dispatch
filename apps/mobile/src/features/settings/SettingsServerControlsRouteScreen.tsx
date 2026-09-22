@@ -10,6 +10,7 @@ import {
   type ProjectScopedServerSettingKey,
 } from "@dispatch/contracts";
 import { useRef, useState, type ComponentProps } from "react";
+import { AsyncResult } from "effect/unstable/reactivity";
 import { Alert, Platform, Pressable, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -23,6 +24,7 @@ import {
 } from "./components/SettingsEnvironmentFilterHeader";
 import { SettingsSection } from "./components/SettingsSection";
 import { SettingsControlRow } from "./components/SettingsControlRow";
+import { BranchPrefixField } from "./components/BranchPrefixField";
 import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
 import { SettingsProjectOverridesSection } from "./components/SettingsProjectOverridesSection";
 import { useSettingsEnvironmentFilter } from "./settings-environment-filter";
@@ -44,7 +46,7 @@ const PAGE_TITLES: Record<SettingsPage, string> = {
 
 const PAGE_PROJECT_KEYS: Record<SettingsPage, readonly ProjectScopedServerSettingKey[]> = {
   "new-threads": ["defaultThreadEnvMode", "defaultRuntimeMode"],
-  "source-control": ["defaultAutoPull", "newWorktreesStartFromOrigin"],
+  "source-control": ["defaultAutoPull", "newWorktreesStartFromOrigin", "branchPrefix"],
   "agent-behavior": ["responseStreamingMode", "enableAgentBrowserAccess"],
   maintenance: ["continueThreadsAfterServerUpdate"],
 };
@@ -130,40 +132,31 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
     label: "environment settings update",
     reportFailure: true,
   });
-  const write = (patch: ServerSettingsPatch) => {
-    if (writeInFlight.current || !hasConnectedSelection) return;
-    const writes = planMobileScopedSettingsPatch(targets, projectSelected, patch);
-    if (writes.length === 0) return;
+  const runWrites = async (writes: ReturnType<typeof planMobileScopedSettingsPatch>) => {
+    if (writeInFlight.current || !hasConnectedSelection || writes.length === 0) return false;
     writeInFlight.current = true;
     setPendingTargets(targets);
     setPendingWrites((count) => count + 1);
-    void Promise.allSettled(
-      writes.map((entry) =>
-        updateSettings({ environmentId: entry.environmentId, input: { patch: entry.patch } }),
-      ),
-    ).finally(() => {
+    try {
+      const results = await Promise.allSettled(
+        writes.map((entry) =>
+          updateSettings({ environmentId: entry.environmentId, input: { patch: entry.patch } }),
+        ),
+      );
+      return results.every(
+        (result) => result.status === "fulfilled" && AsyncResult.isSuccess(result.value),
+      );
+    } finally {
       writeInFlight.current = false;
       setPendingTargets(null);
       setPendingWrites((count) => count - 1);
-    });
+    }
   };
-  const clearProjectOverrides = () => {
-    if (writeInFlight.current) return;
-    const writes = planMobileScopedSettingsClear(targets, PAGE_PROJECT_KEYS[props.page]);
-    if (writes.length === 0) return;
-    writeInFlight.current = true;
-    setPendingTargets(targets);
-    setPendingWrites((count) => count + 1);
-    void Promise.allSettled(
-      writes.map((entry) =>
-        updateSettings({ environmentId: entry.environmentId, input: { patch: entry.patch } }),
-      ),
-    ).finally(() => {
-      writeInFlight.current = false;
-      setPendingTargets(null);
-      setPendingWrites((count) => count - 1);
-    });
-  };
+  const write = (patch: ServerSettingsPatch) =>
+    runWrites(planMobileScopedSettingsPatch(targets, projectSelected, patch));
+  const clearProjectOverrides = (
+    keys: readonly ProjectScopedServerSettingKey[] = PAGE_PROJECT_KEYS[props.page],
+  ) => runWrites(planMobileScopedSettingsClear(targets, keys));
   const supportsProjectOverrides = targets.every(
     (target) =>
       target.environment.serverConfig.environment.capabilities.projectSettingsOverrides === true,
@@ -173,6 +166,10 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
   const supportsContinuation = targets.every(
     (target) =>
       target.environment.serverConfig.environment.capabilities.threadRestartContinuation === true,
+  );
+  const supportsBranchPrefix = targets.every(
+    (target) =>
+      target.environment.serverConfig.environment.capabilities.branchPrefixSettings === true,
   );
   const disabledFor = (key: string) =>
     disabled ||
@@ -211,7 +208,7 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                   )}
                   supportsOverrides={supportsProjectOverrides}
                   pending={pendingWrites > 0}
-                  onClear={clearProjectOverrides}
+                  onClear={() => clearProjectOverrides()}
                 />
               ) : null}
               {props.page === "new-threads" ? (
@@ -280,6 +277,30 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                       disabled={disabledFor("newWorktreesStartFromOrigin")}
                       onValueChange={(value) => write({ newWorktreesStartFromOrigin: value })}
                     />
+                  </SettingsSection>
+                  <SettingsSection title="Branch naming">
+                    <BranchPrefixField
+                      key={JSON.stringify(
+                        displayTargets.map((target) => [
+                          target.environment.environmentId,
+                          target.projectId,
+                        ]),
+                      )}
+                      value={uniform("branchPrefix")}
+                      disabled={disabledFor("branchPrefix") || !supportsBranchPrefix}
+                      onValueChange={(branchPrefix) => write({ branchPrefix })}
+                      resetLabel={projectSelected ? "Use environment prefix" : "Use default prefix"}
+                      onReset={() =>
+                        projectSelected
+                          ? clearProjectOverrides(["branchPrefix"])
+                          : write({ branchPrefix: "dispatch/" })
+                      }
+                    />
+                    {!supportsBranchPrefix ? (
+                      <Text className="px-4 pb-4 text-sm text-foreground-muted">
+                        Update the selected environments to change their branch prefix.
+                      </Text>
+                    ) : null}
                   </SettingsSection>
                 </>
               ) : null}

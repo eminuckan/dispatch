@@ -1,0 +1,98 @@
+.sidebar-galaxy {
+  /* The header reserves this extra space so the soft edge never covers controls. */
+  height: calc(var(--workspace-topbar-height) + 1rem);
+  background: #5680b0;
+  mask-image: linear-gradient(
+    to bottom,
+    black 0,
+    black 35%,
+    rgb(0 0 0 / 95%) 50%,
+    rgb(0 0 0 / 75%) 62.5%,
+    rgb(0 0 0 / 35%) 77%,
+    rgb(0 0 0 / 8%) 90%,
+    transparent 100%
+  );
+}
+
+.sidebar-galaxy-image {
+  opacity: 0.46;
+  filter: brightness(2);
+}
+
+/* Only tiny opacity/transform layers move; the textured backdrop stays still. */
+.sidebar-galaxy-star {
+  position: absolute;
+  width: 2px;
+  height: 2px;
+  border-radius: 50%;
+  background: white;
+  box-shadow: 0 0 4px 1px rgb(204 228 255 / 65%);
+  opacity: 0.35;
+  animation: sidebar-star-twinkle 6s ease-in-out infinite;
+}
+
+.sidebar-galaxy-star-one {
+  left: 61%;
+  top: 14px;
+}
+
+.sidebar-galaxy-star-two {
+  left: 79%;
+  top: 36px;
+  animation-delay: -2s;
+  animation-duration: 7s;
+}
+
+.sidebar-galaxy-star-three {
+  left: 91%;
+  top: 9px;
+  animation-delay: -4s;
+  animation-duration: 8s;
+}
+
+.sidebar-galaxy-meteor {
+  position: absolute;
+  left: 65%;
+  top: 5px;
+  width: 32px;
+  height: 1px;
+  background: linear-gradient(to right, transparent, rgb(226 240 255 / 90%));
+  opacity: 0;
+  transform: rotate(24deg);
+  animation: sidebar-meteor 12s linear infinite;
+}
+
+@keyframes sidebar-star-twinkle {
+  0%,
+  100% {
+    opacity: 0.3;
+    transform: scale(0.8);
+  }
+  50% {
+    opacity: 0.95;
+    transform: scale(1.15);
+  }
+}
+
+@keyframes sidebar-meteor {
+  0%,
+  76% {
+    opacity: 0;
+    transform: translate(-18px, -8px) rotate(24deg);
+  }
+  79% {
+    opacity: 0.85;
+  }
+  86%,
+  100% {
+    opacity: 0;
+    transform: translate(60px, 27px) rotate(24deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sidebar-galaxy-star,
+  .sidebar-galaxy-meteor {
+    animation: none;
+  }
+}

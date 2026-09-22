@@ -302,7 +302,7 @@ it.layer(NodeServices.layer)("AntigravityTextGeneration", (it) => {
         ).toEqual({
           subject: "Repair Google login",
           body: "Keep the remote callback.",
-          branch: "feature/repair-login",
+          branch: "repair-login",
         });
         expect(
           yield* fixture.textGeneration.generatePrContent({

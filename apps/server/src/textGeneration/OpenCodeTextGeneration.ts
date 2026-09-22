@@ -8,7 +8,7 @@ import {
   type ModelSelection,
   type OpenCodeSettings,
 } from "@dispatch/contracts";
-import { sanitizeBranchFragment, sanitizeFeatureBranchName } from "@dispatch/shared/git";
+import { sanitizeBranchFragment } from "@dispatch/shared/git";
 import { getModelSelectionStringOptionValue } from "@dispatch/shared/model";
 import { extractJsonObject } from "@dispatch/shared/schemaJson";
 
@@ -392,7 +392,7 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
         subject: sanitizeCommitSubject(generated.subject),
         body: generated.body.trim(),
         ...("branch" in generated && typeof generated.branch === "string"
-          ? { branch: sanitizeFeatureBranchName(generated.branch) }
+          ? { branch: sanitizeBranchFragment(generated.branch) }
           : {}),
       };
     });

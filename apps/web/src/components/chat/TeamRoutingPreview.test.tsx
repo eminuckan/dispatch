@@ -290,7 +290,7 @@ describe("team routing readiness", () => {
     expect(mocks.start).not.toHaveBeenCalled();
   });
 
-  it("shows setup only for a supported loaded draft that is not ready", async () => {
+  it("keeps setup out of the composer and offers the toggle only when ready", async () => {
     mocks.settingsData = {
       ...configuredSettings,
       policy: { ...configuredSettings.policy, enabled: false },
@@ -298,14 +298,8 @@ describe("team routing readiness", () => {
     await act(async () => {
       renderer = create(<ActionsHarness />);
     });
-    const setup = renderer!.root
-      .findAllByType("button")
-      .find((button) => button.children.includes("Set up Flow"));
-    expect(setup).toBeDefined();
-    await act(async () => {
-      setup!.props.onClick();
-    });
-    expect(mocks.navigate).toHaveBeenCalledWith({ to: "/settings/orchestration" });
+    expect(renderer!.root.findAllByType("button")).toHaveLength(0);
+    expect(mocks.navigate).not.toHaveBeenCalled();
 
     mocks.settingsData = null;
     await act(async () => {

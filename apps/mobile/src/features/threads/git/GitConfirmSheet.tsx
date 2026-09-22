@@ -1,5 +1,7 @@
 import { resolveDefaultBranchActionDialogCopy } from "@dispatch/client-runtime/state/vcs";
-import { resolveAutoFeatureBranchName } from "@dispatch/shared/git";
+import { DEFAULT_SERVER_SETTINGS } from "@dispatch/contracts";
+import { resolveAutoBranchName } from "@dispatch/shared/git";
+import { resolveProjectSettings } from "@dispatch/shared/projectSettings";
 import * as Arr from "effect/Array";
 import * as Result from "effect/Result";
 import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
@@ -14,6 +16,8 @@ import { NativeStackScreenOptions } from "../../../native/StackHeader";
 import { AppText as Text } from "../../../components/AppText";
 import { useSelectedThreadGitActions } from "../../../state/use-selected-thread-git-actions";
 import { useSelectedThreadGitState } from "../../../state/use-selected-thread-git-state";
+import { useThreadSelection } from "../../../state/use-thread-selection";
+import { useEnvironmentServerConfig } from "../../../state/entities";
 import { SheetActionButton } from "./gitSheetComponents";
 
 type GitConfirmSheetProps = StaticScreenProps<{
@@ -32,6 +36,13 @@ export function GitConfirmSheet(props: GitConfirmSheetProps) {
   const { height: windowHeight } = useWindowDimensions();
   const gitState = useSelectedThreadGitState();
   const gitActions = useSelectedThreadGitActions();
+  const { selectedThread, selectedThreadProject } = useThreadSelection();
+  const serverConfig = useEnvironmentServerConfig(selectedThread?.environmentId ?? null);
+  const branchPrefix = resolveProjectSettings(
+    serverConfig?.settings ?? DEFAULT_SERVER_SETTINGS,
+    selectedThread?.projectId ?? null,
+    selectedThreadProject,
+  ).settings.branchPrefix;
 
   const params = props.route.params;
 
@@ -86,10 +97,12 @@ export function GitConfirmSheet(props: GitConfirmSheetProps) {
       gitState.selectedThreadBranches.length > 0
         ? gitState.selectedThreadBranches
         : await gitActions.refreshSelectedThreadBranches();
-    const newBranchName = resolveAutoFeatureBranchName(
+    const newBranchName = resolveAutoBranchName(
       Arr.filterMap(branches, (branch) =>
         branch.isRemote ? Result.failVoid : Result.succeed(branch.name),
       ),
+      undefined,
+      branchPrefix,
     );
     await gitActions.onCreateSelectedThreadBranch(newBranchName);
     await gitActions.onRunSelectedThreadGitAction({ action: confirmAction });
@@ -102,6 +115,7 @@ export function GitConfirmSheet(props: GitConfirmSheetProps) {
     navigation,
     environmentId,
     threadId,
+    branchPrefix,
   ]);
 
   return (

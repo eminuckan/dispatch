@@ -40,12 +40,14 @@ import {
   type BranchToolbarBranchSelectorHandle,
 } from "./BranchToolbarBranchSelector";
 import { BranchToolbarEnvironmentSelector } from "./BranchToolbarEnvironmentSelector";
+import { BranchPrefixDialog } from "./BranchPrefixDialog";
 import { BranchToolbarEnvModeSelector } from "./BranchToolbarEnvModeSelector";
 import { Button } from "./ui/button";
 import {
   Menu,
   MenuGroup,
   MenuGroupLabel,
+  MenuItem,
   MenuPopup,
   MenuRadioGroup,
   MenuRadioItem,
@@ -105,6 +107,7 @@ interface MobileRunContextSelectorProps {
   onEnvModeChange: (mode: EnvMode) => void;
   previousWorktreeLabel: string | null;
   onUsePreviousWorktree: () => void;
+  onSetPrefix?: (() => void) | undefined;
 }
 
 const MobileRunContextSelector = memo(function MobileRunContextSelector({
@@ -123,6 +126,7 @@ const MobileRunContextSelector = memo(function MobileRunContextSelector({
   onEnvModeChange,
   previousWorktreeLabel,
   onUsePreviousWorktree,
+  onSetPrefix,
 }: MobileRunContextSelectorProps) {
   const composerFloatingLayerProps = useComposerMenuProps();
   const activeEnvironment = useMemo(
@@ -142,7 +146,6 @@ const MobileRunContextSelector = memo(function MobileRunContextSelector({
       : effectiveEnvMode === "worktree"
         ? resolveEnvModeLabel("worktree")
         : resolveCurrentWorkspaceLabel(activeWorktreePath);
-  const isLocked = envLocked || envModeLocked;
   const workspaceIcon = (
     <Tooltip>
       <TooltipTrigger render={<span className="inline-flex shrink-0" />}>
@@ -190,17 +193,6 @@ const MobileRunContextSelector = memo(function MobileRunContextSelector({
       </span>
     </>
   );
-
-  if (isLocked) {
-    return (
-      <span
-        className="inline-flex h-7 min-w-0 max-w-[48%] flex-initial items-center justify-start gap-1 rounded-md border border-transparent px-[calc(--spacing(2)-1px)] font-normal text-muted-foreground/70 text-xs sm:h-6"
-        data-composer-context-control
-      >
-        {triggerContent}
-      </span>
-    );
-  }
 
   return (
     <Menu>
@@ -302,6 +294,10 @@ const MobileRunContextSelector = memo(function MobileRunContextSelector({
             ) : null}
           </MenuRadioGroup>
         </MenuGroup>
+        <MenuSeparator />
+        <MenuItem disabled={!onSetPrefix} onClick={onSetPrefix}>
+          Set prefix
+        </MenuItem>
       </MenuPopup>
     </Menu>
   );
@@ -503,6 +499,7 @@ export const BranchToolbar = memo(function BranchToolbar({
   composerControlsHostRef,
   contextStripVisible = true,
 }: BranchToolbarProps) {
+  const [prefixDialogOpen, setPrefixDialogOpen] = useState(false);
   const branchSelectorRef = useRef<BranchToolbarBranchSelectorHandle>(null);
   const threadRef = useMemo(
     () => scopeThreadRef(environmentId, threadId),
@@ -519,6 +516,7 @@ export const BranchToolbar = memo(function BranchToolbar({
       ? scopeProjectRef(draftThread.environmentId, draftThread.projectId)
       : null;
   const activeProject = useProject(activeProjectRef);
+  const onSetPrefix = activeProject ? () => setPrefixDialogOpen(true) : undefined;
   const hasActiveThread = serverThread !== null || draftThread !== null;
   const activeWorktreePath = forceNewWorktree
     ? null
@@ -630,6 +628,7 @@ export const BranchToolbar = memo(function BranchToolbar({
             onEnvModeChange={onEnvModeChange}
             previousWorktreeLabel={previousWorktreeLabel}
             onUsePreviousWorktree={onUsePreviousWorktree}
+            onSetPrefix={onSetPrefix}
           />
         </div>
       ) : null}
@@ -669,6 +668,7 @@ export const BranchToolbar = memo(function BranchToolbar({
               onEnvModeChange={onEnvModeChange}
               previousWorktreeLabel={previousWorktreeLabel}
               onUsePreviousWorktree={onUsePreviousWorktree}
+              onSetPrefix={onSetPrefix}
             />
           ) : null}
         </div>
@@ -689,6 +689,7 @@ export const BranchToolbar = memo(function BranchToolbar({
       {showGitControls ? (
         <BranchToolbarBranchSelector
           forceNewWorktree={forceNewWorktree}
+          onSetPrefix={onSetPrefix}
           ref={branchSelectorRef}
           className="min-w-0 flex-initial justify-end @3xl/composer-surface:ml-auto"
           environmentId={environmentId}
@@ -706,6 +707,14 @@ export const BranchToolbar = memo(function BranchToolbar({
           onStartFromOriginChange={onStartFromOriginChange}
           {...(onCheckoutPullRequestRequest ? { onCheckoutPullRequestRequest } : {})}
           {...(onComposerFocusRequest ? { onComposerFocusRequest } : {})}
+        />
+      ) : null}
+      {prefixDialogOpen && activeProject ? (
+        <BranchPrefixDialog
+          key={`${environmentId}:${activeProject.id}`}
+          environmentId={environmentId}
+          projectId={activeProject.id}
+          onClose={() => setPrefixDialogOpen(false)}
         />
       ) : null}
     </ComposerSurface.ContextStrip>

@@ -29,6 +29,50 @@ function environment(environmentId: EnvironmentId, settings: ServerSettings): Se
 }
 
 describe("mobile project settings scope", () => {
+  it("preserves an explicitly empty prefix and restores each environment's inherited prefix", () => {
+    const firstSettings: ServerSettings = {
+      ...DEFAULT_SERVER_SETTINGS,
+      branchPrefix: "Luna/",
+      projectSettingsOverrides: { [firstProject]: { branchPrefix: "", defaultAutoPull: true } },
+    };
+    const secondSettings: ServerSettings = {
+      ...DEFAULT_SERVER_SETTINGS,
+      branchPrefix: "team/work/",
+    };
+    const targets = resolveMobileSettingsTargets(
+      [environment(firstId, firstSettings), environment(secondId, secondSettings)],
+      [
+        { environmentId: firstId, id: firstProject },
+        { environmentId: secondId, id: secondProject },
+      ],
+    );
+    expect(targets.map((target) => target.settings.branchPrefix)).toEqual(["", "team/work/"]);
+    expect(planMobileScopedSettingsPatch(targets, true, { branchPrefix: "" })).toEqual([
+      {
+        environmentId: firstId,
+        patch: {
+          projectSettingsOverrides: { [firstProject]: { branchPrefix: "", defaultAutoPull: true } },
+        },
+      },
+      {
+        environmentId: secondId,
+        patch: { projectSettingsOverrides: { [secondProject]: { branchPrefix: "" } } },
+      },
+    ]);
+    expect(planMobileScopedSettingsClear(targets, ["branchPrefix"])).toEqual([
+      {
+        environmentId: firstId,
+        patch: { projectSettingsOverrides: { [firstProject]: { defaultAutoPull: true } } },
+      },
+      {
+        environmentId: secondId,
+        patch: { projectSettingsOverrides: { [secondProject]: null } },
+      },
+    ]);
+    expect(firstSettings.branchPrefix).toBe("Luna/");
+    expect(secondSettings.branchPrefix).toBe("team/work/");
+  });
+
   it("edits each checkout's own override without changing either environment default", () => {
     const firstSettings: ServerSettings = {
       ...DEFAULT_SERVER_SETTINGS,

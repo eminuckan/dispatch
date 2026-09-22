@@ -1,4 +1,5 @@
-import { sanitizeFeatureBranchName } from "@dispatch/shared/git";
+import { DEFAULT_SERVER_SETTINGS } from "@dispatch/contracts";
+import { resolveProjectSettings } from "@dispatch/shared/projectSettings";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { useState } from "react";
 import { Platform, Pressable, ScrollView, useWindowDimensions, View } from "react-native";
@@ -10,6 +11,7 @@ import { NativeStackScreenOptions } from "../../../native/StackHeader";
 import { AppText as Text, AppTextInput as TextInput } from "../../../components/AppText";
 import { cn } from "../../../lib/cn";
 import { useEnvironmentQuery } from "../../../state/query";
+import { useEnvironmentServerConfig } from "../../../state/entities";
 import { useThreadSelection } from "../../../state/use-thread-selection";
 import { useSelectedThreadGitActions } from "../../../state/use-selected-thread-git-actions";
 import { useSelectedThreadGitState } from "../../../state/use-selected-thread-git-state";
@@ -26,7 +28,13 @@ export function GitBranchesSheet(_props: GitBranchesSheetProps) {
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const { height: windowHeight } = useWindowDimensions();
-  const { selectedThread } = useThreadSelection();
+  const { selectedThread, selectedThreadProject } = useThreadSelection();
+  const serverConfig = useEnvironmentServerConfig(selectedThread?.environmentId ?? null);
+  const branchPrefix = resolveProjectSettings(
+    serverConfig?.settings ?? DEFAULT_SERVER_SETTINGS,
+    selectedThread?.projectId ?? null,
+    selectedThreadProject,
+  ).settings.branchPrefix;
   const { selectedThreadCwd, selectedThreadWorktreePath } = useSelectedThreadWorktree();
   const gitState = useSelectedThreadGitState();
   const gitActions = useSelectedThreadGitActions();
@@ -46,11 +54,13 @@ export function GitBranchesSheet(_props: GitBranchesSheetProps) {
   const branchesLoading = gitState.selectedThreadBranchesLoading;
   const busy = gitState.gitOperationLabel !== null;
 
-  const [newBranchName, setNewBranchName] = useState("");
+  const [newBranchDraft, setNewBranchName] = useState<string | null>(null);
+  const newBranchName = newBranchDraft ?? branchPrefix;
   const [worktreeBaseBranch, setWorktreeBaseBranch] = useState(
     currentBranchLabel === "Detached HEAD" ? "main" : currentBranchLabel,
   );
-  const [worktreeBranchName, setWorktreeBranchName] = useState("");
+  const [worktreeBranchDraft, setWorktreeBranchName] = useState<string | null>(null);
+  const worktreeBranchName = worktreeBranchDraft ?? branchPrefix;
 
   const disabledExistingBranchNames: Array<string> = [];
   for (const branch of availableBranches) {
@@ -113,20 +123,24 @@ export function GitBranchesSheet(_props: GitBranchesSheetProps) {
             <TextInput
               value={newBranchName}
               onChangeText={setNewBranchName}
-              placeholder="feature/mobile-polish"
+              placeholder={`${branchPrefix}mobile-polish`}
               accessibilityLabel="New branch name"
+              autoCapitalize="none"
+              autoCorrect={false}
               className={Platform.OS === "android" ? "rounded-xl bg-sheet-solid" : "rounded-[18px]"}
             />
             <SheetActionButton
               icon="plus"
               label="Create & checkout"
               tone="primary"
-              disabled={busy || newBranchName.trim().length === 0}
+              disabled={
+                busy || newBranchName.trim().length === 0 || newBranchName.trim().endsWith("/")
+              }
               onPress={() => {
-                const branch = sanitizeFeatureBranchName(newBranchName.trim());
+                const branch = newBranchName.trim();
                 if (branch.length === 0) return;
                 void gitActions.onCreateSelectedThreadBranch(branch).then(() => {
-                  setNewBranchName("");
+                  setNewBranchName(null);
                   navigation.goBack();
                 });
               }}
@@ -157,6 +171,8 @@ export function GitBranchesSheet(_props: GitBranchesSheetProps) {
               onChangeText={setWorktreeBaseBranch}
               placeholder="main"
               accessibilityLabel="Worktree base branch"
+              autoCapitalize="none"
+              autoCorrect={false}
               className={Platform.OS === "android" ? "rounded-xl bg-sheet-solid" : "rounded-[18px]"}
             />
             {Platform.OS === "android" ? (
@@ -165,8 +181,10 @@ export function GitBranchesSheet(_props: GitBranchesSheetProps) {
             <TextInput
               value={worktreeBranchName}
               onChangeText={setWorktreeBranchName}
-              placeholder="feature/mobile-thread"
+              placeholder={`${branchPrefix}mobile-thread`}
               accessibilityLabel="Worktree branch name"
+              autoCapitalize="none"
+              autoCorrect={false}
               className={Platform.OS === "android" ? "rounded-xl bg-sheet-solid" : "rounded-[18px]"}
             />
             <SheetActionButton
@@ -176,7 +194,8 @@ export function GitBranchesSheet(_props: GitBranchesSheetProps) {
               disabled={
                 busy ||
                 worktreeBaseBranch.trim().length === 0 ||
-                worktreeBranchName.trim().length === 0
+                worktreeBranchName.trim().length === 0 ||
+                worktreeBranchName.trim().endsWith("/")
               }
               onPress={() => {
                 const baseBranch = worktreeBaseBranch.trim();
@@ -185,7 +204,7 @@ export function GitBranchesSheet(_props: GitBranchesSheetProps) {
                 void gitActions
                   .onCreateSelectedThreadWorktree({ baseBranch, newBranch })
                   .then(() => {
-                    setWorktreeBranchName("");
+                    setWorktreeBranchName(null);
                     navigation.goBack();
                   });
               }}

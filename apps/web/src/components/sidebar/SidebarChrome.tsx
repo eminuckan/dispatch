@@ -1,17 +1,18 @@
-import { ArrowLeftIcon, ChartNoAxesColumnIcon, SettingsIcon } from "lucide-react";
+import { ArrowLeftIcon, ChartNoAxesColumnIcon, SettingsIcon, WorkflowIcon } from "lucide-react";
 import type { ReactNode } from "react";
 import { memo, useCallback } from "react";
-import { Link, useCanGoBack, useLocation, useNavigate } from "@tanstack/react-router";
+import { Link, useCanGoBack, useLocation, useNavigate, useParams } from "@tanstack/react-router";
 
+import { useComposerDraftStore } from "../../composerDraftStore";
 import { useEnvironmentIdentificationMode } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
-import { useEnvironments } from "../../state/environments";
+import { useActiveEnvironmentId } from "../../state/entities";
+import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
+import { resolveThreadRouteTarget } from "../../threadRoutes";
 import { DispatchMark } from "../DispatchMark";
 import {
   resolveEnvironmentIdentificationPillLabel,
-  resolveSidebarStageBackdropVariant,
-  resolveSidebarStageFocusRingOffsetClass,
-  SidebarStageBackdrop,
+  SidebarGalaxyBackdrop,
   useEnvironmentStageLabel,
 } from "../SidebarStageBackdrop";
 import { Badge } from "../ui/badge";
@@ -27,6 +28,7 @@ import {
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { readPullRequestListPreferences } from "../pullRequest/pullRequestListPreferences";
 import { SidebarConnectAccount } from "./SidebarConnectAccount";
+import { resolveSidebarFlowEnvironment } from "./sidebarFlowEnvironment";
 import { SidebarProviderUpdatePill } from "./SidebarProviderUpdatePill";
 import { SidebarUpdateArchitectureWarning, SidebarUpdatePill } from "./SidebarUpdatePill";
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
@@ -38,35 +40,35 @@ export const SidebarChromeHeader = memo(function SidebarChromeHeader({
 }) {
   const stageLabel = useEnvironmentStageLabel();
   const environmentIdentificationMode = useEnvironmentIdentificationMode();
-  const backdropVariant = resolveSidebarStageBackdropVariant(
-    stageLabel,
-    environmentIdentificationMode === "artwork",
-  );
+  const showArtwork = environmentIdentificationMode === "artwork";
   const pillLabel =
-    environmentIdentificationMode === "pill"
+    environmentIdentificationMode !== "none"
       ? resolveEnvironmentIdentificationPillLabel(stageLabel)
       : null;
 
   return (
     <SidebarHeader
       className={cn(
-        "@container/sidebar-header relative h-[var(--workspace-topbar-height)] shrink-0 flex-row items-center px-3 py-0 md:px-0",
+        "@container/sidebar-header relative h-[var(--workspace-topbar-height)] shrink-0 flex-row items-center gap-2 px-3 py-0 md:gap-3 md:px-0",
+        showArtwork && "mb-4",
         isElectron && "drag-region",
       )}
     >
-      {backdropVariant ? <SidebarStageBackdrop variant={backdropVariant} /> : null}
+      {showArtwork ? <SidebarGalaxyBackdrop /> : null}
       <SidebarTrigger
         className={cn(
           "relative z-10 md:hidden",
-          backdropVariant &&
+          showArtwork &&
             "focus-visible:ring-white/90 [&_svg]:stroke-white/90! [&_svg]:opacity-100! [&_svg]:hover:stroke-white! [:hover,[data-pressed]]:bg-white/15",
-          backdropVariant && resolveSidebarStageFocusRingOffsetClass(backdropVariant),
         )}
       />
-      <SidebarBrand onBackdrop={backdropVariant !== null} />
+      <SidebarBrand onBackdrop={showArtwork} />
       {pillLabel ? (
         <Badge
-          className="relative z-10 ml-1 hidden rounded-full px-1.5 text-muted-foreground @[15rem]/sidebar-header:inline-flex"
+          className={cn(
+            "relative z-10 ml-auto h-5 shrink-0 px-1.5 text-[11px] font-semibold sm:h-5 sm:text-[11px] md:mr-3",
+            showArtwork ? "bg-black/45 text-white" : "text-foreground",
+          )}
           data-environment-identification="pill"
           size="sm"
           variant="secondary"
@@ -83,23 +85,13 @@ function SidebarBrand({ onBackdrop }: { onBackdrop: boolean }) {
     <Link
       aria-label="Go to threads"
       className={cn(
-        "relative z-10 ml-[var(--workspace-titlebar-content-left)] hidden h-7 w-fit min-w-0 shrink-0 items-center overflow-hidden rounded-md outline-hidden ring-ring focus-visible:ring-2 md:flex",
-        onBackdrop ? "text-white" : "text-foreground",
+        "relative z-10 flex h-9 min-w-0 items-center gap-2 rounded-sm outline-hidden focus-visible:ring-2 focus-visible:ring-ring md:ml-[var(--workspace-titlebar-content-left)]",
+        onBackdrop ? "text-white focus-visible:ring-white/90" : "text-foreground",
       )}
       to="/"
     >
-      {/* Center the visible capitals, without the font's ascender/descender space. */}
-      <span className="inline-flex min-w-0 items-baseline gap-1 text-sm font-medium tracking-tight">
-        <DispatchMark aria-label="Dispatch" className="h-[1cap] w-auto shrink-0" />
-        <span
-          className={cn(
-            "truncate [text-box:trim-both_cap_alphabetic]",
-            onBackdrop ? "text-white/70" : "text-muted-foreground",
-          )}
-        >
-          Dispatch
-        </span>
-      </span>
+      <DispatchMark aria-hidden className="size-4 shrink-0" />
+      <span className="truncate text-sm font-medium leading-5">Dispatch</span>
     </Link>
   );
 }
@@ -126,6 +118,48 @@ function SidebarUtilityItem({
         <TooltipPopup side="top">{label}</TooltipPopup>
       </Tooltip>
     </SidebarMenuItem>
+  );
+}
+
+export function SidebarFlowMenu({ className }: { className?: string }) {
+  const { environments } = useEnvironments();
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const activeEnvironmentId = useActiveEnvironmentId();
+  const routeTarget = useParams({
+    strict: false,
+    select: (params) => resolveThreadRouteTarget(params),
+  });
+  const draftEnvironmentId = useComposerDraftStore((store) => {
+    const draft = routeTarget?.kind === "draft" ? store.getDraftSession(routeTarget.draftId) : null;
+    return draft?.promotedTo?.environmentId ?? draft?.environmentId ?? null;
+  });
+  const environment = resolveSidebarFlowEnvironment({
+    environments,
+    preferredEnvironmentId:
+      (routeTarget?.kind === "server" ? routeTarget.threadRef.environmentId : draftEnvironmentId) ??
+      activeEnvironmentId,
+    primaryEnvironmentId,
+  });
+  const { isMobile, setOpenMobile } = useSidebar();
+  if (!environment) return null;
+  return (
+    <SidebarMenu className={className}>
+      <SidebarMenuItem>
+        <SidebarMenuButton
+          render={
+            <Link to="/settings/orchestration" search={{ machine: environment.environmentId }} />
+          }
+          onClick={() => {
+            if (isMobile) setOpenMobile(false);
+          }}
+          aria-label="Dispatch Flow"
+          tooltip={`Configure Dispatch Flow on ${environment.label}`}
+        >
+          <WorkflowIcon />
+          <span className="group-data-[collapsible=icon]:hidden">Dispatch Flow</span>
+        </SidebarMenuButton>
+      </SidebarMenuItem>
+    </SidebarMenu>
   );
 }
 

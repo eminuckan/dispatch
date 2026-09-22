@@ -70,7 +70,7 @@ Leaving reasoning level or service tier unset uses the provider's own configurat
 ## Dispatch Flow and managed teams (experimental)
 
 Dispatch Flow is optional. You can choose it during onboarding or configure it later in
-**Settings → Flow**. Select which provider models Dispatch may use as **Lead**, **Worker**,
+**Dispatch Flow** in the sidebar or **Settings → Flow**. Select which provider models Dispatch may use as **Lead**, **Worker**,
 or both, then choose a Flow mode. Your saved model choices remain the authority for managed
 runs, including provider-supported options such as reasoning effort or model variants.
 

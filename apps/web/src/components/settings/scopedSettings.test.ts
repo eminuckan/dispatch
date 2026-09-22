@@ -29,6 +29,7 @@ function environment(
     loaded?: boolean;
     settings?: Partial<ServerSettings>;
     projectOverrides?: boolean;
+    branchPrefix?: boolean;
   } = {},
 ) {
   return {
@@ -43,7 +44,10 @@ function environment(
         : {
             settings: { ...DEFAULT_SERVER_SETTINGS, ...options.settings },
             environment: {
-              capabilities: { projectSettingsOverrides: options.projectOverrides !== false },
+              capabilities: {
+                projectSettingsOverrides: options.projectOverrides !== false,
+                branchPrefixSettings: options.branchPrefix !== false,
+              },
             },
           },
   };
@@ -571,5 +575,83 @@ describe("partial object patches at project scope", () => {
         },
       },
     });
+  });
+});
+
+describe("branch prefix scope and inheritance", () => {
+  it("saves an empty checkout override without touching another checkout or its environment default", () => {
+    const custom = environment("Server", {
+      settings: {
+        branchPrefix: "Team/",
+        projectSettingsOverrides: { [projectId]: { defaultAutoPull: true } },
+      },
+    });
+    const plan = planScopedSettingsPatch(checkout, [laptop, custom], { branchPrefix: "" });
+    expect(plan.serverWrites).toEqual([
+      {
+        environmentId: server.environmentId,
+        label: "Server",
+        patch: {
+          projectSettingsOverrides: { [projectId]: { defaultAutoPull: true, branchPrefix: "" } },
+        },
+      },
+    ]);
+    const saved = environment("Server", {
+      settings: applyServerSettingsPatch(
+        custom.serverConfig!.settings,
+        plan.serverWrites[0]!.patch,
+      ),
+    });
+    const targets = resolveScopedSettingsTargets(checkout, [laptop, saved]);
+    expect(targets[0]!.settings.branchPrefix).toBe("");
+    expect(scopedSettingsSource(targets, ["branchPrefix"])).toBe("project");
+
+    const reset = planScopedSettingsClear(checkout, [laptop, saved], ["branchPrefix"]);
+    const inherited = environment("Server", {
+      settings: applyServerSettingsPatch(
+        saved.serverConfig!.settings,
+        reset.serverWrites[0]!.patch,
+      ),
+    });
+    const inheritedTargets = resolveScopedSettingsTargets(checkout, [laptop, inherited]);
+    expect(inheritedTargets[0]!.settings.branchPrefix).toBe("Team/");
+    expect(inheritedTargets[0]!.settings.defaultAutoPull).toBe(true);
+    expect(scopedSettingsSource(inheritedTargets, ["branchPrefix"])).toBe("environment");
+  });
+
+  it("changes only the selected environment default and preserves project overrides", () => {
+    const custom = environment("Server", {
+      settings: { projectSettingsOverrides: { [projectId]: { branchPrefix: "Luna/Tasks/" } } },
+    });
+    const plan = planScopedSettingsPatch(named, [laptop, custom], { branchPrefix: "" });
+    expect(plan.serverWrites.map((write) => write.environmentId)).toEqual([server.environmentId]);
+    const saved = applyServerSettingsPatch(
+      custom.serverConfig!.settings,
+      plan.serverWrites[0]!.patch,
+    );
+    expect(saved.branchPrefix).toBe("");
+    expect(saved.projectSettingsOverrides[projectId]?.branchPrefix).toBe("Luna/Tasks/");
+  });
+
+  it("refuses prefix saves and resets when any selected connected environment lacks support", () => {
+    const old = environment("Server", { branchPrefix: false });
+    expect(planScopedSettingsPatch(all, [laptop, old], { branchPrefix: "Luna/" })).toMatchObject({
+      serverWrites: [],
+      unavailableReason: expect.stringContaining("Update"),
+    });
+    expect(planScopedSettingsClear(checkout, [old], ["branchPrefix"])).toMatchObject({
+      serverWrites: [],
+      unavailableReason: expect.stringContaining("Update"),
+    });
+    expect(
+      planProjectOverridesClear(
+        [old],
+        [{ environmentId: server.environmentId, projectId }],
+        ["branchPrefix"],
+      ),
+    ).toMatchObject({ serverWrites: [], unavailableReason: expect.stringContaining("Update") });
+    expect(
+      planScopedSettingsPatch(named, [old], { defaultAutoPull: true }).serverWrites,
+    ).toHaveLength(1);
   });
 });

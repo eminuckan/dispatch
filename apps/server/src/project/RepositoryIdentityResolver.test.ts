@@ -198,6 +198,26 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
     }).pipe(Effect.provide(RepositoryIdentityResolver.layer)),
   );
 
+  it.effect.each([
+    "https://github.com/eminuckan/dispatch.git",
+    "git@github.com:EminUckan/Dispatch.git",
+  ])("keeps Dispatch independent from its historical upstream (%s)", (origin) =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "dispatch-identity-test-" });
+      yield* git(cwd, ["init"]);
+      yield* git(cwd, ["remote", "add", "origin", origin]);
+      yield* git(cwd, ["remote", "add", "upstream", "https://github.com/pingdotgg/t3code.git"]);
+      const resolver = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
+      const identity = yield* resolver.resolve(cwd);
+      expect(identity?.canonicalKey).toBe("github.com/eminuckan/dispatch");
+      expect(identity?.displayName).toBe("Dispatch");
+      expect(identity?.locator.remoteName).toBe("origin");
+      expect(identity?.owner).toBe("eminuckan");
+      expect(identity?.name).toBe("dispatch");
+    }).pipe(Effect.provide(RepositoryIdentityResolver.layer)),
+  );
+
   it.effect("returns the git top-level root path when resolving from a nested workspace", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;

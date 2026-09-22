@@ -44,9 +44,8 @@ import {
   detectSourceControlProviderFromGitRemoteUrl,
   mergeGitStatusParts,
   normalizeGitRemoteUrl,
-  resolveAutoFeatureBranchName,
+  resolveAutoBranchName,
   sanitizeBranchFragment,
-  sanitizeFeatureBranchName,
 } from "@dispatch/shared/git";
 import {
   getChangeRequestTerminologyForKind,
@@ -95,6 +94,7 @@ export type GitBranchPullRequest = NonNullable<VcsStatusResult["pr"]> & {
 interface SourceControlTextGenerationSettings {
   readonly modelSelection: ModelSelection;
   readonly style: SourceControlWritingStyleSettings;
+  readonly branchPrefix: string;
 }
 
 export class GitManager extends Context.Service<
@@ -1826,9 +1826,7 @@ export const make = Effect.gen(function* () {
         return {
           subject: customCommit.subject,
           body: customCommit.body,
-          ...(input.includeBranch
-            ? { branch: sanitizeFeatureBranchName(customCommit.subject) }
-            : {}),
+          ...(input.includeBranch ? { branch: sanitizeBranchFragment(customCommit.subject) } : {}),
           commitMessage: formatCommitMessage(customCommit.subject, customCommit.body),
         };
       }
@@ -2583,9 +2581,13 @@ export const make = Effect.gen(function* () {
       });
     }
 
-    const preferredBranch = suggestion.branch ?? sanitizeFeatureBranchName(suggestion.subject);
+    const preferredBranch = suggestion.branch ?? suggestion.subject;
     const existingBranchNames = yield* gitCore.listLocalBranchNames(cwd);
-    const resolvedBranch = resolveAutoFeatureBranchName(existingBranchNames, preferredBranch);
+    const resolvedBranch = resolveAutoBranchName(
+      existingBranchNames,
+      preferredBranch,
+      settings.branchPrefix,
+    );
 
     yield* gitCore.createRef({ cwd, refName: resolvedBranch });
     yield* Effect.scoped(gitCore.switchRef({ cwd, refName: resolvedBranch }));
@@ -2668,6 +2670,7 @@ export const make = Effect.gen(function* () {
               ? Effect.succeed({
                   modelSelection: settings.textGenerationModelSelection,
                   style: settings.sourceControlWritingStyle,
+                  branchPrefix: settings.branchPrefix,
                 })
               : providerRegistry.getProviders.pipe(
                   Effect.map((providers) => ({
@@ -2676,6 +2679,7 @@ export const make = Effect.gen(function* () {
                       providers,
                     ),
                     style: settings.sourceControlWritingStyle,
+                    branchPrefix: settings.branchPrefix,
                   })),
                 ),
           ),

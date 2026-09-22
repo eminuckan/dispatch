@@ -1,5 +1,11 @@
-import { FolderGit2Icon, FolderGitIcon, FolderIcon, HistoryIcon } from "lucide-react";
-import { memo, useMemo } from "react";
+import {
+  ChevronDownIcon,
+  FolderGit2Icon,
+  FolderGitIcon,
+  FolderIcon,
+  HistoryIcon,
+} from "lucide-react";
+import { memo } from "react";
 
 import {
   resolveCurrentWorkspaceLabel,
@@ -8,15 +14,18 @@ import {
   type EnvMode,
 } from "./BranchToolbar.logic";
 import { useComposerMenuProps } from "./chat/composerEventScope";
+import { Button } from "./ui/button";
 import {
-  Select,
-  SelectGroup,
-  SelectGroupLabel,
-  SelectItem,
-  SelectPopup,
-  SelectTrigger,
-  SelectValue,
-} from "./ui/select";
+  Menu,
+  MenuGroup,
+  MenuGroupLabel,
+  MenuItem,
+  MenuPopup,
+  MenuRadioGroup,
+  MenuRadioItem,
+  MenuSeparator,
+  MenuTrigger,
+} from "./ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 
 const PREVIOUS_WORKTREE_SELECT_VALUE = "previous-worktree";
@@ -29,6 +38,7 @@ interface BranchToolbarEnvModeSelectorProps {
   onEnvModeChange: (mode: EnvMode) => void;
   previousWorktreeLabel?: string | null;
   onUsePreviousWorktree?: () => void;
+  onSetPrefix?: (() => void) | undefined;
 }
 
 export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSelector({
@@ -39,80 +49,29 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
   onEnvModeChange,
   previousWorktreeLabel,
   onUsePreviousWorktree,
+  onSetPrefix,
 }: BranchToolbarEnvModeSelectorProps) {
   const composerFloatingLayerProps = useComposerMenuProps();
   const showPreviousWorktree = Boolean(previousWorktreeLabel && onUsePreviousWorktree);
-  const envModeItems = useMemo(
-    () => [
-      { value: "local", label: resolveCurrentWorkspaceLabel(activeWorktreePath) },
-      { value: "worktree", label: resolveEnvModeLabel("worktree") },
-      ...(showPreviousWorktree && previousWorktreeLabel
-        ? [{ value: PREVIOUS_WORKTREE_SELECT_VALUE, label: previousWorktreeLabel }]
-        : []),
-    ],
-    [activeWorktreePath, previousWorktreeLabel, showPreviousWorktree],
-  );
-
-  if (envLocked || forceNewWorktree) {
-    return (
-      <Tooltip>
-        <TooltipTrigger
-          render={<span />}
-          className="inline-flex h-7 min-w-0 items-center gap-1 border border-transparent px-[calc(--spacing(2)-1px)] font-normal text-muted-foreground/70 text-xs sm:h-6"
-          data-composer-context-control
-        >
-          {forceNewWorktree ? (
-            <FolderGit2Icon className="size-3 shrink-0" />
-          ) : activeWorktreePath ? (
-            <FolderGitIcon className="size-3 shrink-0" />
-          ) : (
-            <FolderIcon className="size-3 shrink-0" />
-          )}
-          <span
-            data-composer-label
-            className="min-w-0 max-w-[240px] group-data-[compact]/composer-context:max-w-0"
-          >
-            <span
-              data-composer-label-motion
-              className="block w-full min-w-0 max-w-[240px] truncate transition-opacity duration-180 ease-[cubic-bezier(0.32,0.72,0,1)] group-data-[compact]/composer-context:opacity-0 motion-reduce:transition-none"
-            >
-              {forceNewWorktree
-                ? resolveEnvModeLabel("worktree")
-                : resolveLockedWorkspaceLabel(activeWorktreePath)}
-            </span>
-          </span>
-        </TooltipTrigger>
-        <TooltipPopup>
-          {forceNewWorktree
-            ? "Each model starts in its own worktree."
-            : resolveLockedWorkspaceLabel(activeWorktreePath)}
-        </TooltipPopup>
-      </Tooltip>
-    );
-  }
+  const locked = envLocked || forceNewWorktree;
+  const workspaceLabel = forceNewWorktree
+    ? resolveEnvModeLabel("worktree")
+    : envLocked
+      ? resolveLockedWorkspaceLabel(activeWorktreePath)
+      : effectiveEnvMode === "worktree"
+        ? resolveEnvModeLabel("worktree")
+        : resolveCurrentWorkspaceLabel(activeWorktreePath);
 
   return (
-    <Select
-      modal={false}
-      value={effectiveEnvMode}
-      onValueChange={(value: string | null) => {
-        if (value === PREVIOUS_WORKTREE_SELECT_VALUE) {
-          onUsePreviousWorktree?.();
-          return;
-        }
-        onEnvModeChange(value as EnvMode);
-      }}
-      items={envModeItems}
-    >
+    <Menu modal={false}>
       <Tooltip>
         <TooltipTrigger
           render={
-            <SelectTrigger
-              variant="ghost"
-              size="xs"
+            <MenuTrigger
+              render={<Button variant="ghost" size="xs" />}
               className="min-w-0 shrink font-normal text-xs!"
               aria-label="Workspace"
-              data-composer-shortcut="composer.workspace"
+              data-composer-shortcut={locked ? undefined : "composer.workspace"}
               data-composer-context-control
             />
           }
@@ -132,45 +91,55 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
               data-composer-label-motion
               className="block w-full min-w-0 max-w-[240px] truncate transition-opacity duration-180 ease-[cubic-bezier(0.32,0.72,0,1)] group-data-[compact]/composer-context:opacity-0 motion-reduce:transition-none"
             >
-              <SelectValue />
+              {workspaceLabel}
             </span>
           </span>
+          <ChevronDownIcon className="size-3 shrink-0 opacity-50" />
         </TooltipTrigger>
-        <TooltipPopup>
-          {effectiveEnvMode === "worktree"
-            ? resolveEnvModeLabel("worktree")
-            : resolveCurrentWorkspaceLabel(activeWorktreePath)}
-        </TooltipPopup>
+        <TooltipPopup>{workspaceLabel}</TooltipPopup>
       </Tooltip>
-      <SelectPopup alignItemWithTrigger={false} {...composerFloatingLayerProps}>
-        <SelectGroup>
-          <SelectGroupLabel>Workspace</SelectGroupLabel>
-          <SelectItem value="local">
-            <span className="inline-flex items-center gap-1.5">
-              {activeWorktreePath ? (
-                <FolderGitIcon className="size-3" />
-              ) : (
-                <FolderIcon className="size-3" />
-              )}
-              {resolveCurrentWorkspaceLabel(activeWorktreePath)}
-            </span>
-          </SelectItem>
-          <SelectItem value="worktree">
-            <span className="inline-flex items-center gap-1.5">
-              <FolderGit2Icon className="size-3" />
-              {resolveEnvModeLabel("worktree")}
-            </span>
-          </SelectItem>
-          {showPreviousWorktree && previousWorktreeLabel ? (
-            <SelectItem value={PREVIOUS_WORKTREE_SELECT_VALUE}>
+      <MenuPopup align="start" side="top" {...composerFloatingLayerProps}>
+        <MenuGroup>
+          <MenuGroupLabel>Workspace</MenuGroupLabel>
+          <MenuRadioGroup
+            value={effectiveEnvMode}
+            onValueChange={(value) => {
+              if (locked) return;
+              if (value === PREVIOUS_WORKTREE_SELECT_VALUE) onUsePreviousWorktree?.();
+              else onEnvModeChange(value as EnvMode);
+            }}
+          >
+            <MenuRadioItem disabled={locked} value="local">
               <span className="inline-flex items-center gap-1.5">
-                <HistoryIcon className="size-3" />
-                {previousWorktreeLabel}
+                {activeWorktreePath ? (
+                  <FolderGitIcon className="size-3" />
+                ) : (
+                  <FolderIcon className="size-3" />
+                )}
+                {resolveCurrentWorkspaceLabel(activeWorktreePath)}
               </span>
-            </SelectItem>
-          ) : null}
-        </SelectGroup>
-      </SelectPopup>
-    </Select>
+            </MenuRadioItem>
+            <MenuRadioItem disabled={locked} value="worktree">
+              <span className="inline-flex items-center gap-1.5">
+                <FolderGit2Icon className="size-3" />
+                {resolveEnvModeLabel("worktree")}
+              </span>
+            </MenuRadioItem>
+            {showPreviousWorktree && previousWorktreeLabel ? (
+              <MenuRadioItem disabled={locked} value={PREVIOUS_WORKTREE_SELECT_VALUE}>
+                <span className="inline-flex items-center gap-1.5">
+                  <HistoryIcon className="size-3" />
+                  {previousWorktreeLabel}
+                </span>
+              </MenuRadioItem>
+            ) : null}
+          </MenuRadioGroup>
+        </MenuGroup>
+        <MenuSeparator />
+        <MenuItem disabled={!onSetPrefix} onClick={onSetPrefix}>
+          Set prefix
+        </MenuItem>
+      </MenuPopup>
+    </Menu>
   );
 });

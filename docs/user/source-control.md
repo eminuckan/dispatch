@@ -3,6 +3,17 @@
 Dispatch integrates with GitHub, GitLab, Forgejo, Gitea, Bitbucket, and Azure DevOps to clone and publish
 repositories, create pull requests, and review changes.
 
+## Branch names
+
+Set **Branch prefix** in **Settings → Source Control**, or choose **Set prefix** in the workspace or
+branch menu. The default is `dispatch/`; use your own namespace, such as `luna/` or `team/luna/`, or
+leave it empty. It applies to generated names and prefills new branch forms. Names you enter remain
+editable, and existing branches are unchanged.
+
+Choose an environment default or a project override. Reset a project override to inherit its
+environment's prefix. Connected devices share these settings; update older servers before changing
+their prefix. New worktrees may briefly show a temporary name while their descriptive name is generated.
+
 ## Connect an account
 
 Install Git and configure authentication on the machine running your Dispatch server. For a remote

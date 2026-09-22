@@ -1,4 +1,5 @@
 import type { RepositoryIdentity, SourceControlProviderError } from "@dispatch/contracts";
+import { isCanonicalDispatchRepository } from "@dispatch/shared/projectFavicon";
 import {
   detectSourceControlProviderFromGitRemoteUrl,
   normalizeGitRemoteUrl,
@@ -54,6 +55,11 @@ function parseRemoteFetchUrls(stdout: string): Map<string, string> {
 function pickPrimaryRemote(
   remotes: ReadonlyMap<string, string>,
 ): { readonly remoteName: string; readonly remoteUrl: string } | null {
+  // Dispatch keeps its historical upstream for attribution, but is an independent project.
+  const origin = remotes.get("origin");
+  if (origin && isCanonicalDispatchRepository({ canonicalKey: normalizeGitRemoteUrl(origin) })) {
+    return { remoteName: "origin", remoteUrl: origin };
+  }
   for (const preferredRemoteName of ["upstream", "origin"] as const) {
     const remoteUrl = remotes.get(preferredRemoteName);
     if (remoteUrl) {
@@ -86,7 +92,13 @@ function buildRepositoryIdentity(input: {
       remoteUrl: input.remoteUrl,
     },
     rootPath: input.rootPath,
-    ...(repositoryPath ? { displayName: repositoryPath } : {}),
+    ...(repositoryPath
+      ? {
+          displayName: isCanonicalDispatchRepository({ canonicalKey })
+            ? "Dispatch"
+            : repositoryPath,
+        }
+      : {}),
     ...(sourceControlProvider ? { provider: sourceControlProvider.kind } : {}),
     ...(owner ? { owner } : {}),
     ...(repositoryName ? { name: repositoryName } : {}),

@@ -3,13 +3,42 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   applyGitStatusStreamEvent,
+  buildGeneratedBranchName,
   buildTemporaryWorktreeBranchName,
   isTemporaryWorktreeBranch,
   normalizeGitRemoteUrl,
   parseGitHubRepositoryNameWithOwnerFromRemoteUrl,
   parseOriginUrlFromGitConfig,
+  resolveAutoBranchName,
   WORKTREE_BRANCH_PREFIX,
 } from "./git.ts";
+
+describe("generated branch names", () => {
+  it.each([
+    ["Fix reconnect", "dispatch/", "dispatch/fix-reconnect"],
+    ["feature/Fix reconnect", "", "fix-reconnect"],
+    ["refs/heads/t3code/Fix reconnect", "Team/Work/", "Team/Work/fix-reconnect"],
+    ["feature/team/work/Fix reconnect", "Team/Work/", "Team/Work/fix-reconnect"],
+    ["dispatch/feature/Fix reconnect", "dispatch/", "dispatch/fix-reconnect"],
+    ["Feature/Subtask", "Feature/", "Feature/subtask"],
+    ["!!!", "", "update"],
+  ])("applies the prefix once to %j", (raw, prefix, expected) => {
+    expect(buildGeneratedBranchName(raw, prefix)).toBe(expected);
+  });
+
+  it("resolves collisions while preserving the configured namespace", () => {
+    expect(
+      resolveAutoBranchName(["TEAM/WORK/fix", "Team/Work/fix-2"], "feature/Fix", "Team/Work/"),
+    ).toBe("Team/Work/fix-3");
+    expect(resolveAutoBranchName(["update"], undefined, "")).toBe("update-2");
+    expect(resolveAutoBranchName([], "fix")).toBe("dispatch/fix");
+  });
+
+  it("does not treat custom namespaces or bare hashes as temporary branches", () => {
+    expect(isTemporaryWorktreeBranch("Team/Work/1234abcd")).toBe(false);
+    expect(isTemporaryWorktreeBranch("1234abcd")).toBe(false);
+  });
+});
 
 describe("normalizeGitRemoteUrl", () => {
   it("canonicalizes equivalent GitHub remotes across protocol variants", () => {

@@ -3,7 +3,7 @@ import {
   type ProviderSetupError,
   TextGenerationError,
 } from "@dispatch/contracts";
-import { sanitizeBranchFragment, sanitizeFeatureBranchName } from "@dispatch/shared/git";
+import { sanitizeBranchFragment } from "@dispatch/shared/git";
 import { extractJsonObject } from "@dispatch/shared/schemaJson";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -354,7 +354,7 @@ export const makeAntigravityTextGeneration = Effect.fn("makeAntigravityTextGener
         subject: sanitizeCommitSubject(generated.subject),
         body: generated.body.trim(),
         ...("branch" in generated && typeof generated.branch === "string"
-          ? { branch: sanitizeFeatureBranchName(generated.branch) }
+          ? { branch: sanitizeBranchFragment(generated.branch) }
           : {}),
       };
     });

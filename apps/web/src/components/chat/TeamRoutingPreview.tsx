@@ -1,15 +1,12 @@
 import { useAtomValue } from "@effect/atom-react";
 import { scopeThreadRef } from "@dispatch/client-runtime/environment";
 import { serverEnvironment } from "../../state/server";
-import { Button } from "../ui/button";
 import { Switch } from "../ui/switch";
 import { useNavigate } from "@tanstack/react-router";
 import { squashAtomCommandFailure } from "@dispatch/client-runtime/state/runtime";
 import { useRightPanelStore } from "../../rightPanelStore";
 import { randomUUID } from "../../lib/utils";
-import { FEATURE_DISCOVERIES, useFeatureDiscoveryDismissal } from "../../featureDiscovery";
 import { createContext, useContext, useRef, useState, type ReactNode } from "react";
-import { XIcon } from "lucide-react";
 import type {
   ChatAttachment,
   EnvironmentId,
@@ -291,20 +288,7 @@ export function TeamRoutingPickerDetails() {
 
 export function TeamRoutingActions() {
   const routing = useComposerRouting();
-  const navigate = useNavigate();
   if (!routing || !routing.allowRouting || !routing.projectId) return null;
-  if (routing.available && routing.settings.data && !routing.ready) {
-    return (
-      <Button
-        size="xs"
-        variant="ghost-muted"
-        className="h-6 px-1.5 text-xs font-normal text-muted-foreground"
-        onClick={() => void navigate({ to: "/settings/orchestration" })}
-      >
-        Set up Flow
-      </Button>
-    );
-  }
   if (!routing.ready) return null;
   return (
     <label className="flex shrink-0 cursor-pointer items-center gap-1.5 text-xs text-muted-foreground">
@@ -334,82 +318,6 @@ export function TeamRoutingStatus() {
       {notice}
     </p>
   ) : null;
-}
-
-export function FlowDiscoveryCard({ show }: { readonly show: boolean }) {
-  const routing = useComposerRouting();
-  const navigate = useNavigate();
-  const discovery = useFeatureDiscoveryDismissal(FEATURE_DISCOVERIES.flow.id);
-  if (
-    !show ||
-    discovery.dismissed ||
-    !routing?.allowRouting ||
-    !routing.projectId ||
-    !routing.available ||
-    !routing.settings.data
-  )
-    return null;
-
-  const enabled = routing.settings.data.policy.enabled;
-  const autoUnavailable =
-    enabled &&
-    routing.settings.data.policy.flowMode === "auto" &&
-    !routing.settings.data.smartRouting.available;
-  const actionLabel = !enabled
-    ? "Set up Flow"
-    : routing.autoFallbackNeedsLead
-      ? "Add Lead"
-      : autoUnavailable
-        ? "Set up Auto"
-        : "Try Flow";
-  const action = () => {
-    if (!enabled || autoUnavailable || !routing.ready) {
-      void navigate({ to: "/settings/orchestration" });
-      return;
-    }
-    void routing.setOrchestration(true);
-  };
-
-  return (
-    <aside className="mx-2 mb-2 rounded-lg border border-border/60 bg-muted/20 px-3 py-2.5 text-xs">
-      <div className="flex items-start gap-3">
-        <div className="min-w-0 flex-1">
-          <p className="font-medium text-foreground">Meet Dispatch Flow</p>
-          <p className="mt-1 text-muted-foreground">
-            Plan the work, make changes, and verify the result with your selected agents. Standard
-            uses your selected Lead and Workers; Auto chooses one Worker or a coordinated team when
-            your Connect account is ready.
-          </p>
-          <div className="mt-2 flex flex-wrap items-center gap-2">
-            <Button size="xs" variant="outline" onClick={action}>
-              {actionLabel}
-            </Button>
-            <span className="text-muted-foreground">
-              {enabled
-                ? routing.settings.data.policy.flowMode === "auto"
-                  ? routing.settings.data.smartRouting.available
-                    ? routing.autoManagedNeedsLead
-                      ? "Auto direct ready · managed team needs Lead"
-                      : "Auto is ready"
-                    : routing.autoFallbackNeedsLead
-                      ? "Auto unavailable · fallback needs Lead"
-                      : "Auto will fall back to Standard"
-                  : "Standard is selected"
-                : "Flow is optional"}
-            </span>
-          </div>
-        </div>
-        <Button
-          size="icon-xs"
-          variant="ghost"
-          aria-label="Dismiss Dispatch Flow introduction"
-          onClick={discovery.dismiss}
-        >
-          <XIcon className="size-3.5" />
-        </Button>
-      </div>
-    </aside>
-  );
 }
 
 export function TeamManualModelControls({ children }: { children: ReactNode }) {

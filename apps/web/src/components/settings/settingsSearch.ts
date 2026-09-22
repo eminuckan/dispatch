@@ -674,6 +674,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["agent opens browser device simulator pop into view hide"],
   },
   {
+    id: "branch-prefix",
+    title: "Branch prefix",
+    to: "/settings/source-control",
+    scope: "project-defaults",
+    searchTerms: ["git new branch worktree name naming dispatch prefix generated inherit"],
+  },
+  {
     id: "automatic-pull",
     title: "Automatically pull",
     to: "/settings/source-control",

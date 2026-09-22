@@ -7,6 +7,8 @@ import {
   ClientSettingsPatch,
   ClaudeSettings,
   DEFAULT_SERVER_SETTINGS,
+  getBranchPrefixValidationError,
+  normalizeBranchPrefix,
   resolveProviderInstanceEnabled,
   ServerSettings,
   ServerSettingsPatch,
@@ -19,6 +21,64 @@ const decodeServerSettings = Schema.decodeUnknownSync(ServerSettings);
 const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
 const decodeClaudeSettings = Schema.decodeUnknownSync(ClaudeSettings);
+
+describe("branch prefix settings", () => {
+  it("defaults old settings and preserves an explicit empty project override", () => {
+    expect(decodeServerSettings({}).branchPrefix).toBe("dispatch/");
+    const input = {
+      branchPrefix: "Team/Work/",
+      projectSettingsOverrides: { project: { branchPrefix: "" } },
+    };
+    expect(decodeServerSettingsPatch(input)).toEqual(input);
+    expect(encodeServerSettings(decodeServerSettings(input))).toMatchObject(input);
+    expect(decodeServerSettingsPatch({ projectSettingsOverrides: { project: {} } })).toEqual({
+      projectSettingsOverrides: { project: {} },
+    });
+  });
+
+  it.each([
+    ["", ""],
+    ["  ", ""],
+    ["Team", "Team/"],
+    [" Team/Work/// ", "Team/Work/"],
+  ])("normalizes %j to %j at both settings boundaries", (input, expected) => {
+    expect(normalizeBranchPrefix(input)).toBe(expected);
+    expect(getBranchPrefixValidationError(input)).toBeNull();
+    expect(decodeServerSettings({ branchPrefix: input }).branchPrefix).toBe(expected);
+    expect(
+      decodeServerSettingsPatch({ projectSettingsOverrides: { project: { branchPrefix: input } } }),
+    ).toEqual({ projectSettingsOverrides: { project: { branchPrefix: expected } } });
+  });
+
+  it.each([
+    "/",
+    "/Team",
+    "Team//Work",
+    ".hidden",
+    "Team/.hidden",
+    "Team.lock",
+    "Team/Work.lock",
+    "a..b",
+    "-option",
+    "a b",
+    "a\\b",
+    "a~b",
+    "a^b",
+    "a:b",
+    "a?b",
+    "a*b",
+    "a[b",
+    "a@{b",
+    "a\u0001b",
+    "a\u007fb",
+  ])("rejects invalid Git prefix %j", (branchPrefix) => {
+    expect(getBranchPrefixValidationError(branchPrefix)).not.toBeNull();
+    expect(() => decodeServerSettings({ branchPrefix })).toThrow();
+    expect(() =>
+      decodeServerSettingsPatch({ projectSettingsOverrides: { project: { branchPrefix } } }),
+    ).toThrow();
+  });
+});
 
 describe("storage cleanup settings", () => {
   it("keeps cleanup disabled for existing installations", () => {

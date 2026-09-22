@@ -29,7 +29,10 @@ interface ScopedSettingsEnvironment {
   readonly serverConfig: {
     readonly settings: ServerSettings;
     readonly environment?: {
-      readonly capabilities: { readonly projectSettingsOverrides?: boolean | undefined };
+      readonly capabilities: {
+        readonly projectSettingsOverrides?: boolean | undefined;
+        readonly branchPrefixSettings?: boolean | undefined;
+      };
     };
   } | null;
 }
@@ -37,6 +40,28 @@ interface ScopedSettingsEnvironment {
 const SERVER_KEYS = new Set<string>(Object.keys(ServerSettings.fields));
 const CLIENT_KEYS = new Set<string>(Object.keys(ClientSettingsSchema.fields));
 const PROJECT_SCOPED_KEYS = new Set<string>(PROJECT_SCOPED_SERVER_SETTING_KEYS);
+
+function branchPrefixUnsupported(
+  keys: readonly string[],
+  environments: readonly ScopedSettingsEnvironment[],
+) {
+  return (
+    keys.includes("branchPrefix") &&
+    environments.some(
+      (environment) =>
+        environment.serverConfig?.environment?.capabilities.branchPrefixSettings !== true,
+    )
+  );
+}
+
+function unsupportedBranchPrefixPlan() {
+  return {
+    clientPatch: {} as ClientSettingsPatch,
+    hasClientWrite: false,
+    serverWrites: [] as ScopedServerWrite[],
+    unavailableReason: "Update the selected environments to configure a branch prefix.",
+  };
+}
 
 export function isProjectScopedSettingKey(key: string): key is ProjectScopedServerSettingKey {
   return PROJECT_SCOPED_KEYS.has(key);
@@ -207,6 +232,8 @@ export function planScopedSettingsPatch(
   ) as ServerSettingsPatch;
   const serverKeys = Object.keys(serverPatch);
   const { connectedEnvironments } = selectScopedSettingsEnvironments(scope, environments, null);
+  if (branchPrefixUnsupported(serverKeys, connectedEnvironments))
+    return unsupportedBranchPrefixPlan();
   const isProjectScope = scope.kind === "project" || scope.kind === "checkout";
   const unscopableKeys = isProjectScope
     ? serverKeys.filter((key) => !isProjectScopedSettingKey(key))
@@ -286,6 +313,8 @@ export function planScopedSettingsClear(
   environments: readonly ScopedSettingsEnvironment[],
   keys: readonly ProjectScopedServerSettingKey[],
 ) {
+  const { connectedEnvironments } = selectScopedSettingsEnvironments(scope, environments, null);
+  if (branchPrefixUnsupported(keys, connectedEnvironments)) return unsupportedBranchPrefixPlan();
   const serverWrites =
     scope.kind === "project" || scope.kind === "checkout"
       ? projectOverrideWrites(scope, environments, (_current, settings, projectId) =>
@@ -336,6 +365,12 @@ export function planProjectOverridesClear(
   entries: readonly ProjectOverrideEntry[],
   keys: readonly ProjectScopedServerSettingKey[],
 ) {
+  const selected = environments.filter(
+    (environment) =>
+      environment.connection.phase === "connected" &&
+      entries.some((entry) => entry.environmentId === environment.environmentId),
+  );
+  if (branchPrefixUnsupported(keys, selected)) return unsupportedBranchPrefixPlan();
   const byId = new Map(environments.map((environment) => [environment.environmentId, environment]));
   const writes = new Map<EnvironmentId, ScopedServerWrite>();
   for (const { environmentId, projectId } of entries) {

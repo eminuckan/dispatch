@@ -3047,7 +3047,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       });
 
       expect(result.branch.status).toBe("created");
-      expect(result.branch.name).toBe("feature/implement-stacked-git-actions");
+      expect(result.branch.name).toBe("dispatch/implement-stacked-git-actions");
       expect(result.commit.status).toBe("created");
       expect(result.push.status).toBe("pushed");
       expect(result.toast).toMatchObject({
@@ -3061,13 +3061,13 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         },
       });
       expect(result.toast.title).toMatch(
-        /^Pushed [0-9a-f]{7} to origin\/feature\/implement-stacked-git-actions$/,
+        /^Pushed [0-9a-f]{7} to origin\/dispatch\/implement-stacked-git-actions$/,
       );
       expect(
         yield* runGit(repoDir, ["rev-parse", "--abbrev-ref", "HEAD"]).pipe(
           Effect.map((result) => result.stdout.trim()),
         ),
-      ).toBe("feature/implement-stacked-git-actions");
+      ).toBe("dispatch/implement-stacked-git-actions");
 
       const mainSha = yield* runGit(repoDir, ["rev-parse", "main"]).pipe(
         Effect.map((r) => r.stdout.trim()),
@@ -3078,6 +3078,28 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       expect(mergeBase).toBe(mainSha);
       expect(generatedCount).toBe(1);
     }),
+  );
+
+  it.effect.each(["Team/Work/", ""])(
+    "uses prefix %j and resolves generated branch collisions",
+    (branchPrefix) =>
+      Effect.gen(function* () {
+        const repoDir = yield* makeTempDir("dispatch-branch-prefix-");
+        yield* initRepo(repoDir);
+        yield* runGit(repoDir, ["branch", `${branchPrefix}fix-reconnect`]);
+        NodeFS.writeFileSync(NodePath.join(repoDir, "README.md"), "hello\nreconnect fix\n");
+        const { manager } = yield* makeManager({ serverSettings: { branchPrefix } });
+        const result = yield* runStackedAction(manager, {
+          cwd: repoDir,
+          action: "commit",
+          featureBranch: true,
+          commitMessage: "Fix reconnect",
+        });
+        expect(result.branch.name).toBe(`${branchPrefix}fix-reconnect-2`);
+        expect((yield* runGit(repoDir, ["branch", "--show-current"])).stdout.trim()).toBe(
+          `${branchPrefix}fix-reconnect-2`,
+        );
+      }),
   );
 
   it.effect("featureBranch uses custom commit message and derives branch name", () =>
@@ -3108,7 +3130,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       });
 
       expect(result.branch.status).toBe("created");
-      expect(result.branch.name).toBe("feature/feat-custom-summary-line");
+      expect(result.branch.name).toBe("dispatch/feat-custom-summary-line");
       expect(result.commit.status).toBe("created");
       expect(result.commit.subject).toBe("feat: custom summary line");
       expect(generatedCount).toBe(0);
