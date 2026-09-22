@@ -4075,6 +4075,7 @@ export function makeOpenCodeAdapter(
       provider: PROVIDER,
       capabilities: {
         sessionModelSwitch: "in-session",
+        managedTeamNativeDelegation: "blocked",
       },
       startSession,
       sendTurn,

@@ -63,7 +63,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
 }) {
   const contextRouting = useComposerRouting();
   const routing = props.isComposerOwned ? contextRouting : null;
-  const routedLabel = routing?.automatic ? `Auto · ${routing.summary}` : undefined;
+  const routedLabel = routing?.automatic ? `${routing.modeLabel} · ${routing.summary}` : undefined;
   const composerFloatingLayerProps = useComposerMenuProps();
   const [uncontrolledIsMenuOpen, setUncontrolledIsMenuOpen] = useState(false);
   const isMenuOpen = props.open ?? uncontrolledIsMenuOpen;

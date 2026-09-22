@@ -67,79 +67,48 @@ returns to the remembered selection.
 
 Leaving reasoning level or service tier unset uses the provider's own configuration.
 
-## Jev routing and managed teams (experimental)
+## Dispatch Flow and managed teams (experimental)
 
-Fresh web and desktop installs offer an optional **Orchestration** step after agent
-setup. Add your own Jev API key there to let Dispatch prepare a starting model
-configuration automatically, or choose **Not now** and continue without it. Skipping
-setup leaves the composer control hidden. You can configure it later in
-Settings → Orchestration.
+Dispatch Flow is optional. You can choose it during onboarding or configure it later in
+**Settings → Flow**. Select which provider models Dispatch may use as **Lead**, **Worker**,
+or both, then choose a Flow mode. Your saved model choices remain the authority for managed
+runs, including provider-supported options such as reasoning effort or model variants.
 
-When Jev is configured, Dispatch collects models from every ready provider and asks
-Jev to recommend each new model's task group, lead/worker roles, and advertised
-reasoning option. These are starting recommendations: use **Customize** to change any
-choice, and **Refresh recommendations** to incorporate newly available models while
-preserving saved customizations. A single capable model may be both lead and worker;
-there is no two-model minimum. Models without a usable recommendation remain inactive.
-Terra is excluded from generated defaults by product preference and remains available
-for manual configuration.
+**Standard** needs no Dispatch Connect account and does not use Dispatch's hosted routing
+service. It runs with the Lead and Worker models you selected on that environment.
 
-Reported exhausted quota is excluded at recommendation and admission time, including
-family-specific Claude windows. Unknown quota is labeled, not treated as verified
-spare quota. Save to apply. Recommendations are advisory rather than benchmark results
-or hard subscription quota guarantees. Enabling routing sends draft text to TypeSafe
-after a typing pause. The key is saved in the environment's private secret store.
+**Auto** requires a signed-in Dispatch Connect account and a linked environment. It uses
+Dispatch-hosted Smart Routing to choose direct execution or a managed team from your selected
+models. For routing, Dispatch sends the task objective and minimal selected-model metadata to
+the hosted service, which may use JEV. Dispatch covers that routing service; your coding-model
+usage still runs through your own provider accounts. If Smart Routing becomes unavailable,
+Flow keeps Auto selected, shows the fallback, and runs that task with Standard instead.
 
-The composer’s Orchestration switch appears after a Jev key and an approved capable
-lead are configured. It controls draft assessment and team launch.
-Selecting a model manually turns it off for that draft. Existing lead and worker
-models remain fixed throughout their conversations.
-Confidence describes classification certainty, not the chance that the code is correct.
+Flow is offered for new drafts rather than converting an already-started conversation. The
+composer shows **Flow · Standard** or **Flow · Auto** according to the environment setting.
+Turning Flow on applies it to that draft. Selecting a model manually turns Flow off for the
+draft and sends through the selected model normally.
 
-Enable **Orchestration** in a new composer, then use the normal send button or
-Enter to start a managed coding run. With the switch off, draft classification,
-automatic model selection, and team creation are disabled for that draft; normal
-send uses your selected model. Teams currently support
-ready configured provider adapters, use isolated worktrees from committed HEAD, and preserve the
-original checkout. Uncommitted changes are not included. Images and files attached
-to the composer are uploaded before team creation and are available on the team's
-initial managed turn. Terminal context, preview annotations, and review comments are
-not supported by team routing yet; remove them before starting a team. The lead
-plans work, workers receive persistent task contracts, and the lead reviews their
-results before integrating and verifying the combined change. Native subagent
-tools are disabled in managed Codex, Claude, and OpenCode sessions. Other adapters
-receive the same no-delegation instruction, but do not yet enforce a native-tool
-block; the active-agent limit counts scheduler-managed agents.
+Managed runs use isolated worktrees based on committed repository state, leaving your
+original checkout untouched. Auto may keep bounded work on one selected executor or use a
+managed Lead and Workers when routing calls for it. Dispatch keeps durable messages and
+attempt history across retries or reloads. Worker results are reviewed before integration,
+and every run is verified against persisted acceptance criteria before it can complete.
+Completion does not push or merge the managed worktree into your original checkout.
 
-Only the lead appears in the sidebar; worker conversations remain accessible from
-the team. Open **Agents** in the right panel to see the team hierarchy, assignments, model
-and effort, attempts, and review details. The chat shows compact activity and the
-current agent’s result. Click an agent name to open its conversation. Agent names
-come from a fixed science-inspired catalog and stay the same across retries and
-reloads; replacement workers receive separate names. Active teams refresh
-automatically. Internal coordination messages stay out of chat; messages you send
-yourself remain in Conversation.
+Open **Agents** in the right panel to inspect the direct executor or managed Lead, Workers,
+task state, attempts, messages, settlements, and blockers. **Pause** prevents new managed work
+from starting while current work settles; **Cancel** requests interruption.
 
-The active-agent limit includes the lead. Teams finish when all planned acceptance
-criteria pass independent checks in the combined lead worktree; there is no total
-turn limit. Repeated corrections or unchanged failed results pause work instead
-of starting an automatic retry loop. Failed combined checks receive one focused
-correction before pausing with saved evidence. Orchestration settings use agent
-and attempt limits, without dollar estimates. They do not measure or enforce your
-remaining subscription quota. Saving removes legacy estimated-dollar limits for
-new teams; existing runs keep their frozen policy.
-The **Agents** panel’s **Pause** control lets current work settle while preventing new turns;
-**Cancel** requests interruption. An uncertain dispatch keeps its reservation
-until reconciled. Use the Agents panel to see the current state, open its lead
-or workers, and inspect a blocker before resuming. Completion does not push
-or merge the lead worktree into the original checkout.
+If a provider reaches a limit or becomes unavailable, Flow follows the saved provider-limit
+behavior: **Ask** before switching, **Continue with another selected provider** when Dispatch
+can make the allowed replacement safely, or **Pause** the run. Managed mode also blocks
+provider-native delegation where the adapter can enforce that restriction deterministically;
+providers without that guarantee are not treated as safe managed execution targets.
 
-A review formatting failure is repaired by the lead without consuming another
-worker attempt. For a genuine worker failure, recovery can retain the worker,
-increase effort using another allowed profile of the same model, or create a new
-worker for a model change. Environment and context problems can pause the run.
-Checks and model review reduce risk but do not guarantee correctness or savings;
-subscription quota consumption is distinct from API prices.
+Checks, reviews, and model selection reduce risk but do not guarantee correctness or remaining
+subscription quota. Uncommitted changes are not part of a new managed run; commit the state you
+want Flow to work from first.
 
 ## Quote an assistant response
 

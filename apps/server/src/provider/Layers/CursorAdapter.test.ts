@@ -165,6 +165,7 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
   it.effect("rejects rollback without discarding the provider conversation", () =>
     Effect.gen(function* () {
       const adapter = yield* CursorAdapter;
+      assert.equal(adapter.capabilities.managedTeamNativeDelegation, "uncontrolled");
       const settings = yield* ServerSettingsService;
       const threadId = ThreadId.make("cursor-unsupported-rollback");
       const wrapperPath = yield* Effect.promise(() => makeMockAgentWrapper());

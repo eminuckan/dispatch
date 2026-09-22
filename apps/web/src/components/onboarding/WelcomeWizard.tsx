@@ -6,6 +6,7 @@ import type {
   ScopedProjectRef,
   ServerConfig,
   ServerProvider,
+  TeamFlowMode,
 } from "@dispatch/contracts";
 import { scopeProjectRef, scopeThreadRef } from "@dispatch/client-runtime/environment";
 import {
@@ -29,6 +30,10 @@ import { TYPOGRAPHY_ADVANCED_STORAGE_KEY } from "../../appearanceFonts";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { useCompleteOnboarding } from "../../onboarding/firstRun";
 import {
+  firstReadyStandardFlowModel,
+  prepareOnboardingFlowPolicy,
+} from "../../onboarding/flowSetup.logic";
+import {
   groupOnboardingProjects,
   partitionOnboardingProjects,
   onboardingProjectKey,
@@ -46,11 +51,16 @@ import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { newProjectId, randomUUID } from "../../lib/utils";
 import { agentSessionImport } from "../../state/agentSessions";
 import { readProjects, useProjects } from "../../state/entities";
-import { useEnvironments, usePrimaryEnvironment } from "../../state/environments";
+import {
+  useEnvironments,
+  usePrimaryEnvironment,
+  usePrimaryEnvironmentId,
+} from "../../state/environments";
 import { useProjectScans } from "../../onboarding/useProjectScans";
 import { projectEnvironment } from "../../state/projects";
-import { environmentServerConfigsAtom, serverEnvironment } from "../../state/server";
+import { serverEnvironment } from "../../state/server";
 import { teamEnvironment } from "../../state/team";
+import { useEnvironmentQuery } from "../../state/query";
 import { terminalEnvironment } from "../../state/terminal";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { connectPairing } from "../../connection/onboarding";
@@ -67,26 +77,43 @@ import { Tooltip, TooltipTrigger, TooltipPopup } from "../ui/tooltip";
 import { ScrollArea } from "../ui/scroll-area";
 import { Spinner } from "../ui/spinner";
 import { WizardPanel, WizardSteps, WizardPopup, WizardHeader } from "../ui/wizard";
-import { Dialog } from "../ui/dialog";
+import {
+  Dialog,
+  DialogClose,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogPanel,
+  DialogPopup,
+  DialogTitle,
+} from "../ui/dialog";
 import { toastManager } from "../ui/toast";
 import { cn } from "../../lib/utils";
 import { formatRelativeTime } from "../../timestampFormat";
+import {
+  DispatchConnectAccountAccess,
+  DispatchConnectAuthActions,
+} from "../../connect/DispatchConnectAccountAccess";
+import { readDispatchConnectAccountToken } from "../../connect/accountToken";
+import { resolveDispatchConnectUrl } from "../../connect/dispatchConnect";
+import { ensurePrimaryDispatchConnectEnvironmentLinked } from "../../connect/environmentRegistration";
+import { dispatchFlowSessionPayload } from "../../connect/flowSession";
+import { smartRoutingReasonMessage } from "../../flowPresentation";
 
 /**
  * First-run welcome wizard. Rendered over the workspace at `/welcome` on a
  * fresh install (no completed-onboarding flag, empty workspace). Flow per the
  * onboarding overhaul spec: connection choice → sign-in/pair (remote paths) →
- * agent setup with inline install terminal → optional orchestration setup →
- * project import → main screen.
+ * agent setup with inline install terminal → project import → main screen.
  * Every step past the connection gate is skippable; the whole wizard is
  * re-runnable by clearing the flag.
  */
 
-type WizardStep = "connection" | "agents" | "orchestration" | "import";
+type WizardStep = "connection" | "agents" | "flow" | "import";
 const NO_ENVIRONMENTS: readonly EnvironmentId[] = [];
 
 const AGENT_ONBOARDING_THREAD_ID = ThreadId.make("onboarding-agent-setup");
-const ONBOARDING_STAGES = ["Connect", "Agents", "Orchestration", "Projects"] as const;
+const ONBOARDING_STAGES = ["Connect", "Agents", "Flow", "Projects"] as const;
 const SCAN_LIMIT_MESSAGE = "Scan limit reached. Some projects or conversations may be missing.";
 
 export function WelcomeWizard({
@@ -135,8 +162,7 @@ export function WelcomeWizard({
     setSetupIds(ids);
     setStep("agents");
   };
-  const stageIndex =
-    step === "agents" ? 1 : step === "orchestration" ? 2 : step === "import" ? 3 : 0;
+  const stageIndex = step === "agents" ? 1 : step === "flow" ? 2 : step === "import" ? 3 : 0;
   const finish = useCallback(
     (projectRef?: ScopedProjectRef) => {
       if (finishingPromiseRef.current !== null) return finishingPromiseRef.current;
@@ -208,7 +234,7 @@ export function WelcomeWizard({
                   : index === 1
                     ? "agents"
                     : index === 2
-                      ? "orchestration"
+                      ? "flow"
                       : "import",
               );
             }}
@@ -233,9 +259,9 @@ export function WelcomeWizard({
               }}
             />
           ) : step === "agents" ? (
-            <AgentsStep environmentIds={setupIds} onContinue={() => setStep("orchestration")} />
-          ) : step === "orchestration" ? (
-            <OrchestrationStep environmentIds={setupIds} onContinue={() => setStep("import")} />
+            <AgentsStep environmentIds={setupIds} onContinue={() => setStep("flow")} />
+          ) : step === "flow" ? (
+            <FlowStep environmentIds={setupIds} onContinue={() => setStep("import")} />
           ) : (
             <ImportStep
               scans={scans}
@@ -560,6 +586,320 @@ function AgentsStep({
   );
 }
 
+function FlowStep({
+  environmentIds,
+  onContinue,
+}: {
+  readonly environmentIds: readonly EnvironmentId[];
+  readonly onContinue: () => void;
+}) {
+  const { environments } = useEnvironments();
+  return (
+    <StepShell
+      title="Dispatch Flow"
+      description="Flow plans tasks, manages changes, and verifies results with your selected agents. Standard uses your chosen Lead and Workers; Auto chooses one Worker or a coordinated team."
+    >
+      <ScrollArea
+        scrollFade
+        className="mt-5 h-auto max-h-96 [&_[data-slot=scroll-area-scrollbar]]:opacity-100"
+      >
+        <div className="space-y-4 pr-3">
+          {environmentIds.map((environmentId) => (
+            <FlowEnvironmentSetup
+              key={environmentId}
+              environmentId={environmentId}
+              machineLabel={
+                environments.find((environment) => environment.environmentId === environmentId)
+                  ?.label ?? "Computer"
+              }
+            />
+          ))}
+        </div>
+      </ScrollArea>
+      <div className="mt-6 flex flex-wrap items-center justify-between gap-2">
+        <p className="text-xs text-muted-foreground">
+          You can skip Flow and set it up later in Settings → Flow.
+        </p>
+        <Button autoFocus onClick={onContinue}>
+          Continue
+          <ArrowRightIcon className="size-3.5" />
+        </Button>
+      </div>
+    </StepShell>
+  );
+}
+
+function FlowEnvironmentSetup({
+  environmentId,
+  machineLabel,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly machineLabel: string;
+}) {
+  const config = useAtomValue(serverEnvironment.configValueAtom(environmentId));
+  const providers = useAtomValue(serverEnvironment.providersValueAtom(environmentId));
+  const capable = config?.teamRouting === true;
+  const settings = useEnvironmentQuery(
+    capable ? teamEnvironment.settings({ environmentId, input: {} }) : null,
+  );
+  const recommendModels = useAtomCommand(teamEnvironment.recommendModels, { reportFailure: false });
+  const saveSettings = useAtomCommand(teamEnvironment.saveSettings, { reportFailure: false });
+  const setSmartRoutingSession = useAtomCommand(teamEnvironment.setSmartRoutingSession, {
+    reportFailure: false,
+  });
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const connectBaseUrl = resolveDispatchConnectUrl();
+  const [pending, setPending] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  const [autoConfirmationOpen, setAutoConfirmationOpen] = useState(false);
+
+  async function syncAutoSession(accountToken: string): Promise<boolean> {
+    if (!connectBaseUrl) return false;
+    setPending(true);
+    setMessage(null);
+    try {
+      if (environmentId === primaryEnvironmentId) {
+        await ensurePrimaryDispatchConnectEnvironmentLinked(connectBaseUrl);
+      }
+      const result = await setSmartRoutingSession({
+        environmentId,
+        input: dispatchFlowSessionPayload(connectBaseUrl, accountToken),
+      });
+      if (result._tag === "Failure") {
+        const error = squashAtomCommandFailure(result);
+        setMessage(
+          error instanceof Error ? error.message : "Could not prepare Flow Auto on this computer.",
+        );
+        return false;
+      }
+      if (!result.value.smartRouting.available) {
+        setMessage(smartRoutingReasonMessage(result.value.smartRouting.reason));
+        settings.refresh();
+        return false;
+      }
+      setMessage("Flow Auto is available. Choose Auto to enable it.");
+      settings.refresh();
+      return true;
+    } catch (cause) {
+      setMessage(
+        cause instanceof Error
+          ? cause.message
+          : "Could not link this computer to Dispatch Connect.",
+      );
+      return false;
+    } finally {
+      setPending(false);
+    }
+  }
+
+  async function enableFlow(flowMode: TeamFlowMode) {
+    if (pending || !settings.data) return;
+    setPending(true);
+    setMessage(null);
+    try {
+      let recommendations = settings.data.policy.profiles;
+      if (flowMode === "standard" && recommendations.length === 0) {
+        if (settings.data.supportedProviderInstanceIds === undefined) {
+          setMessage("Update this environment's server to choose supported Flow models.");
+          return;
+        }
+        const model = firstReadyStandardFlowModel(
+          providers ?? [],
+          settings.data.supportedProviderInstanceIds,
+        );
+        recommendations = model ? [{ id: randomUUID(), ...model, lead: false, worker: false }] : [];
+      } else if (
+        flowMode === "auto" &&
+        !recommendations.some((profile) => profile.lead || profile.worker)
+      ) {
+        const recommended = await recommendModels({ environmentId, input: {} });
+        if (recommended._tag === "Failure") {
+          const error = squashAtomCommandFailure(recommended);
+          setMessage(
+            error instanceof Error ? error.message : "Could not find models for Dispatch Flow.",
+          );
+          return;
+        }
+        recommendations = recommended.value.profiles;
+      }
+      const policy = prepareOnboardingFlowPolicy({
+        policy: settings.data.policy,
+        recommendations,
+        flowMode,
+      });
+      if (!policy) {
+        setMessage(
+          "Flow needs at least one ready supported model. Finish agent sign-in first, or set up Flow later in Settings.",
+        );
+        return;
+      }
+      const saved = await saveSettings({ environmentId, input: { policy } });
+      if (saved._tag === "Failure") {
+        const error = squashAtomCommandFailure(saved);
+        setMessage(error instanceof Error ? error.message : "Could not save Dispatch Flow setup.");
+        return;
+      }
+      const autoWithoutLead =
+        flowMode === "auto" && !policy.profiles.some((profile) => profile.lead);
+      setMessage(
+        autoWithoutLead
+          ? "Flow Auto is ready for direct work. Add a Lead later for managed-team and Standard fallback coverage."
+          : `Flow ${flowMode === "auto" ? "Auto" : "Standard"} is ready.`,
+      );
+      settings.refresh();
+    } finally {
+      setPending(false);
+    }
+  }
+
+  if (!capable) {
+    return (
+      <section className="rounded-lg border border-border bg-background px-3 py-3">
+        <p className="text-sm font-medium">{machineLabel}</p>
+        <p className="mt-1 text-xs text-muted-foreground">
+          This server does not support Dispatch Flow yet. You can continue setup without it.
+        </p>
+      </section>
+    );
+  }
+
+  if (!settings.data) {
+    return (
+      <section className="rounded-lg border border-border bg-background px-3 py-3">
+        <p className="text-sm font-medium">{machineLabel}</p>
+        <p className="mt-1 text-xs text-muted-foreground" role="status">
+          {settings.error ? settings.error : "Checking Flow availability…"}
+        </p>
+      </section>
+    );
+  }
+
+  const currentMode = settings.data.policy.enabled
+    ? settings.data.policy.flowMode === "auto"
+      ? "Auto"
+      : "Standard"
+    : "Off";
+
+  return (
+    <section className="rounded-lg border border-border bg-background px-3 py-3">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-sm font-medium">{machineLabel}</p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Current: {currentMode}. Standard needs no Dispatch account.
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <Button
+            size="sm"
+            variant={
+              settings.data.policy.enabled && settings.data.policy.flowMode === "standard"
+                ? "secondary"
+                : "outline"
+            }
+            disabled={pending}
+            onClick={() => void enableFlow("standard")}
+          >
+            {pending ? "Working…" : "Use Standard"}
+          </Button>
+          <Dialog open={autoConfirmationOpen} onOpenChange={setAutoConfirmationOpen}>
+            <Button
+              size="sm"
+              variant={
+                settings.data.policy.enabled && settings.data.policy.flowMode === "auto"
+                  ? "secondary"
+                  : "outline"
+              }
+              disabled={pending || !settings.data.smartRouting.available}
+              onClick={() => setAutoConfirmationOpen(true)}
+            >
+              Use Auto
+            </Button>
+            <DialogPopup className="sm:max-w-lg">
+              <DialogHeader>
+                <DialogTitle>Enable Flow Auto?</DialogTitle>
+                <DialogDescription>
+                  Auto uses Dispatch-hosted Smart Routing. Dispatch covers the routing service;
+                  coding-model usage stays on your provider accounts.
+                </DialogDescription>
+              </DialogHeader>
+              <DialogPanel className="space-y-2 text-sm text-muted-foreground">
+                <p>
+                  Auto sends the task objective and minimal selected-model metadata to Dispatch's
+                  hosted router, which may use JEV for routing decisions.
+                </p>
+                <p>
+                  If hosted routing is unavailable later, Flow keeps Auto selected. Standard can
+                  take over when a Lead is configured; otherwise that task will ask you to add one.
+                </p>
+              </DialogPanel>
+              <DialogFooter>
+                <DialogClose render={<Button variant="outline" disabled={pending} />}>
+                  Cancel
+                </DialogClose>
+                <Button
+                  disabled={pending}
+                  onClick={() => {
+                    setAutoConfirmationOpen(false);
+                    void enableFlow("auto");
+                  }}
+                >
+                  Enable Auto
+                </Button>
+              </DialogFooter>
+            </DialogPopup>
+          </Dialog>
+        </div>
+      </div>
+
+      {!settings.data.smartRouting.available ? (
+        <DispatchConnectAccountAccess>
+          {(account) => (
+            <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-md bg-muted/30 px-3 py-2">
+              <p className="min-w-0 flex-1 text-xs text-muted-foreground">
+                {smartRoutingReasonMessage(settings.data!.smartRouting.reason)}
+              </p>
+              {account.pending ? (
+                <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+                  <Spinner className="size-3.5" /> Checking…
+                </span>
+              ) : !account.configured ? null : !account.signedIn ? (
+                <DispatchConnectAuthActions
+                  disabled={pending}
+                  onAuthenticated={async () => {
+                    account.refresh();
+                    if (!connectBaseUrl) return;
+                    const token = readDispatchConnectAccountToken(connectBaseUrl);
+                    if (token) await syncAutoSession(token);
+                  }}
+                />
+              ) : account.accountToken ? (
+                <Button
+                  size="xs"
+                  variant="outline"
+                  disabled={pending}
+                  onClick={() => void syncAutoSession(account.accountToken!)}
+                >
+                  Prepare Auto
+                </Button>
+              ) : null}
+            </div>
+          )}
+        </DispatchConnectAccountAccess>
+      ) : (
+        <p className="mt-3 text-xs text-muted-foreground">
+          Auto is ready. Standard remains available without hosted routing.
+        </p>
+      )}
+      {message ? (
+        <p className="mt-2 text-xs text-muted-foreground" role="status">
+          {message}
+        </p>
+      ) : null}
+    </section>
+  );
+}
+
 function ConnectedAgentsStep({
   environmentId,
   machineLabel,
@@ -844,196 +1184,7 @@ function AgentInstallTerminal({
   );
 }
 
-// ── Step 3: orchestration ────────────────────────────────────
-
-function OrchestrationStep({
-  environmentIds,
-  onContinue,
-}: {
-  readonly environmentIds: readonly EnvironmentId[];
-  readonly onContinue: () => void;
-}) {
-  const serverConfigs = useAtomValue(environmentServerConfigsAtom);
-  const { environments } = useEnvironments();
-  const setSecret = useAtomCommand(teamEnvironment.setSecret, { reportFailure: false });
-  const suggestPool = useAtomCommand(teamEnvironment.suggestPool, { reportFailure: false });
-  const saveSettings = useAtomCommand(teamEnvironment.saveSettings, { reportFailure: false });
-  const [apiKey, setApiKey] = useState("");
-  const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const supportedEnvironmentIds = useMemo(
-    () =>
-      environmentIds.filter(
-        (environmentId) => serverConfigs.get(environmentId)?.teamRouting === true,
-      ),
-    [environmentIds, serverConfigs],
-  );
-  const unsupportedCount = environmentIds.length - supportedEnvironmentIds.length;
-
-  const environmentLabel = useCallback(
-    (environmentId: EnvironmentId) =>
-      environments.find((environment) => environment.environmentId === environmentId)?.label ??
-      "Computer",
-    [environments],
-  );
-
-  const fail = useCallback(
-    (environmentId: EnvironmentId, cause: unknown, fallback: string) => {
-      const detail =
-        cause instanceof Error && cause.message.trim().length > 0 ? cause.message : fallback;
-      setError(`${environmentLabel(environmentId)}: ${detail}`);
-    },
-    [environmentLabel],
-  );
-
-  async function setupOrchestration() {
-    if (pending) return;
-    const key = apiKey.trim();
-    if (key.length === 0) {
-      setError("Enter your Jev API key to set up Orchestration.");
-      return;
-    }
-
-    setPending(true);
-    setError(null);
-    try {
-      for (const environmentId of supportedEnvironmentIds) {
-        const secretResult = await setSecret({ environmentId, input: { apiKey: key } });
-        if (secretResult._tag === "Failure") {
-          fail(
-            environmentId,
-            squashAtomCommandFailure(secretResult),
-            "Could not save the Jev API key. Try again.",
-          );
-          return;
-        }
-
-        const suggestionResult = await suggestPool({ environmentId, input: {} });
-        if (suggestionResult._tag === "Failure") {
-          fail(
-            environmentId,
-            squashAtomCommandFailure(suggestionResult),
-            "Could not prepare model recommendations. Try again.",
-          );
-          return;
-        }
-
-        const capableLead = suggestionResult.value.profiles.find(
-          (profile) =>
-            profile.reviewRequired !== true && profile.lead && profile.tier === "capable",
-        );
-        if (capableLead === undefined) {
-          setError(
-            `${environmentLabel(environmentId)}: Jev could not prepare a capable lead recommendation. Check the API key and ready providers, then try again.`,
-          );
-          return;
-        }
-
-        const saveResult = await saveSettings({
-          environmentId,
-          input: {
-            policy: {
-              ...secretResult.value.policy,
-              mode: "shadow",
-              profiles: suggestionResult.value.profiles,
-              preferredCapableProfileId: capableLead.id,
-            },
-          },
-        });
-        if (saveResult._tag === "Failure") {
-          fail(
-            environmentId,
-            squashAtomCommandFailure(saveResult),
-            "Could not save Orchestration settings. Try again.",
-          );
-          return;
-        }
-      }
-
-      setApiKey("");
-      onContinue();
-    } finally {
-      setPending(false);
-    }
-  }
-
-  if (supportedEnvironmentIds.length === 0) {
-    return (
-      <StepShell
-        title="Orchestration"
-        description="Your selected computers do not support Orchestration yet. You can configure it later from Settings after updating them."
-      >
-        <div className="mt-6 flex justify-end">
-          <Button autoFocus onClick={onContinue}>
-            Continue to projects
-            <ArrowRightIcon className="size-3.5" />
-          </Button>
-        </div>
-      </StepShell>
-    );
-  }
-
-  return (
-    <StepShell
-      title="Orchestration"
-      description="Optional. Let Jev recommend which models can lead or work, choose their reasoning defaults, and route each orchestrated task automatically."
-    >
-      <div className="mt-5 space-y-4">
-        <div className="space-y-2">
-          <label
-            className="block text-sm font-medium text-foreground"
-            htmlFor="onboarding-jev-api-key"
-          >
-            Jev API key
-          </label>
-          <Input
-            id="onboarding-jev-api-key"
-            type="password"
-            autoComplete="off"
-            value={apiKey}
-            disabled={pending}
-            aria-describedby={error ? "onboarding-orchestration-error" : undefined}
-            placeholder="Enter API key"
-            onChange={(event) => {
-              setApiKey(event.target.value);
-              if (error) setError(null);
-            }}
-          />
-          <p className="text-xs leading-relaxed text-muted-foreground">
-            Dispatch prepares sensible model defaults for you; you only need to change the ones you
-            disagree with. The key is stored separately on each supported computer and can be
-            changed later in Settings → Orchestration.
-          </p>
-        </div>
-
-        {unsupportedCount > 0 ? (
-          <p className="text-xs text-muted-foreground">
-            {unsupportedCount} selected {unsupportedCount === 1 ? "computer does" : "computers do"}{" "}
-            not support Orchestration yet and will be skipped.
-          </p>
-        ) : null}
-
-        {error ? (
-          <p id="onboarding-orchestration-error" role="alert" className="text-sm text-destructive">
-            {error}
-          </p>
-        ) : null}
-
-        <div className="flex flex-wrap items-center justify-end gap-2">
-          <Button variant="ghost" disabled={pending} onClick={onContinue}>
-            Not now
-          </Button>
-          <Button disabled={pending} onClick={() => void setupOrchestration()}>
-            {pending ? "Setting up…" : "Set up Orchestration"}
-            {!pending ? <ArrowRightIcon className="size-3.5" /> : null}
-          </Button>
-        </div>
-      </div>
-    </StepShell>
-  );
-}
-
-// ── Step 4: import ───────────────────────────────────────────
+// ── Step 3: import ───────────────────────────────────────────
 
 function ImportStep({
   scans,

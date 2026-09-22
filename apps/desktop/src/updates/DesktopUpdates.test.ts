@@ -1,4 +1,5 @@
 import { assert, describe, it } from "@effect/vitest";
+import { setTimeout as delay } from "node:timers/promises";
 import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
@@ -183,6 +184,121 @@ describe("DesktopUpdates", () => {
       }),
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
+
+  it.effect("uses the preview feed without ever enabling updater downgrades", () => {
+    const harness = makeHarness();
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+
+        yield* updates.setChannel("preview");
+        assert.equal(harness.updaterChannel(), "preview");
+        assert.isTrue(harness.allowPrerelease());
+        assert.isTrue(harness.fullChangelog());
+        assert.isFalse(harness.allowDowngrade());
+
+        yield* updates.setChannel("latest");
+        assert.equal(harness.updaterChannel(), "latest");
+        assert.isFalse(harness.allowPrerelease());
+        assert.isFalse(harness.fullChangelog());
+        assert.isFalse(harness.allowDowngrade());
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+
+  it.effect("ignores same-channel candidates that are not newer than the installed version", () => {
+    const harness = makeHarness({ appVersion: "1.2.4-preview.20260922.10" });
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+
+        harness.emit("update-available", {
+          version: "1.2.4-preview.20260922.9",
+          releaseNotes: "- Older preview",
+        });
+        yield* flushCallbacks;
+
+        const state = yield* updates.getState;
+        assert.equal(state.channel, "preview");
+        assert.equal(state.status, "up-to-date");
+        assert.isNull(state.availableVersion);
+        assert.isFalse(harness.allowDowngrade());
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+
+  it.effect("does not downgrade when leaving Preview for an older Stable release", () => {
+    const harness = makeHarness({ appVersion: "1.3.0-preview.20260922.1" });
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+        yield* updates.setChannel("latest");
+
+        harness.emit("update-available", {
+          version: "1.2.9",
+          releaseNotes: "- Older stable",
+        });
+        yield* flushCallbacks;
+
+        const state = yield* updates.getState;
+        assert.equal(state.channel, "latest");
+        assert.equal(state.status, "up-to-date");
+        assert.isNull(state.availableVersion);
+        assert.isFalse(harness.allowDowngrade());
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+
+  it.effect(
+    "shows persisted release notes only after the matching version is installed and once",
+    () => {
+      const storageId = `whats-new-${process.pid}`;
+      const beforeInstall = makeHarness({ appVersion: "1.2.3", storageId });
+      const installed = makeHarness({ appVersion: "1.2.4", storageId });
+      const reopened = makeHarness({ appVersion: "1.2.4", storageId });
+
+      return Effect.gen(function* () {
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const updates = yield* DesktopUpdates.DesktopUpdates;
+            yield* updates.configure;
+            beforeInstall.emit("update-available", {
+              version: "1.2.4",
+              releaseNotes: "# Dispatch 1.2.4\n\n- Fixed preview updates",
+            });
+            yield* flushCallbacks;
+            yield* Effect.promise(() => delay(25));
+            assert.isNull(yield* updates.getWhatsNew);
+          }).pipe(Effect.provide(Layer.merge(TestClock.layer(), beforeInstall.layer))),
+        );
+
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const updates = yield* DesktopUpdates.DesktopUpdates;
+            assert.deepEqual(yield* updates.getWhatsNew, {
+              version: "1.2.4",
+              markdown: "# Dispatch 1.2.4\n\n- Fixed preview updates",
+            });
+            assert.isTrue(yield* updates.dismissWhatsNew);
+            assert.isNull(yield* updates.getWhatsNew);
+          }).pipe(Effect.provide(Layer.merge(TestClock.layer(), installed.layer))),
+        );
+
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const updates = yield* DesktopUpdates.DesktopUpdates;
+            assert.isNull(yield* updates.getWhatsNew);
+          }).pipe(Effect.provide(Layer.merge(TestClock.layer(), reopened.layer))),
+        );
+      });
+    },
+  );
 
   it.effect("checks for newer releases after an update has been downloaded", () => {
     const harness = makeHarness();

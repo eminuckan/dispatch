@@ -40,7 +40,11 @@ export function shouldUseSidebarUpdateReleaseNotesPopover(
   showUpdateDetails: boolean,
   state: DesktopUpdateState | null,
 ): boolean {
-  return showUpdateDetails && state?.channel === "nightly" && state.releaseNotes.length > 0;
+  return (
+    showUpdateDetails &&
+    (state?.channel === "preview" || state?.channel === "nightly") &&
+    state.releaseNotes.length > 0
+  );
 }
 
 export function handleSidebarUpdateReleaseNotesPopoverOpenChange(
@@ -392,7 +396,7 @@ function SidebarUpdateControl() {
         {showReleaseNotesPopover && state ? (
           <PopoverPopup
             align="center"
-            aria-label="Nightly update release notes"
+            aria-label="Update release notes"
             className="max-w-none text-balance shadow-xl shadow-black/25"
             initialFocus={false}
             onKeyDownCapture={(event) => {

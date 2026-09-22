@@ -1,1852 +1,2447 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
 
-import * as NodeServices from "@effect/platform-node/NodeServices";
-import { OrchestrationProjectorDecodeError } from "../orchestration/Errors.ts";
-import { GitWorkflowService } from "../git/GitWorkflowService.ts";
 import { expect, it } from "@effect/vitest";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
-  CommandId,
-  EventId,
-  MessageId,
-  OrchestrationThread,
+  GitCommandError,
   ProjectId,
-  ProviderDriverKind,
   ProviderInstanceId,
+  TeamRun,
   ThreadId,
-  TurnId,
+  type ChatAttachment,
   type OrchestrationCommand,
-  type TeamRecoveryAdvice,
-  type TeamRun,
-  type ServerProvider,
+  type OrchestrationThreadActivity,
+  type TeamAttempt,
+  type TeamModelProfile,
+  type TeamSettlement,
+  type TeamSettings,
+  type TeamTask,
 } from "@dispatch/contracts";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
-import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
+
+import { GitWorkflowService } from "../git/GitWorkflowService.ts";
+import * as ServerConfig from "../config.ts";
+import { pendingAttachmentLeaseHasOwner } from "../attachmentStore.ts";
 import { OrchestrationEngineService } from "../orchestration/Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
-import {
-  ProjectionTurnRepository,
-  type ProjectionTurn,
-} from "../persistence/Services/ProjectionTurns.ts";
-import { ProviderRegistry } from "../provider/Services/ProviderRegistry.ts";
-import { ProcessRunner } from "../processRunner.ts";
-import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
-import * as ServerConfig from "../config.ts";
-import { parseThreadSegmentFromAttachmentId, resolveAttachmentPath } from "../attachmentStore.ts";
-import * as Store from "./TeamStore.ts";
-import { TeamRouter } from "./TeamRouter.ts";
+import { ProjectionTurnRepository } from "../persistence/Services/ProjectionTurns.ts";
+import { ProcessRunner, type ProcessRunInput } from "../processRunner.ts";
+import { OrchestrationAdvisor } from "./OrchestrationAdvisor.ts";
+import { OrchestrationModelCatalog } from "./OrchestrationModels.ts";
+import { OrchestrationSettings } from "./OrchestrationSettings.ts";
+import { OrchestrationStore } from "./OrchestrationStore.ts";
 import { make } from "./TeamRuntime.ts";
-import { defaultTeamPolicy } from "./routing.ts";
-const decodeThread = Schema.decodeUnknownSync(OrchestrationThread);
-const date = "2026-09-19T00:00:00.000Z";
-const runtimeInfrastructure = Layer.mergeAll(
-  SqlitePersistenceMemory,
-  ServerConfig.layerTest(process.cwd(), { prefix: "dispatch-team-runtime-" }).pipe(
-    Layer.provide(NodeServices.layer),
-  ),
-);
-const provider: ServerProvider = {
-  instanceId: ProviderInstanceId.make("codex"),
-  driver: ProviderDriverKind.make("codex"),
-  enabled: true,
-  installed: true,
-  version: null,
-  status: "ready",
-  auth: { status: "authenticated" },
-  checkedAt: date,
-  models: [{ slug: "test", name: "Test", isCustom: false, capabilities: null }],
-  slashCommands: [],
-  skills: [],
-};
-const profile = {
-  id: "p",
-  label: "P",
-  selection: { instanceId: provider.instanceId, model: "test" },
-  tier: "capable" as const,
+import { teamThreadView } from "./presentation.ts";
+
+const now = "2026-09-21T12:00:00.000Z";
+const head = "a".repeat(40);
+const projectId = ProjectId.make("project");
+const leadProfile: TeamModelProfile = {
+  id: "lead",
+  label: "Primary Lead",
+  selection: { instanceId: ProviderInstanceId.make("openai"), model: "sol" },
   lead: true,
   worker: true,
-  estimatedAttemptUsd: null,
+  capability: "complex",
 };
-const initial: TeamRun = {
-  id: "abc",
-  commandId: "start",
-  projectId: ProjectId.make("project"),
-  revision: 0,
-  objective: "Fix boundary",
-  policy: { ...defaultTeamPolicy, profiles: [profile] },
-  lead: profile,
-  status: "planning",
-  tasks: [],
-  decisions: [],
-  createdAt: date,
-  updatedAt: date,
-  execution: {
-    workspaceRoot: "/repo",
-    baseCommit: "abc",
-    leadThreadId: ThreadId.make("team-abc-lead"),
-    maxTurns: 1,
-    turns: [],
-    phase: "plan",
-    notice: null,
-  },
+const failoverProfile: TeamModelProfile = {
+  id: "alternate",
+  label: "Alternate Lead",
+  selection: { instanceId: ProviderInstanceId.make("anthropic"), model: "opus" },
+  lead: true,
+  worker: true,
+  capability: "complex",
 };
-function mailboxRun(
-  id: string,
-  messages: NonNullable<TeamRun["messages"]> = [],
-): { run: TeamRun; leadThreadId: ThreadId; workerThreadId: ThreadId } {
-  const leadThreadId = ThreadId.make(`team-${id}-lead`);
-  const workerThreadId = ThreadId.make(`team-${id}-worker`);
+const secondFailoverProfile: TeamModelProfile = {
+  id: "alternate-second",
+  label: "Second Alternate Lead",
+  selection: { instanceId: ProviderInstanceId.make("google"), model: "gemini" },
+  lead: true,
+  worker: true,
+  capability: "complex",
+};
+
+const policy: TeamSettings["policy"] = {
+  revision: 1,
+  enabled: true,
+  flowMode: "standard",
+  profiles: [leadProfile, failoverProfile],
+  maxActive: 3,
+  maxAttempts: 2,
+  providerLimitBehavior: "ask",
+};
+
+const leadThreadId = ThreadId.make("team-runtime-lead");
+
+function baseRun(overrides: Partial<TeamRun> = {}): TeamRun {
   return {
-    leadThreadId,
-    workerThreadId,
-    run: {
-      ...initial,
-      id,
-      commandId: `start-${id}`,
-      status: "running",
-      tasks: [
-        {
-          id: "edit",
-          objective: "Edit the runtime boundary",
-          acceptance: ["Boundary is verified"],
-          dependencies: [],
-          profileId: "p",
-          status: "running",
-          generation: 0,
-          attempts: 1,
-          threadId: workerThreadId,
-          context: "contract",
-          result: null,
-        },
-      ],
-      messages,
-      execution: {
-        ...initial.execution!,
-        leadThreadId,
-        turns: [],
-        phase: "workers",
-      },
+    id: "runtime-run",
+    commandId: "runtime-command",
+    projectId,
+    revision: 0,
+    executionMode: "orchestrated",
+    runtimeMode: "approval-required",
+    prompt: "Implement the runtime invariant",
+    policy,
+    lead: { role: "lead", profileId: leadProfile.id, threadId: leadThreadId, taskId: null },
+    acceptance: ["Runtime invariant is verified"],
+    decisions: [],
+    status: "running",
+    statusReason: null,
+    workspace: {
+      root: "/repo",
+      baseCommit: head,
+      integrationHead: head,
+      leadBranch: "orchestration/runtime-run/lead",
+      leadWorktreePath: "/repo/.dispatch-worktrees/lead",
     },
+    tasks: [],
+    attempts: [],
+    messages: [],
+    settlements: [],
+    failovers: [],
+    attachments: [],
+    createdAt: now,
+    updatedAt: now,
+    ...overrides,
   };
 }
-function fixture(
-  failAcknowledgement = false,
-  driver = "codex",
-  recovery: TeamRecoveryAdvice = {
-    action: "correct",
-    reason: "Apply lead correction",
-    profileId: "p",
-    source: "policy",
-  },
-) {
-  const commands: OrchestrationCommand[] = [];
-  const checks: string[] = [];
-  const threads = new Map<string, OrchestrationThread>();
-  const receipts = new Map<string, ProjectionTurn[]>();
-  const pendingStarts = new Set<string>();
-  const assessedDrafts: Array<{ hasAttachments: boolean; role: "lead" | "worker" }> = [];
-  let clockStep = 0;
-  const nextTime = () =>
-    DateTime.formatIso(DateTime.add(DateTime.makeUnsafe(date), { seconds: ++clockStep * 10 }));
-  const addReceipt = (receipt: ProjectionTurn) => {
-    receipts.set(receipt.threadId, [...(receipts.get(receipt.threadId) ?? []), receipt]);
+
+function attempt(input: {
+  id: string;
+  role: TeamAttempt["role"];
+  owner: TeamAttempt["owner"];
+  taskId?: string | null;
+  status?: TeamAttempt["status"];
+  result?: string | null;
+  sequence?: number;
+}): TeamAttempt {
+  return {
+    id: input.id,
+    commandId: `command-${input.id}`,
+    requestMessageId: `message-${input.id}` as never,
+    taskId: input.taskId ?? null,
+    role: input.role,
+    sequence: input.sequence ?? 0,
+    owner: input.owner,
+    selection: profileSelection(input.owner.profileId),
+    prompt: `Prompt for ${input.id}`,
+    attachments: [],
+    status: input.status ?? "reserved",
+    providerTurnId: null,
+    resultMessageId: null,
+    result: input.result ?? null,
+    failure: null,
+    createdAt: now,
+    updatedAt: now,
   };
-  const complete = (
-    command: Extract<OrchestrationCommand, { type: "thread.turn.start" }>,
-    text: string,
-  ) => {
-    const turnId = TurnId.make(`turn-${command.commandId}`);
-    const answer = MessageId.make(`answer-${command.commandId}`);
-    const previous = threads.get(command.threadId);
-    const startedAt = nextTime();
-    const completedAt = DateTime.formatIso(
-      DateTime.add(DateTime.makeUnsafe(startedAt), { seconds: 1 }),
-    );
-    addReceipt({
-      threadId: command.threadId,
-      turnId,
-      pendingMessageId: command.message.messageId,
-      sourceProposedPlanThreadId: null,
-      sourceProposedPlanId: null,
-      assistantMessageId: answer,
-      state: "completed",
-      requestedAt: startedAt,
-      startedAt,
-      completedAt,
-      checkpointTurnCount: null,
-      checkpointRef: null,
-      checkpointStatus: null,
-      checkpointFiles: [],
-    });
-    threads.set(
-      command.threadId,
-      decodeThread({
-        id: command.threadId,
-        projectId: initial.projectId,
-        title: "Managed",
-        modelSelection: profile.selection,
-        runtimeMode: "full-access",
-        interactionMode: "default",
-        branch: "team/test",
-        worktreePath: "/isolated",
-        createdAt: date,
-        updatedAt: date,
-        deletedAt: null,
-        latestTurn: {
-          turnId,
-          state: "completed",
-          requestedAt: startedAt,
-          startedAt,
-          completedAt,
-          assistantMessageId: answer,
-        },
-        messages: [
-          ...(previous?.messages.filter(
-            (message) => message.id !== answer && message.id !== command.message.messageId,
-          ) ?? []),
-          {
-            id: command.message.messageId,
-            role: "user",
-            text: command.message.text,
-            turnId: null,
-            streaming: false,
-            createdAt: date,
-            updatedAt: date,
-          },
-          {
-            id: answer,
-            role: "assistant",
-            text,
-            turnId,
-            streaming: false,
-            createdAt: date,
-            updatedAt: date,
-          },
-        ],
-        activities: previous?.activities ?? [],
-        checkpoints: [],
-        session: null,
-      }),
-    );
-  };
-  const supersede = (
-    command: Extract<OrchestrationCommand, { type: "thread.turn.start" }>,
-    text: string,
-    manualRunning = false,
-  ) => {
-    if (
-      !(receipts.get(command.threadId) ?? []).some(
-        (receipt) => receipt.turnId === `turn-${command.commandId}`,
-      )
-    )
-      complete(command, text);
-    const thread = threads.get(command.threadId);
-    if (!thread || !thread.latestTurn) throw new Error("Expected completed managed turn");
-    const manualTurnId = TurnId.make(`manual-${command.commandId}`);
-    const manualMessageId = MessageId.make(`manual-message-${command.commandId}`);
-    const manualAnswer = MessageId.make(`manual-answer-${command.commandId}`);
-    const startedAt = nextTime();
-    addReceipt({
-      threadId: command.threadId,
-      turnId: manualTurnId,
-      pendingMessageId: manualMessageId,
-      sourceProposedPlanThreadId: null,
-      sourceProposedPlanId: null,
-      assistantMessageId: manualRunning ? null : manualAnswer,
-      state: manualRunning ? "running" : "completed",
-      requestedAt: startedAt,
-      startedAt,
-      completedAt: manualRunning ? null : startedAt,
-      checkpointTurnCount: null,
-      checkpointRef: null,
-      checkpointStatus: null,
-      checkpointFiles: [],
-    });
-    threads.set(
-      command.threadId,
-      decodeThread({
-        ...thread,
-        latestTurn: {
-          turnId: manualTurnId,
-          state: manualRunning ? "running" : "completed",
-          requestedAt: startedAt,
-          startedAt,
-          completedAt: manualRunning ? null : startedAt,
-          assistantMessageId: manualRunning ? null : manualAnswer,
-        },
-        messages: [
-          ...thread.messages,
-          {
-            id: manualMessageId,
-            role: "user",
-            text: "A manual follow-up",
-            turnId: null,
-            streaming: false,
-            createdAt: startedAt,
-            updatedAt: startedAt,
-          },
-          ...(manualRunning
-            ? []
-            : [
-                {
-                  id: manualAnswer,
-                  role: "assistant" as const,
-                  text: "Manual follow-up complete",
-                  turnId: manualTurnId,
-                  streaming: false,
-                  createdAt: startedAt,
-                  updatedAt: startedAt,
-                },
-              ]),
-        ],
-      }),
-    );
-  };
-  const setActivities = (threadId: string, activities: OrchestrationThread["activities"]) => {
-    const thread = threads.get(threadId);
-    if (thread) threads.set(threadId, { ...thread, activities });
-  };
-  const failStart = (
-    command: Extract<OrchestrationCommand, { type: "thread.turn.start" }>,
-    detail: string,
-  ) => {
-    threads.set(
-      command.threadId,
-      decodeThread({
-        id: command.threadId,
-        projectId: initial.projectId,
-        title: "Managed",
-        modelSelection: profile.selection,
-        runtimeMode: "full-access",
-        interactionMode: "default",
-        branch: "team/test",
-        worktreePath: "/isolated",
-        createdAt: date,
-        updatedAt: date,
-        deletedAt: null,
-        latestTurn: null,
-        messages: [
-          {
-            id: command.message.messageId,
-            role: "user",
-            text: command.message.text,
-            turnId: null,
-            streaming: false,
-            createdAt: date,
-            updatedAt: date,
-          },
-        ],
-        activities: [
-          {
-            id: "provider-start-failed",
-            tone: "error",
-            kind: "provider.turn.start.failed",
-            summary: "Provider turn start failed",
-            payload: { requestId: command.message.messageId, detail },
-            turnId: null,
-            createdAt: date,
-          },
-        ],
-        checkpoints: [],
-        session: null,
-      }),
-    );
-  };
-  const layers = Layer.mergeAll(
-    Layer.mock(TeamRouter)({
-      settings: Effect.succeed({
-        policy: { ...initial.policy, mode: "shadow" },
-        jevConfigured: true,
-      }),
-      recover: () => Effect.succeed(recovery),
-      assess: (draft, role = "lead") => {
-        assessedDrafts.push({ hasAttachments: draft.hasAttachments, role });
-        return Effect.succeed({
-          draftId: draft.draftId,
-          revision: draft.revision,
-          fingerprint: "test",
-          policyRevision: draft.policyRevision,
-          profileId: "p",
-          selection: profile.selection,
-          tier: "capable",
-          confidence: 1,
-          reason: "fixture",
-          source: "jev",
-          inputTokens: null,
-          outputTokens: null,
-        });
-      },
-    }),
-    Layer.mock(GitWorkflowService)({
-      listRefs: () =>
-        Effect.succeed({
-          refs: [
-            { name: "team/test", current: false, isDefault: false, worktreePath: "/isolated" },
-          ],
-          isRepo: true,
-          hasPrimaryRemote: false,
-          nextCursor: null,
-          totalCount: 1,
-        }),
-      createWorktree: () =>
-        Effect.succeed({ worktree: { path: "/isolated", refName: "team/test" } }),
-    }),
-    Layer.mock(ProviderRegistry)({
-      getProviders: Effect.succeed([{ ...provider, driver: ProviderDriverKind.make(driver) }]),
-    }),
-    Layer.mock(ProcessRunner)({
-      run: (input) =>
-        Effect.sync(() => {
-          if (input.command === "git" && input.args[0] === "rev-parse") {
-            return {
-              code: ChildProcessSpawner.ExitCode(0),
-              stdout: "a".repeat(40),
-              stderr: "",
-              timedOut: false,
-              stdoutTruncated: false,
-              stderrTruncated: false,
-              stdoutInvalidUtf8: false,
-              stderrInvalidUtf8: false,
-            };
-          }
-          checks.push(input.command);
-          return {
-            code: ChildProcessSpawner.ExitCode(0),
-            stdout: "passed",
-            stderr: "",
-            timedOut: false,
-            stdoutTruncated: false,
-            stderrTruncated: false,
-            stdoutInvalidUtf8: false,
-            stderrInvalidUtf8: false,
-          };
-        }),
-    }),
-    Layer.mock(ProjectionSnapshotQuery)({
-      getProjectShellById: (id) =>
-        Effect.succeed(
-          Option.some({
-            id,
-            title: "Project",
-            workspaceRoot: "/repo",
-            defaultModelSelection: null,
-            scripts: [],
-            createdAt: date,
-            updatedAt: date,
-          }),
-        ),
-      getThreadDetailById: (id) => Effect.succeed(Option.fromUndefinedOr(threads.get(id))),
-    }),
-    Layer.mock(ProjectionTurnRepository)({
-      getPendingTurnStartByThreadId: ({ threadId }) =>
-        Effect.succeed(
-          pendingStarts.has(threadId)
-            ? Option.some({
-                threadId,
-                messageId: MessageId.make(`pending-${threadId}`),
-                sourceProposedPlanThreadId: null,
-                sourceProposedPlanId: null,
-                requestedAt: date,
-              })
-            : Option.none(),
-        ),
-      listByThreadId: ({ threadId }) => Effect.succeed(receipts.get(threadId) ?? []),
-      getByTurnId: ({ threadId, turnId }) => {
-        const receipt = (receipts.get(threadId) ?? []).find((entry) => entry.turnId === turnId);
-        return Effect.succeed(
-          receipt?.turnId ? Option.some({ ...receipt, turnId: receipt.turnId }) : Option.none(),
-        );
-      },
-    }),
-    Layer.mock(OrchestrationEngineService)({
-      dispatch: (command) =>
-        Effect.gen(function* () {
-          if (command.type !== "thread.create") commands.push(command);
-          if (command.type === "thread.turn.start" && failAcknowledgement) {
-            failAcknowledgement = false;
-            return yield* new OrchestrationProjectorDecodeError({
-              eventType: "thread.turn-start-requested",
-              issue: "simulated acknowledgement loss",
-            });
-          }
-          return { sequence: commands.length };
-        }),
-    }),
+}
+
+function profileSelection(profileId: string) {
+  return (
+    policy.profiles.find((profile) => profile.id === profileId)?.selection ?? leadProfile.selection
   );
+}
+
+function fixture(
+  seed: TeamRun | null = null,
+  currentProfileAvailable = true,
+  options: {
+    readonly advisorConfigured?: boolean;
+    readonly advisorSource?: "policy" | "jev";
+    readonly routeAdvisorSource?: "policy" | "jev";
+    readonly profileAdvisorSource?: "policy" | "jev";
+    readonly executionMode?: TeamRun["executionMode"];
+    readonly settingsPolicy?: TeamSettings["policy"];
+    readonly existingThreads?: ReadonlyArray<ThreadId>;
+    readonly threadActivities?: ReadonlyArray<OrchestrationThreadActivity>;
+    readonly removeWorktreeFails?: boolean;
+    readonly process?: (input: ProcessRunInput) =>
+      | {
+          readonly stdout?: string;
+          readonly stderr?: string;
+          readonly code?: number;
+        }
+      | undefined;
+  } = {},
+) {
+  let current = seed;
+  const commands: OrchestrationCommand[] = [];
+  const processCalls: ProcessRunInput[] = [];
+  const removedWorktrees: string[] = [];
+  const createdWorktrees: Array<Parameters<GitWorkflowService["Service"]["createWorktree"]>[0]> =
+    [];
+  const executionModeCalls: Array<{
+    objective: string;
+    candidateProfileIds: ReadonlyArray<string>;
+  }> = [];
+  const profileCalls: Array<{
+    purpose: "lead" | "worker" | "failover" | "review";
+    candidateProfileIds: ReadonlyArray<string>;
+  }> = [];
+  const turnDispatches: Array<{
+    readonly persistedAttachments: ReadonlyArray<ChatAttachment>;
+    readonly dispatchedAttachments: ReadonlyArray<ChatAttachment>;
+  }> = [];
+
+  const store = Layer.mock(OrchestrationStore)({
+    getSettings: Effect.succeed(null),
+    saveSettings: (settings) => Effect.succeed(settings),
+    list: Effect.sync(() => (current ? [current] : [])),
+    get: (id) =>
+      Effect.sync(() => {
+        if (!current || current.id !== id) throw new Error("missing run");
+        return current;
+      }),
+    create: (run) =>
+      Effect.sync(() => {
+        if (current && current.commandId === run.commandId) return current;
+        current = run;
+        return run;
+      }),
+    update: (id, revision, change) =>
+      Effect.sync(() => {
+        if (!current || current.id !== id || current.revision !== revision)
+          throw new Error("stale run");
+        current = {
+          ...change(current),
+          revision: revision + 1,
+          updatedAt: now,
+        };
+        return current;
+      }),
+    findByThread: (threadId) =>
+      Effect.sync(() => {
+        if (!current) return null;
+        if (current.lead.threadId === threadId) return current;
+        return current.tasks.some((task) => task.owner.threadId === threadId) ? current : null;
+      }),
+    active: Effect.sync(() =>
+      current && !["completed", "cancelled", "failed"].includes(current.status) ? [current] : [],
+    ),
+  });
+
+  const activePolicy = options.settingsPolicy ?? policy;
+  const smartRouting = {
+    available: options.advisorConfigured ?? false,
+    reason: options.advisorConfigured ? null : "smart_routing_session_required",
+  };
+  const settings = Layer.mock(OrchestrationSettings)({
+    settings: Effect.succeed({
+      policy: activePolicy,
+      smartRouting,
+      supportedProviderInstanceIds: activePolicy.profiles.map(
+        (profile) => profile.selection.instanceId,
+      ),
+    }),
+    saveSettings: (next) =>
+      Effect.succeed({
+        policy: next,
+        smartRouting,
+        supportedProviderInstanceIds: next.profiles.map((profile) => profile.selection.instanceId),
+      }),
+    setSmartRoutingSession: () =>
+      Effect.succeed({
+        policy: activePolicy,
+        smartRouting,
+        supportedProviderInstanceIds: activePolicy.profiles.map(
+          (profile) => profile.selection.instanceId,
+        ),
+      }),
+    recommendModels: () => Effect.succeed({ profiles: [], notes: [], source: "catalog" as const }),
+  });
+
+  const advisor = Layer.mock(OrchestrationAdvisor)({
+    configured: Effect.succeed(options.advisorConfigured ?? false),
+    localPrerequisites: Effect.succeed({ ready: true, reason: null }),
+    status: Effect.succeed(smartRouting),
+    setSmartRoutingSession: () => Effect.succeed(undefined),
+    recommendProfiles: (profiles) => Effect.succeed(profiles),
+    routeExecution: ({ objective, workers }) => {
+      executionModeCalls.push({
+        objective,
+        candidateProfileIds: workers.map((candidate) => candidate.id),
+      });
+      const mode = options.executionMode ?? "orchestrated";
+      return Effect.succeed({
+        mode,
+        source: options.routeAdvisorSource ?? options.advisorSource ?? ("policy" as const),
+        confidence: 1,
+        reason: mode === "direct" ? "Direct route" : "Orchestrated route",
+      });
+    },
+    chooseProfile: ({ purpose, candidates, preferredProfileId }) => {
+      profileCalls.push({
+        purpose,
+        candidateProfileIds: candidates.map((candidate) => candidate.id),
+      });
+      const selected =
+        candidates.find((candidate) => candidate.id === preferredProfileId) ?? candidates[0]!;
+      return Effect.succeed({
+        profileId: selected.id,
+        source: options.profileAdvisorSource ?? options.advisorSource ?? ("policy" as const),
+        confidence: 1,
+        reason:
+          (options.profileAdvisorSource ?? options.advisorSource) === "jev"
+            ? "Smart Routing recommendation"
+            : "Policy order",
+      });
+    },
+  });
+
+  const models = Layer.mock(OrchestrationModelCatalog)({
+    runnableProfiles: (activePolicy, role) =>
+      Effect.succeed(activePolicy.profiles.filter((profile) => profile[role])),
+    refreshProfile: (profile) =>
+      Effect.succeed({
+        usable: profile.id === leadProfile.id ? currentProfileAvailable : true,
+        quotaExhausted: profile.id === leadProfile.id && !currentProfileAvailable,
+        providerReady: true,
+        managedSafe: true,
+      }),
+  });
+
+  const engine = Layer.mock(OrchestrationEngineService)({
+    dispatch: (command) =>
+      Effect.sync(() => {
+        if (command.type === "thread.turn.start") {
+          const persisted = current?.attempts.find(
+            (candidate) => candidate.requestMessageId === command.message.messageId,
+          );
+          turnDispatches.push({
+            persistedAttachments: [...(persisted?.attachments ?? [])],
+            dispatchedAttachments: [...command.message.attachments],
+          });
+        }
+        commands.push(command);
+        return { sequence: commands.length };
+      }),
+    readEvents: () => Stream.empty,
+    readThreadEvents: () => Stream.empty,
+    getThreadReplayStats: () =>
+      Effect.succeed({ eventCount: 0, payloadBytes: 0, hasCreateEvent: false }),
+    streamDomainEvents: Stream.empty,
+    subscribeDomainEvents: Effect.succeed(Stream.empty),
+    latestSequence: Effect.succeed(0),
+  });
+
+  const projection = Layer.mock(ProjectionSnapshotQuery)({
+    getProjectShellById: (id) =>
+      Effect.succeed(
+        Option.some({
+          id,
+          title: "Project",
+          workspaceRoot: "/repo",
+          defaultModelSelection: null,
+          scripts: [],
+          createdAt: now,
+          updatedAt: now,
+        }),
+      ),
+    getThreadDetailById: (threadId) =>
+      Effect.succeed(
+        options.existingThreads?.includes(threadId)
+          ? Option.some({
+              id: threadId,
+              projectId,
+              title: "Managed thread",
+              modelSelection: leadProfile.selection,
+              runtimeMode: current?.runtimeMode ?? "approval-required",
+              interactionMode: "default" as const,
+              branch: null,
+              worktreePath: null,
+              pullRequests: [],
+              latestTurn: null,
+              createdAt: now,
+              updatedAt: now,
+              archivedAt: null,
+              settledOverride: null,
+              settledAt: null,
+              unsettledAt: null,
+              activeOrderKey: null,
+              snoozedUntil: null,
+              snoozedAt: null,
+              pinnedAt: null,
+              pinOrderKey: null,
+              deletedAt: null,
+              messages: [],
+              proposedPlans: [],
+              activities: [...(options.threadActivities ?? [])],
+              checkpoints: [],
+              session: null,
+            })
+          : Option.none(),
+      ),
+  });
+
+  const turns = Layer.mock(ProjectionTurnRepository)({
+    getPendingTurnStartByThreadId: () => Effect.succeed(Option.none()),
+    listByThreadId: () => Effect.succeed([]),
+  });
+
+  const git = Layer.mock(GitWorkflowService)({
+    listRefs: () =>
+      Effect.succeed({
+        refs: [],
+        isRepo: true,
+        hasPrimaryRemote: false,
+        nextCursor: null,
+        totalCount: 0,
+      }),
+    createWorktree: (input) =>
+      Effect.sync(() => {
+        createdWorktrees.push(input);
+        return {
+          worktree: {
+            path: "/repo/.dispatch-worktrees/lead",
+            refName: input.newRefName ?? input.refName,
+          },
+        };
+      }),
+    removeWorktree: (input) =>
+      Effect.gen(function* () {
+        removedWorktrees.push(input.path);
+        if (options.removeWorktreeFails)
+          return yield* new GitCommandError({
+            operation: "remove-worktree",
+            command: "git worktree remove",
+            cwd: input.cwd,
+            detail: "scripted cleanup failure",
+          });
+      }),
+  });
+
+  const processLayer = Layer.mock(ProcessRunner)({
+    run: (input) => {
+      processCalls.push(input);
+      const scripted = options.process?.(input);
+      return Effect.succeed({
+        stdout:
+          scripted?.stdout ??
+          (input.command === "git" && input.args[0] === "rev-parse" ? `${head}\n` : ""),
+        stderr: scripted?.stderr ?? "",
+        code: ChildProcessSpawner.ExitCode(scripted?.code ?? 0),
+        timedOut: false,
+        stdoutTruncated: false,
+        stderrTruncated: false,
+        stdoutInvalidUtf8: false,
+        stderrInvalidUtf8: false,
+      });
+    },
+  });
+
+  const layer = Layer.mergeAll(
+    store,
+    settings,
+    advisor,
+    models,
+    engine,
+    projection,
+    turns,
+    git,
+    processLayer,
+    ServerConfig.layerTest(process.cwd(), { prefix: "dispatch-orchestration-runtime-test-" }).pipe(
+      Layer.provide(NodeServices.layer),
+    ),
+  );
+
   return {
+    layer,
     commands,
-    complete,
-    supersede,
-    setActivities,
-    failStart,
-    addReceipt,
-    layers,
-    checks,
-    pendingStarts,
-    receipts,
-    threads,
-    assessedDrafts,
+    processCalls,
+    removedWorktrees,
+    createdWorktrees,
+    executionModeCalls,
+    profileCalls,
+    turnDispatches,
+    current: () => current,
   };
 }
 
-it.effect("persists validated peer messages without creating teammate execution turns", () => {
-  const f = fixture();
-  return Effect.gen(function* () {
-    const store = yield* Store.make;
-    yield* store.create(initial);
-    const runtime = yield* make.pipe(
-      Effect.provideService(Store.TeamStore, store),
-      Effect.provide(f.layers),
-    );
-    yield* runtime.tick();
-    const plan = f.commands.find((command) => command.type === "thread.turn.start");
-    if (plan?.type !== "thread.turn.start") throw new Error("Expected plan");
-    expect(plan.message.text).toContain("team_read_messages");
-    expect(plan.message.text).toContain("team_send_message");
-    expect(plan.message.text).toContain("do not start or wake teammate turns");
-    f.complete(
-      plan,
-      '{"acceptance":["Combined result"],"tasks":[{"id":"edit","objective":"Edit label","acceptance":["Exact label check"],"dependencies":[],"profileId":"p","context":"contract"}],"rationale":"worker"}',
-    );
-    yield* runtime.tick();
-    const starts = f.commands.filter(
-      (command): command is Extract<OrchestrationCommand, { type: "thread.turn.start" }> =>
-        command.type === "thread.turn.start",
-    );
-    const worker = starts[1];
-    if (!worker) throw new Error("Expected worker");
-    expect(worker.message.text).toContain("team_read_messages");
-    expect(worker.message.text).toContain("team_send_message");
-
-    const question = {
-      id: "boundary-question",
-      toThreadId: plan.threadId,
-      text: "Does cancellation need to terminate the owned child process?",
-      replyRequested: true,
-    };
-    const sent = yield* runtime.sendMessage(worker.threadId, question);
-    expect(sent.fromThreadId).toBe(worker.threadId);
-    expect(sent.toThreadId).toBe(plan.threadId);
-    expect((yield* runtime.sendMessage(worker.threadId, question)).id).toBe(question.id);
-    expect((yield* store.get(initial.id)).messages).toHaveLength(1);
-
-    const changed = yield* runtime
-      .sendMessage(worker.threadId, { ...question, text: "Changed content" })
-      .pipe(Effect.flip);
-    expect(changed.code).toBe("conflict");
-    const wrongReplyDirection = yield* runtime
-      .sendMessage(worker.threadId, {
-        id: "wrong-reply",
-        toThreadId: plan.threadId,
-        text: "This was my own message.",
-        replyRequested: false,
-        inReplyTo: question.id,
-      })
-      .pipe(Effect.flip);
-    expect(wrongReplyDirection.code).toBe("invalid");
-    const selfSend = yield* runtime
-      .sendMessage(worker.threadId, {
-        id: "self",
-        toThreadId: worker.threadId,
-        text: "Self message",
-        replyRequested: false,
-      })
-      .pipe(Effect.flip);
-    expect(selfSend.code).toBe("invalid");
-    const outside = yield* runtime
-      .sendMessage(worker.threadId, {
-        id: "outside",
-        toThreadId: ThreadId.make("other-team"),
-        text: "Outside recipient",
-        replyRequested: false,
-      })
-      .pipe(Effect.flip);
-    expect(outside.code).toBe("invalid");
-    const foreign = yield* runtime
-      .sendMessage(ThreadId.make("foreign-thread"), question)
-      .pipe(Effect.flip);
-    expect(foreign.code).toBe("not-found");
-
-    const leadInbox = yield* runtime.readMessages(plan.threadId);
-    expect(leadInbox.messages.map((message) => message.id)).toEqual([question.id]);
-    expect(leadInbox.members.map((member) => member.threadId)).toEqual([
-      plan.threadId,
-      worker.threadId,
-    ]);
-    expect(leadInbox.members.every((member) => member.needsUserInput === false)).toBe(true);
-    const persistedQuestion = (yield* store.get(initial.id)).messages?.find(
-      (message) => message.id === question.id,
-    );
-    expect(persistedQuestion?.readAt).not.toBeNull();
-
-    const reply = yield* runtime.sendMessage(plan.threadId, {
-      id: "boundary-reply",
-      toThreadId: worker.threadId,
-      text: "Yes. Exercise the real owned-process boundary.",
-      replyRequested: false,
-      inReplyTo: question.id,
-    });
-    expect(reply.inReplyTo).toBe(question.id);
-    expect(f.commands.filter((command) => command.type === "thread.turn.start")).toHaveLength(2);
-
-    const restarted = yield* make.pipe(
-      Effect.provideService(Store.TeamStore, store),
-      Effect.provide(f.layers),
-    );
-    expect(
-      (yield* restarted.readMessages(worker.threadId)).messages.map((message) => message.id),
-    ).toEqual([reply.id]);
-    expect((yield* restarted.readMessages(worker.threadId)).messages).toEqual([]);
-    expect(
-      (yield* restarted.readMessages(worker.threadId, true)).messages.map((message) => message.id),
-    ).toContain(reply.id);
-
-    let current = yield* store.get(initial.id);
-    const replacement = ThreadId.make("team-abc-replacement");
-    current = yield* store.update(
-      current.id,
-      current.revision,
-      (run) => ({
-        ...run,
-        tasks: run.tasks.map((task) =>
-          task.id === "edit" ? { ...task, threadId: replacement } : task,
-        ),
-      }),
-      "test-worker-handoff",
-    );
-    const staleSender = yield* restarted
-      .sendMessage(worker.threadId, {
-        id: "stale-worker",
-        toThreadId: plan.threadId,
-        text: "Old worker should no longer be a member.",
-        replyRequested: false,
-      })
-      .pipe(Effect.flip);
-    expect(staleSender.code).toBe("not-found");
-
-    const paused = yield* restarted.control({
-      id: current.id,
-      revision: current.revision,
-      action: "pause",
-    });
-    const pausedSend = yield* restarted
-      .sendMessage(replacement, {
-        id: "paused-send",
-        toThreadId: plan.threadId,
-        text: "Paused",
-        replyRequested: false,
-      })
-      .pipe(Effect.flip);
-    expect(pausedSend.code).toBe("conflict");
-    const resumed = yield* restarted.control({
-      id: paused.id,
-      revision: paused.revision,
-      action: "resume",
-    });
-    const cancelled = yield* restarted.control({
-      id: resumed.id,
-      revision: resumed.revision,
-      action: "cancel",
-    });
-    expect(cancelled.status).toBe("cancelled");
-    const terminalSend = yield* restarted
-      .sendMessage(plan.threadId, {
-        id: "terminal-send",
-        toThreadId: replacement,
-        text: "Terminal",
-        replyRequested: false,
-      })
-      .pipe(Effect.flip);
-    expect(terminalSend.code).toBe("conflict");
-    expect(f.commands.filter((command) => command.type === "thread.turn.start")).toHaveLength(2);
-  }).pipe(Effect.provide(runtimeInfrastructure));
-});
-
-it.effect("keeps message ID idempotency across a large durable mailbox", () => {
-  const messages: Array<NonNullable<TeamRun["messages"]>[number]> = [];
-  const { run, leadThreadId, workerThreadId } = mailboxRun("large-mailbox");
-  for (let index = 0; index < 205; index++)
-    messages.push({
-      id: `retained-${index}`,
-      fromThreadId: leadThreadId,
-      toThreadId: workerThreadId,
-      text: `message ${index}`,
-      replyRequested: false,
-      createdAt: date,
-      readAt: date,
-    });
-  const retainedRun = { ...run, messages };
-  const f = fixture();
-  return Effect.gen(function* () {
-    const store = yield* Store.make;
-    yield* store.create(retainedRun);
-    const runtime = yield* make.pipe(
-      Effect.provideService(Store.TeamStore, store),
-      Effect.provide(f.layers),
-    );
-    const replayed = yield* runtime.sendMessage(leadThreadId, {
-      id: "retained-0",
-      toThreadId: workerThreadId,
-      text: "message 0",
-      replyRequested: false,
-    });
-    expect(replayed.text).toBe("message 0");
-    expect((yield* store.get(run.id)).messages).toHaveLength(205);
-    const changed = yield* runtime
-      .sendMessage(leadThreadId, {
-        id: "retained-0",
-        toThreadId: workerThreadId,
-        text: "changed after many later messages",
-        replyRequested: false,
-      })
-      .pipe(Effect.flip);
-    expect(changed.code).toBe("conflict");
-    expect((yield* store.get(run.id)).messages).toHaveLength(205);
-  }).pipe(Effect.provide(runtimeInfrastructure));
-});
-
-it.effect("reads and durably acknowledges only the selected 40-message inbox window", () => {
-  const { run, leadThreadId, workerThreadId } = mailboxRun("read-window");
-  const messages: NonNullable<TeamRun["messages"]> = Array.from({ length: 45 }, (_, index) => ({
-    id: `unread-${index}`,
-    fromThreadId: leadThreadId,
-    toThreadId: workerThreadId,
-    text: `message ${index}`,
-    replyRequested: false,
-    createdAt: date,
-    readAt: null,
-  }));
-  const f = fixture();
-  return Effect.gen(function* () {
-    const store = yield* Store.make;
-    yield* store.create({ ...run, messages });
-    const runtime = yield* make.pipe(
-      Effect.provideService(Store.TeamStore, store),
-      Effect.provide(f.layers),
-    );
-    const first = yield* runtime.readMessages(workerThreadId);
-    expect(first.messages).toHaveLength(40);
-    expect(first.messages[0]?.id).toBe("unread-0");
-    expect(first.messages.at(-1)?.id).toBe("unread-39");
-    let persisted = yield* store.get(run.id);
-    expect(
-      persisted.messages?.filter((message) => message.readAt === null).map((message) => message.id),
-    ).toEqual(["unread-40", "unread-41", "unread-42", "unread-43", "unread-44"]);
-
-    const restarted = yield* make.pipe(
-      Effect.provideService(Store.TeamStore, store),
-      Effect.provide(f.layers),
-    );
-    expect(
-      (yield* restarted.readMessages(workerThreadId)).messages.map((message) => message.id),
-    ).toEqual(["unread-40", "unread-41", "unread-42", "unread-43", "unread-44"]);
-    expect((yield* restarted.readMessages(workerThreadId)).messages).toEqual([]);
-    const latest = yield* restarted.readMessages(workerThreadId, true);
-    expect(latest.messages).toHaveLength(40);
-    expect(latest.messages[0]?.id).toBe("unread-5");
-    expect(latest.messages.at(-1)?.id).toBe("unread-44");
-    persisted = yield* store.get(run.id);
-    expect(persisted.messages?.every((message) => message.readAt !== null)).toBe(true);
-  }).pipe(Effect.provide(runtimeInfrastructure));
-});
-
-it.effect("retries message send and exact read acknowledgement across revision conflicts", () => {
-  const { run, leadThreadId, workerThreadId } = mailboxRun("revision-race");
-  const f = fixture();
-  return Effect.gen(function* () {
-    const store = yield* Store.make;
-    yield* store.create(run);
-    let racePeerMessage = true;
-    let raceRead = true;
-    const racingUpdate: typeof store.update = (id, revision, change, event) =>
-      Effect.gen(function* () {
-        const race =
-          (event === "peer-message" && racePeerMessage) ||
-          (event === "peer-messages-read" && raceRead);
-        if (race) {
-          if (event === "peer-message") racePeerMessage = false;
-          else raceRead = false;
-          const current = yield* store.get(id);
-          yield* store.update(
-            id,
-            current.revision,
-            (value) => ({ ...value, decisions: [...value.decisions, `race:${event}`] }),
-            `test-${event}-race`,
-          );
-        }
-        return yield* store.update(id, revision, change, event);
-      });
-    const runtime = yield* make.pipe(
-      Effect.provideService(Store.TeamStore, { ...store, update: racingUpdate }),
-      Effect.provide(f.layers),
-    );
-
-    const sent = yield* runtime.sendMessage(leadThreadId, {
-      id: "race-message",
-      toThreadId: workerThreadId,
-      text: "survive a revision race",
-      replyRequested: false,
-    });
-    expect(sent.id).toBe("race-message");
-    expect((yield* store.get(run.id)).messages).toHaveLength(1);
-
-    const read = yield* runtime.readMessages(workerThreadId);
-    expect(read.messages.map((message) => message.id)).toEqual(["race-message"]);
-    const persisted = yield* store.get(run.id);
-    expect(persisted.messages?.[0]?.readAt).not.toBeNull();
-    expect(persisted.decisions).toContain("race:peer-message");
-    expect(persisted.decisions).toContain("race:peer-messages-read");
-  }).pipe(Effect.provide(runtimeInfrastructure));
-});
-
 it.effect(
-  "dispatches a durable plan once and matches completion through the canonical request receipt",
+  "starts Standard Flow without hosted routing and persists the exact lead prompt before dispatch",
   () => {
     const f = fixture();
     return Effect.gen(function* () {
-      const store = yield* Store.make;
-      yield* store.create(initial);
-      const runtime = yield* make.pipe(
-        Effect.provideService(Store.TeamStore, store),
-        Effect.provide(f.layers),
-      );
-      yield* runtime.tick();
-      expect(f.commands).toHaveLength(1);
-      yield* runtime.tick();
-      expect(f.commands).toHaveLength(1);
-      const plan = f.commands[0]!;
-      if (plan.type !== "thread.turn.start") throw new Error("Expected plan dispatch");
-      f.complete(
-        plan,
-        '{"acceptance":["Combined result"],"tasks":[],"rationale":"Lead-only bounded work"}',
-      );
-      f.addReceipt({
-        threadId: plan.threadId,
-        turnId: TurnId.make("turn-newer-manual"),
-        pendingMessageId: MessageId.make("manual-follow-up"),
-        sourceProposedPlanThreadId: null,
-        sourceProposedPlanId: null,
-        assistantMessageId: MessageId.make("manual-follow-up-answer"),
-        state: "completed",
-        requestedAt: date,
-        startedAt: date,
-        completedAt: date,
-        checkpointTurnCount: null,
-        checkpointRef: null,
-        checkpointStatus: null,
-        checkpointFiles: [],
+      const runtime = yield* make;
+      const run = yield* runtime.start({
+        commandId: "start-no-jev",
+        projectId,
+        runtimeMode: "approval-required",
+        prompt: "Refactor the auth boundary",
+        attachments: [],
       });
-      const historicalView = yield* runtime.forThread(plan.threadId);
-      expect(historicalView?.turns[0]?.providerTurnId).toBe(`turn-${plan.commandId}`);
-      expect(historicalView?.turns[0]?.resultMessageId).toBe(`answer-${plan.commandId}`);
-      yield* runtime.tick();
-      expect(f.commands).toHaveLength(2);
-      const run = yield* store.get(initial.id);
-      expect(run.execution?.phase).toBe("integrate");
-      expect(run.execution?.turns[0]?.status).toBe("settled");
-      expect(run.execution?.turns[0]?.providerTurnId).toBe(`turn-${plan.commandId}`);
-      expect(run.execution?.turns[0]?.resultMessageId).toBe(`answer-${plan.commandId}`);
-      expect(run.execution?.turns[1]?.command.threadId).toBe(initial.execution?.leadThreadId);
-    }).pipe(Effect.provide(runtimeInfrastructure));
+
+      expect(run.policy.enabled).toBe(true);
+      expect(run.policy.flowMode).toBe("standard");
+      expect(run.runtimeMode).toBe("approval-required");
+      expect(run.lead.profileId).toBe(leadProfile.id);
+      expect(f.executionModeCalls).toEqual([]);
+      expect(f.profileCalls).toEqual([]);
+      expect(run.lead.threadId).toMatch(/^team-[a-f0-9-]+-lead$/);
+      expect(run.attempts).toHaveLength(1);
+      expect(run.attempts[0]?.role).toBe("plan");
+      expect(run.attempts[0]?.status).toBe("running");
+      expect(run.attempts[0]?.prompt).toContain("Dispatch is the only scheduler");
+      const created = f.commands.find(
+        (command) => command.type === "thread.create" && command.threadId === run.lead.threadId,
+      );
+      expect(created?.type === "thread.create" && created.runtimeMode).toBe("approval-required");
+      const turn = f.commands.find((command) => command.type === "thread.turn.start");
+      expect(turn?.type === "thread.turn.start" && turn.message.text).toBe(run.attempts[0]?.prompt);
+      expect(turn?.type === "thread.turn.start" && turn.runtimeMode).toBe("approval-required");
+    }).pipe(Effect.provide(f.layer));
   },
 );
-
-it.effect("settles a managed turn by its request when a manual follow-up becomes latest", () => {
-  const f = fixture();
-  return Effect.gen(function* () {
-    const store = yield* Store.make;
-    yield* store.create(initial);
-    const runtime = yield* make.pipe(
-      Effect.provideService(Store.TeamStore, store),
-      Effect.provide(f.layers),
-    );
-    yield* runtime.tick();
-    const plan = f.commands[0]!;
-    if (plan.type !== "thread.turn.start") throw new Error("Expected plan dispatch");
-    f.supersede(
-      plan,
-      '{"acceptance":["Combined result"],"tasks":[],"rationale":"Lead-only bounded work"}',
-    );
-    yield* runtime.tick();
-    const run = yield* store.get(initial.id);
-    expect(run.execution?.turns[0]?.status).toBe("settled");
-    expect(run.execution?.turns[0]?.succeeded).toBe(true);
-    expect(run.execution?.turns[0]?.result).toContain("Lead-only bounded work");
-  }).pipe(Effect.provide(runtimeInfrastructure));
-});
-
-it.effect("defers the next managed turn while a newer manual follow-up is running", () => {
-  const f = fixture();
-  return Effect.gen(function* () {
-    const store = yield* Store.make;
-    yield* store.create(initial);
-    const runtime = yield* make.pipe(
-      Effect.provideService(Store.TeamStore, store),
-      Effect.provide(f.layers),
-    );
-    yield* runtime.tick();
-    const plan = f.commands[0]!;
-    if (plan.type !== "thread.turn.start") throw new Error("Expected plan dispatch");
-    f.supersede(
-      plan,
-      '{"acceptance":["Combined result"],"tasks":[],"rationale":"Lead-only bounded work"}',
-      true,
-    );
-    yield* runtime.tick();
-    expect(f.commands).toHaveLength(1);
-    expect((yield* store.get(initial.id)).execution?.turns[0]?.status).toBe("dispatched");
-  }).pipe(Effect.provide(runtimeInfrastructure));
-});
-
-it.effect("defers review while a newer manual lead turn is running", () => {
-  const f = fixture();
-  return Effect.gen(function* () {
-    const store = yield* Store.make;
-    yield* store.create(initial);
-    const runtime = yield* make.pipe(
-      Effect.provideService(Store.TeamStore, store),
-      Effect.provide(f.layers),
-    );
-    yield* runtime.tick();
-    const plan = f.commands[0]!;
-    if (plan.type !== "thread.turn.start") throw new Error("Expected plan dispatch");
-    f.complete(
-      plan,
-      '{"acceptance":["Combined result"],"tasks":[{"id":"edit","objective":"Edit label","acceptance":["Exact label check"],"dependencies":[],"profileId":"p","context":"contract"}],"rationale":"bounded worker"}',
-    );
-    yield* runtime.tick();
-    const worker = f.commands[1]!;
-    if (worker.type !== "thread.turn.start") throw new Error("Expected worker dispatch");
-    f.supersede(plan, plan.message.text, true);
-    f.complete(worker, "Worker complete; commit abc.");
-    yield* runtime.tick();
-    expect(f.commands).toHaveLength(2);
-    const run = yield* store.get(initial.id);
-    expect(run.execution?.turns.find((turn) => turn.role === "worker")?.status).toBe("settled");
-    expect(run.execution?.turns.some((turn) => turn.role === "review")).toBe(false);
-  }).pipe(Effect.provide(runtimeInfrastructure));
-});
-
-it.effect("defers a lead reservation while a foreign pending turn start is projected", () => {
-  const f = fixture();
-  return Effect.gen(function* () {
-    const store = yield* Store.make;
-    yield* store.create(initial);
-    const runtime = yield* make.pipe(
-      Effect.provideService(Store.TeamStore, store),
-      Effect.provide(f.layers),
-    );
-    yield* runtime.tick();
-    const plan = f.commands[0]!;
-    if (plan.type !== "thread.turn.start") throw new Error("Expected plan dispatch");
-    f.complete(plan, '{"acceptance":["Combined result"],"tasks":[],"rationale":"lead"}');
-    f.pendingStarts.add(initial.execution!.leadThreadId);
-    yield* runtime.tick();
-    expect(f.commands).toHaveLength(1);
-    expect((yield* store.get(initial.id)).execution?.turns).toHaveLength(1);
-  }).pipe(Effect.provide(runtimeInfrastructure));
-});
-
-it.effect("persists attachments and sends them only on each managed thread's first turn", () => {
-  const f = fixture();
-  const attachments: NonNullable<TeamRun["attachments"]> = [
-    {
-      type: "image",
-      id: "pending-00000000-0000-4000-8000-000000000001",
-      name: "diagram.png",
-      mimeType: "image/png",
-      sizeBytes: 40,
-    },
-    {
-      type: "file",
-      id: "pending-00000000-0000-4000-8000-000000000002-txt",
-      name: "notes.txt",
-      mimeType: "text/plain",
-      sizeBytes: 20,
-    },
-  ];
-  return Effect.gen(function* () {
-    const config = yield* ServerConfig.ServerConfig;
-    const store = yield* Store.make;
-    const policy = yield* store.savePolicy({ ...initial.policy, mode: "shadow" });
-    const runtime = yield* make.pipe(
-      Effect.provideService(Store.TeamStore, store),
-      Effect.provide(f.layers),
-    );
-    const sourceBytes = [Buffer.alloc(40, 7), Buffer.alloc(20, 9)];
-    for (const [index, attachment] of attachments.entries()) {
-      const path = resolveAttachmentPath({ attachmentsDir: config.attachmentsDir, attachment });
-      if (!path) throw new Error("Expected pending attachment path");
-      NodeFS.writeFileSync(path, sourceBytes[index]!);
-    }
-
-    const started = yield* runtime.start({
-      commandId: "start-with-attachments",
-      projectId: initial.projectId,
-      draft: {
-        draftId: "attachment-draft",
-        revision: 0,
-        policyRevision: policy.revision,
-        prompt: initial.objective,
-        hasAttachments: true,
-      },
-      fingerprint: "test",
-      attachments,
-    });
-    expect(started.attachments).toEqual(attachments);
-    const plan = f.commands[0]!;
-    if (plan.type !== "thread.turn.start") throw new Error("Expected plan dispatch");
-    expect(plan.message.attachments).toHaveLength(attachments.length);
-    expect(plan.message.attachments.map((attachment) => attachment.id)).not.toEqual(
-      attachments.map((attachment) => attachment.id),
-    );
-    expect(
-      plan.message.attachments.every(
-        (attachment) => parseThreadSegmentFromAttachmentId(attachment.id) === plan.threadId,
-      ),
-    ).toBe(true);
-    const leadImagePath = resolveAttachmentPath({
-      attachmentsDir: config.attachmentsDir,
-      attachment: plan.message.attachments[0]!,
-    });
-    if (!leadImagePath) throw new Error("Expected lead image path");
-    NodeFS.writeFileSync(leadImagePath, Buffer.alloc(40, 3));
-    f.complete(
-      plan,
-      '{"acceptance":["Combined result"],"tasks":[{"id":"edit","objective":"Edit label","acceptance":["Exact label check"],"dependencies":[],"profileId":"p","context":"contract"}],"rationale":"bounded worker"}',
-    );
-
-    yield* runtime.tick();
-    const worker = f.commands[1]!;
-    if (worker.type !== "thread.turn.start") throw new Error("Expected worker dispatch");
-    expect(worker.message.attachments).toHaveLength(attachments.length);
-    expect(
-      worker.message.attachments.every(
-        (attachment) => parseThreadSegmentFromAttachmentId(attachment.id) === worker.threadId,
-      ),
-    ).toBe(true);
-    expect(worker.message.attachments.map((attachment) => attachment.id)).not.toEqual(
-      plan.message.attachments.map((attachment) => attachment.id),
-    );
-    const workerImagePath = resolveAttachmentPath({
-      attachmentsDir: config.attachmentsDir,
-      attachment: worker.message.attachments[0]!,
-    });
-    if (!workerImagePath) throw new Error("Expected worker image path");
-    expect(NodeFS.readFileSync(workerImagePath)).toEqual(sourceBytes[0]);
-    const pendingImagePath = resolveAttachmentPath({
-      attachmentsDir: config.attachmentsDir,
-      attachment: attachments[0]!,
-    });
-    if (!pendingImagePath) throw new Error("Expected pending image path");
-    expect(NodeFS.readFileSync(pendingImagePath)).toEqual(sourceBytes[0]);
-    expect(f.assessedDrafts.some((draft) => draft.role === "worker" && draft.hasAttachments)).toBe(
-      true,
-    );
-    f.complete(worker, "Worker complete; commit abc.");
-
-    yield* runtime.tick();
-    const review = f.commands[2]!;
-    if (review.type !== "thread.turn.start") throw new Error("Expected review dispatch");
-    expect(review.message.attachments).toEqual([]);
-    f.complete(
-      review,
-      '{"action":"correct","summary":"Add the missing boundary check","checks":[]}',
-    );
-
-    yield* runtime.tick();
-    const correction = f.commands[3]!;
-    if (correction.type !== "thread.turn.start") throw new Error("Expected correction dispatch");
-    expect(correction.threadId).toBe(worker.threadId);
-    expect(correction.message.attachments).toEqual([]);
-    expect((yield* store.get(started.id)).attachments).toEqual(attachments);
-
-    f.complete(correction, "Worker correction complete; commit def.");
-    yield* runtime.tick();
-    const correctedReview = f.commands[4]!;
-    if (correctedReview.type !== "thread.turn.start")
-      throw new Error("Expected corrected review dispatch");
-    expect(correctedReview.message.attachments).toEqual([]);
-    f.complete(
-      correctedReview,
-      '{"action":"accept","summary":"Correction verified","checks":[{"criterionIndex":0,"criterion":"Exact label check","command":"python3","args":[]}]}',
-    );
-    yield* runtime.tick();
-    const integrate = f.commands[5]!;
-    if (integrate.type !== "thread.turn.start") throw new Error("Expected integration dispatch");
-    expect(integrate.message.attachments).toEqual([]);
-    f.complete(
-      integrate,
-      '{"action":"accept","summary":"Combined result verified","checks":[{"criterionIndex":0,"criterion":"Combined result","command":"python3","args":[]}]}',
-    );
-    yield* runtime.tick();
-    expect((yield* store.get(started.id)).status).toBe("completed");
-    for (const attachment of attachments) {
-      const path = resolveAttachmentPath({ attachmentsDir: config.attachmentsDir, attachment });
-      if (!path) throw new Error("Expected pending attachment path");
-      expect(NodeFS.existsSync(path)).toBe(false);
-    }
-  }).pipe(Effect.provide(runtimeInfrastructure));
-});
 
 it.effect(
-  "retains a cancelled run source until its dispatched provider receipt is terminal",
+  "uses a single Worker when Auto confidently routes the objective to direct execution",
   () => {
-    const f = fixture();
-    const attachment = {
-      type: "image" as const,
-      id: "pending-00000000-0000-4000-8000-000000000021",
-      name: "diagram.png",
-      mimeType: "image/png",
-      sizeBytes: 8,
+    const frontierLead: TeamModelProfile = {
+      ...leadProfile,
+      id: "frontier-lead",
+      label: "Frontier Lead",
+      selection: { instanceId: ProviderInstanceId.make("openai"), model: "astra" },
+      lead: true,
+      worker: false,
+      capability: "frontier",
     };
+    const complexWorker: TeamModelProfile = {
+      ...failoverProfile,
+      id: "complex-worker",
+      label: "Complex Worker",
+      lead: false,
+      worker: true,
+      capability: "complex",
+    };
+    const generalWorker: TeamModelProfile = {
+      ...leadProfile,
+      id: "general-worker",
+      label: "General Worker",
+      selection: { instanceId: ProviderInstanceId.make("openai"), model: "luna" },
+      lead: false,
+      worker: true,
+      capability: "general",
+    };
+    const directPolicy: TeamSettings["policy"] = {
+      ...policy,
+      flowMode: "auto",
+      profiles: [frontierLead, complexWorker, generalWorker],
+    };
+    const f = fixture(null, true, {
+      advisorConfigured: true,
+      executionMode: "direct",
+      advisorSource: "jev",
+      settingsPolicy: directPolicy,
+    });
+
     return Effect.gen(function* () {
-      const config = yield* ServerConfig.ServerConfig;
-      const sourcePath = resolveAttachmentPath({
-        attachmentsDir: config.attachmentsDir,
-        attachment,
+      const runtime = yield* make;
+      const run = yield* runtime.start({
+        commandId: "direct-start",
+        projectId,
+        runtimeMode: "full-access",
+        prompt: "Rename the local helper and update its focused test",
+        attachments: [],
       });
-      if (!sourcePath) throw new Error("Expected pending attachment path");
-      NodeFS.writeFileSync(sourcePath, Buffer.from("original"));
 
-      const store = yield* Store.make;
-      const policy = yield* store.savePolicy({ ...initial.policy, mode: "shadow" });
-      const runtime = yield* make.pipe(
-        Effect.provideService(Store.TeamStore, store),
-        Effect.provide(f.layers),
-      );
-      const started = yield* runtime.start({
-        commandId: "cancel-with-attachments",
-        projectId: initial.projectId,
-        draft: {
-          draftId: "cancel-attachment-draft",
-          revision: 0,
-          policyRevision: policy.revision,
-          prompt: initial.objective,
-          hasAttachments: true,
+      expect(run.executionMode).toBe("direct");
+      expect(run.runtimeMode).toBe("full-access");
+      expect(run.policy).toEqual(directPolicy);
+      expect(run.lead).toMatchObject({ role: "lead", profileId: complexWorker.id, taskId: null });
+      expect(run.attempts[0]).toMatchObject({
+        role: "plan",
+        selection: complexWorker.selection,
+        owner: { profileId: complexWorker.id },
+      });
+      expect(f.executionModeCalls).toEqual([
+        {
+          objective: "Rename the local helper and update its focused test",
+          candidateProfileIds: [complexWorker.id, generalWorker.id],
         },
-        fingerprint: "test",
-        attachments: [attachment],
+      ]);
+      expect(f.profileCalls[0]).toEqual({
+        purpose: "worker",
+        candidateProfileIds: [complexWorker.id, generalWorker.id],
       });
-      const plan = f.commands[0]!;
-      if (plan.type !== "thread.turn.start") throw new Error("Expected plan dispatch");
-
-      const paused = yield* runtime.control({
-        id: started.id,
-        revision: started.revision,
-        action: "pause",
-      });
-      yield* runtime.tick();
-      expect(NodeFS.existsSync(sourcePath)).toBe(true);
-      const resumed = yield* runtime.control({
-        id: paused.id,
-        revision: paused.revision,
-        action: "resume",
-      });
-      yield* runtime.control({ id: resumed.id, revision: resumed.revision, action: "cancel" });
-      expect(NodeFS.existsSync(sourcePath)).toBe(true);
-      f.complete(plan, "Provider turn stopped.");
-      f.receipts.set(
-        plan.threadId,
-        (f.receipts.get(plan.threadId) ?? []).map((receipt) =>
-          receipt.pendingMessageId === plan.message.messageId
-            ? { ...receipt, state: "interrupted" as const }
-            : receipt,
+      expect(
+        run.attempts.some(
+          (candidate) => candidate.selection.model === frontierLead.selection.model,
         ),
-      );
-      yield* runtime.tick();
-      expect((yield* store.get(started.id)).status).toBe("cancelled");
-      expect(NodeFS.existsSync(sourcePath)).toBe(false);
-    }).pipe(Effect.provide(runtimeInfrastructure));
+      ).toBe(false);
+      const created = f.commands.find((command) => command.type === "thread.create");
+      const turn = f.commands.find((command) => command.type === "thread.turn.start");
+      expect(created?.type === "thread.create" && created.runtimeMode).toBe("full-access");
+      expect(turn?.type === "thread.turn.start" && turn.runtimeMode).toBe("full-access");
+    }).pipe(Effect.provide(f.layer));
   },
 );
 
-it.effect("cleans a terminal attachment lease on startup after terminal state persisted", () => {
-  const f = fixture();
-  const attachment = {
-    type: "image" as const,
-    id: "pending-00000000-0000-4000-8000-000000000022",
-    name: "diagram.png",
-    mimeType: "image/png",
-    sizeBytes: 8,
-  };
+it.effect("returns an existing Auto run without repeating hosted routing", () => {
+  const autoPolicy: TeamSettings["policy"] = { ...policy, flowMode: "auto" };
+  const f = fixture(null, true, {
+    advisorConfigured: true,
+    executionMode: "direct",
+    advisorSource: "jev",
+    settingsPolicy: autoPolicy,
+  });
+  const input = {
+    commandId: "duplicate-auto-start",
+    projectId,
+    runtimeMode: "approval-required",
+    prompt: "Update the focused runtime test",
+    attachments: [],
+  } as const;
+
   return Effect.gen(function* () {
-    const config = yield* ServerConfig.ServerConfig;
-    const sourcePath = resolveAttachmentPath({
-      attachmentsDir: config.attachmentsDir,
-      attachment,
-    });
-    if (!sourcePath) throw new Error("Expected pending attachment path");
-    NodeFS.writeFileSync(sourcePath, Buffer.from("original"));
+    const runtime = yield* make;
+    const first = yield* runtime.start(input);
+    const second = yield* runtime.start(input);
 
-    const store = yield* Store.make;
-    const policy = yield* store.savePolicy({ ...initial.policy, mode: "shadow" });
-    const runtime = yield* make.pipe(
-      Effect.provideService(Store.TeamStore, store),
-      Effect.provide(f.layers),
-    );
-    const started = yield* runtime.start({
-      commandId: "failed-with-attachments",
-      projectId: initial.projectId,
-      draft: {
-        draftId: "failed-attachment-draft",
-        revision: 0,
-        policyRevision: policy.revision,
-        prompt: initial.objective,
-        hasAttachments: true,
-      },
-      fingerprint: "test",
-      attachments: [attachment],
-    });
-    expect(NodeFS.existsSync(sourcePath)).toBe(true);
-    yield* store.update(
-      started.id,
-      started.revision,
-      (run) => ({
-        ...run,
-        status: "failed",
-        execution: {
-          ...run.execution!,
-          phase: "done",
-          turns: run.execution!.turns.map((turn) => ({
-            ...turn,
-            status: "settled",
-            result: "Terminal before cleanup",
-            succeeded: false,
-          })),
-        },
-      }),
-      "test-terminal-before-cleanup",
-    );
-
-    const restartedRuntime = yield* make.pipe(
-      Effect.provideService(Store.TeamStore, store),
-      Effect.provide(f.layers),
-    );
-    yield* restartedRuntime.tick();
-    expect(NodeFS.existsSync(sourcePath)).toBe(false);
-  }).pipe(Effect.provide(runtimeInfrastructure));
+    expect(second.id).toBe(first.id);
+    expect(f.executionModeCalls).toHaveLength(1);
+    expect(f.profileCalls).toHaveLength(1);
+  }).pipe(Effect.provide(f.layer));
 });
 
-it.effect("rejects a replayed command id when its attachment identity changed", () => {
-  const f = fixture();
-  const firstAttachment = {
-    type: "image" as const,
-    id: "pending-00000000-0000-4000-8000-000000000023",
-    name: "first.png",
-    mimeType: "image/png",
-    sizeBytes: 8,
+it.effect("keeps Auto when a routed objective has only one eligible execution profile", () => {
+  const workerOnly: TeamModelProfile = { ...leadProfile, lead: false, worker: true };
+  const singlePolicy: TeamSettings["policy"] = {
+    ...policy,
+    flowMode: "auto",
+    profiles: [workerOnly],
   };
-  const secondAttachment = {
-    ...firstAttachment,
-    id: "pending-00000000-0000-4000-8000-000000000024",
-    name: "second.png",
-  };
+  const f = fixture(null, true, {
+    advisorConfigured: true,
+    executionMode: "direct",
+    routeAdvisorSource: "jev",
+    profileAdvisorSource: "policy",
+    settingsPolicy: singlePolicy,
+  });
+
   return Effect.gen(function* () {
-    const config = yield* ServerConfig.ServerConfig;
-    for (const attachment of [firstAttachment, secondAttachment]) {
-      const path = resolveAttachmentPath({ attachmentsDir: config.attachmentsDir, attachment });
-      if (!path) throw new Error("Expected pending attachment path");
-      NodeFS.writeFileSync(path, Buffer.from("original"));
-    }
-    const store = yield* Store.make;
-    const policy = yield* store.savePolicy({ ...initial.policy, mode: "shadow" });
-    const runtime = yield* make.pipe(
-      Effect.provideService(Store.TeamStore, store),
-      Effect.provide(f.layers),
-    );
-    const draft = {
-      draftId: "replay-attachment-draft",
-      revision: 0,
-      policyRevision: policy.revision,
-      prompt: initial.objective,
-      hasAttachments: true,
-    };
-    yield* runtime.start({
-      commandId: "attachment-replay",
-      projectId: initial.projectId,
-      draft,
-      fingerprint: "test",
-      attachments: [firstAttachment],
+    const runtime = yield* make;
+    const run = yield* runtime.start({
+      commandId: "single-profile-auto-start",
+      projectId,
+      runtimeMode: "approval-required",
+      prompt: "Update the focused runtime test",
+      attachments: [],
     });
+
+    expect(run.executionMode).toBe("direct");
+    expect(run.policy.flowMode).toBe("auto");
+    expect(run.lead.profileId).toBe(workerOnly.id);
+    expect(teamThreadView(run)?.notice).toBeNull();
+    expect(f.executionModeCalls).toHaveLength(1);
+    expect(f.profileCalls).toEqual([]);
+  }).pipe(Effect.provide(f.layer));
+});
+
+it.effect("rejects Worker-only Auto when Smart Routing selects a managed team", () => {
+  const workerOnly: TeamModelProfile = { ...leadProfile, lead: false, worker: true };
+  const workerOnlyPolicy: TeamSettings["policy"] = {
+    ...policy,
+    flowMode: "auto",
+    profiles: [workerOnly],
+  };
+  const f = fixture(null, true, {
+    advisorConfigured: true,
+    executionMode: "orchestrated",
+    routeAdvisorSource: "jev",
+    settingsPolicy: workerOnlyPolicy,
+  });
+
+  return Effect.gen(function* () {
+    const runtime = yield* make;
     const error = yield* runtime
       .start({
-        commandId: "attachment-replay",
-        projectId: initial.projectId,
-        draft,
-        fingerprint: "test",
-        attachments: [secondAttachment],
+        commandId: "worker-only-managed-team",
+        projectId,
+        runtimeMode: "approval-required",
+        prompt: "Coordinate a multi-part change",
+        attachments: [],
       })
       .pipe(Effect.flip);
-    expect(error.code).toBe("conflict");
-    expect(error.message).toContain("different attachments");
-  }).pipe(Effect.provide(runtimeInfrastructure));
+
+    expect(error.code).toBe("unavailable");
+    expect(error.message).toContain("selected a managed team");
+    expect(error.message).toContain("Lead model");
+    expect(f.profileCalls).toEqual([]);
+  }).pipe(Effect.provide(f.layer));
 });
 
-it.effect("waits for open requests and advances after an optional request is dismissed", () => {
-  const f = fixture();
-  return Effect.gen(function* () {
-    const store = yield* Store.make;
-    yield* store.create(initial);
-    const runtime = yield* make.pipe(
-      Effect.provideService(Store.TeamStore, store),
-      Effect.provide(f.layers),
-    );
-    yield* runtime.tick();
-    const plan = f.commands[0]!;
-    if (plan.type !== "thread.turn.start") throw new Error("Expected plan");
-    f.complete(plan, '{"acceptance":["Combined result"],"tasks":[],"rationale":"Ready"}');
-    const request = {
-      id: EventId.make("optional-question"),
-      kind: "user-input.requested",
-      tone: "info" as const,
-      summary: "Optional preference",
-      turnId: TurnId.make(`turn-${plan.commandId}`),
-      createdAt: date,
-      payload: { requestId: "optional", responseMode: "message" },
-    };
-    f.setActivities(plan.threadId, [request]);
-    yield* runtime.tick();
-    expect(f.commands).toHaveLength(1);
-    expect((yield* store.get(initial.id)).execution?.turns[0]?.status).toBe("dispatched");
+it.effect("reports a missing Lead when Worker-only Auto falls back to Standard", () => {
+  const workerOnly: TeamModelProfile = { ...leadProfile, lead: false, worker: true };
+  const workerOnlyPolicy: TeamSettings["policy"] = {
+    ...policy,
+    flowMode: "auto",
+    profiles: [workerOnly],
+  };
+  const f = fixture(null, true, {
+    advisorConfigured: true,
+    executionMode: "orchestrated",
+    routeAdvisorSource: "policy",
+    settingsPolicy: workerOnlyPolicy,
+  });
 
-    f.setActivities(plan.threadId, [
-      request,
-      { ...request, id: EventId.make("optional-dismissed"), kind: "user-input.resolved" },
-    ]);
-    yield* runtime.tick();
-    expect((yield* store.get(initial.id)).execution?.phase).toBe("integrate");
-    expect(f.commands).toHaveLength(2);
-  }).pipe(Effect.provide(runtimeInfrastructure));
+  return Effect.gen(function* () {
+    const runtime = yield* make;
+    const error = yield* runtime
+      .start({
+        commandId: "worker-only-standard-fallback",
+        projectId,
+        runtimeMode: "approval-required",
+        prompt: "Handle the change",
+        attachments: [],
+      })
+      .pipe(Effect.flip);
+
+    expect(error.code).toBe("unavailable");
+    expect(error.message).toContain("fell back to Standard");
+    expect(error.message).toContain("Lead model");
+    expect(f.profileCalls).toEqual([]);
+  }).pipe(Effect.provide(f.layer));
 });
 
-it.effect("does not advance while an approval remains open", () => {
-  const f = fixture();
-  return Effect.gen(function* () {
-    const store = yield* Store.make;
-    yield* store.create(initial);
-    const runtime = yield* make.pipe(
-      Effect.provideService(Store.TeamStore, store),
-      Effect.provide(f.layers),
-    );
-    yield* runtime.tick();
-    const plan = f.commands[0]!;
-    if (plan.type !== "thread.turn.start") throw new Error("Expected plan");
-    f.complete(plan, '{"acceptance":["Combined result"],"tasks":[],"rationale":"Ready"}');
-    const approval = {
-      id: EventId.make("approval"),
-      kind: "approval.requested",
-      tone: "approval" as const,
-      summary: "Approve",
-      turnId: TurnId.make(`turn-${plan.commandId}`),
-      createdAt: date,
-      payload: { requestId: "approval" },
-    };
-    f.setActivities(plan.threadId, [approval]);
-    yield* runtime.tick();
-    expect(f.commands).toHaveLength(1);
-    expect((yield* store.get(initial.id)).execution?.turns[0]?.status).toBe("dispatched");
+it.effect(
+  "falls back to Standard when Auto execution succeeds but profile selection is uncertain",
+  () => {
+    const autoPolicy: TeamSettings["policy"] = { ...policy, flowMode: "auto" };
+    const f = fixture(null, true, {
+      advisorConfigured: true,
+      executionMode: "direct",
+      routeAdvisorSource: "jev",
+      profileAdvisorSource: "policy",
+      settingsPolicy: autoPolicy,
+    });
 
-    f.setActivities(plan.threadId, [
-      approval,
-      { ...approval, id: EventId.make("approved"), kind: "approval.resolved" },
-    ]);
-    yield* runtime.tick();
-    expect((yield* store.get(initial.id)).execution?.phase).toBe("integrate");
-  }).pipe(Effect.provide(runtimeInfrastructure));
+    return Effect.gen(function* () {
+      const runtime = yield* make;
+      const run = yield* runtime.start({
+        commandId: "profile-fallback-start",
+        projectId,
+        runtimeMode: "approval-required",
+        prompt: "Update the focused runtime test",
+        attachments: [],
+      });
+
+      expect(run.executionMode).toBe("orchestrated");
+      expect(run.policy.flowMode).toBe("standard");
+      expect(run.lead.profileId).toBe(leadProfile.id);
+      expect(run.decisions).toContain(
+        "Smart Routing was unavailable or uncertain. Flow continued with Standard using your saved model order.",
+      );
+      expect(f.executionModeCalls).toHaveLength(1);
+      expect(f.profileCalls).toHaveLength(1);
+    }).pipe(Effect.provide(f.layer));
+  },
+);
+
+it.effect(
+  "uses the sole Lead profile without hosted profile inference after Auto routes to a team",
+  () => {
+    const frontierLead: TeamModelProfile = {
+      ...leadProfile,
+      id: "frontier-lead",
+      label: "Frontier Lead",
+      selection: { instanceId: ProviderInstanceId.make("openai"), model: "astra" },
+      lead: true,
+      worker: false,
+      capability: "frontier",
+    };
+    const generalWorker: TeamModelProfile = {
+      ...failoverProfile,
+      id: "general-worker",
+      label: "General Worker",
+      lead: false,
+      worker: true,
+      capability: "general",
+    };
+    const routedPolicy: TeamSettings["policy"] = {
+      ...policy,
+      flowMode: "auto",
+      profiles: [generalWorker, frontierLead],
+    };
+    const f = fixture(null, true, {
+      advisorConfigured: true,
+      executionMode: "orchestrated",
+      advisorSource: "jev",
+      settingsPolicy: routedPolicy,
+    });
+
+    return Effect.gen(function* () {
+      const runtime = yield* make;
+      const run = yield* runtime.start({
+        commandId: "orchestrated-start",
+        projectId,
+        runtimeMode: "approval-required",
+        prompt: "Re-architect authentication across the server and web client",
+        attachments: [],
+      });
+
+      expect(run.executionMode).toBe("orchestrated");
+      expect(run.lead.profileId).toBe(frontierLead.id);
+      expect(f.profileCalls).toEqual([]);
+      expect(run.attempts[0]?.selection).toEqual(frontierLead.selection);
+    }).pipe(Effect.provide(f.layer));
+  },
+);
+
+it.effect("falls back visibly to Standard when Auto has no safe Worker routing candidate", () => {
+  const frontierLead: TeamModelProfile = {
+    ...leadProfile,
+    id: "frontier-only-lead",
+    label: "Frontier Only Lead",
+    lead: true,
+    worker: false,
+    capability: "frontier",
+  };
+  const routedPolicy: TeamSettings["policy"] = {
+    ...policy,
+    flowMode: "auto",
+    profiles: [frontierLead],
+  };
+  const f = fixture(null, true, { executionMode: "direct", settingsPolicy: routedPolicy });
+
+  return Effect.gen(function* () {
+    const runtime = yield* make;
+    const run = yield* runtime.start({
+      commandId: "no-direct-worker",
+      projectId,
+      runtimeMode: "approval-required",
+      prompt: "Rename one local helper",
+      attachments: [],
+    });
+
+    expect(run.executionMode).toBe("orchestrated");
+    expect(run.policy.flowMode).toBe("standard");
+    expect(run.lead.profileId).toBe(frontierLead.id);
+    expect(run.decisions).toContain(
+      "Smart Routing was unavailable or uncertain. Flow continued with Standard using your saved model order.",
+    );
+    expect(f.executionModeCalls).toEqual([]);
+    expect(f.profileCalls).toEqual([]);
+  }).pipe(Effect.provide(f.layer));
 });
 
-it.effect("follows the exact message-mode answer continuation", () => {
-  const f = fixture();
-  return Effect.gen(function* () {
-    const store = yield* Store.make;
-    yield* store.create(initial);
-    const runtime = yield* make.pipe(
-      Effect.provideService(Store.TeamStore, store),
-      Effect.provide(f.layers),
-    );
-    yield* runtime.tick();
-    const plan = f.commands[0]!;
-    if (plan.type !== "thread.turn.start") throw new Error("Expected plan");
-    f.complete(plan, "Which scope should I use?");
-    const turnId = TurnId.make(`turn-${plan.commandId}`);
-    const question = {
-      id: EventId.make("question"),
-      kind: "user-input.requested",
-      tone: "info" as const,
-      summary: "Choose scope",
-      turnId,
-      createdAt: date,
-      payload: { requestId: "scope", responseMode: "message" },
-    };
-    f.setActivities(plan.threadId, [question]);
-    yield* runtime.tick();
-    expect(f.commands).toHaveLength(1);
+it.effect("rejects a run with no runnable Lead or Worker without calling hosted routing", () => {
+  const emptyPolicy: TeamSettings["policy"] = {
+    ...policy,
+    flowMode: "auto",
+    profiles: [],
+  };
+  const f = fixture(null, true, {
+    executionMode: "direct",
+    advisorSource: "jev",
+    settingsPolicy: emptyPolicy,
+  });
 
-    f.setActivities(plan.threadId, [
-      question,
-      {
-        ...question,
-        id: EventId.make("answer"),
-        kind: "user-input.resolved",
-        payload: { requestId: "scope", responseMode: "message", answers: { scope: "frontend" } },
+  return Effect.gen(function* () {
+    const runtime = yield* make;
+    const error = yield* runtime
+      .start({
+        commandId: "no-runnable-models",
+        projectId,
+        runtimeMode: "approval-required",
+        prompt: "Handle the task",
+        attachments: [],
+      })
+      .pipe(Effect.flip);
+
+    expect(error.code).toBe("unavailable");
+    expect(error.message).toContain("Lead model");
+    expect(f.executionModeCalls).toEqual([]);
+    expect(f.profileCalls).toEqual([]);
+  }).pipe(Effect.provide(f.layer));
+});
+
+it.effect("ignores delegated plan tasks in direct mode and proceeds with the same agent", () => {
+  const directWorker: TeamModelProfile = {
+    ...leadProfile,
+    lead: false,
+    worker: true,
+    capability: "general",
+  };
+  const directPolicy: TeamSettings["policy"] = { ...policy, profiles: [directWorker] };
+  const directOwner = {
+    role: "lead" as const,
+    profileId: directWorker.id,
+    threadId: leadThreadId,
+    taskId: null,
+  };
+  const plan = attempt({
+    id: "direct-plan",
+    role: "plan",
+    owner: directOwner,
+    status: "succeeded",
+    result: JSON.stringify({
+      acceptance: ["Focused change is verified"],
+      tasks: [
+        {
+          id: "should-not-run",
+          objective: "Delegate the supposedly simple edit",
+          acceptance: ["Delegated edit is complete"],
+          dependencies: ["missing-dependency"],
+          context: "This graph is intentionally invalid because direct mode must ignore it.",
+        },
+      ],
+      rationale: "A delegated task was proposed.",
+    }),
+  });
+  const seed = baseRun({
+    executionMode: "direct",
+    policy: directPolicy,
+    lead: directOwner,
+    status: "planning",
+    acceptance: [],
+    workspace: {
+      root: "/repo",
+      baseCommit: head,
+      integrationHead: head,
+      leadBranch: null,
+      leadWorktreePath: null,
+    },
+    attempts: [plan],
+  });
+  const f = fixture(seed);
+
+  return Effect.gen(function* () {
+    const runtime = yield* make;
+    yield* runtime.tick();
+    const run = f.current()!;
+
+    expect(run.tasks).toEqual([]);
+    expect(run.status).toBe("review");
+    expect(run.decisions.at(-1)).toContain("Dispatch enforced direct execution");
+    expect(run.attempts.some((candidate) => candidate.role === "work")).toBe(false);
+    expect(run.attempts.findLast((candidate) => candidate.role === "integrate")).toMatchObject({
+      owner: { profileId: directWorker.id, threadId: directOwner.threadId },
+      taskId: null,
+    });
+    expect(f.createdWorktrees).toHaveLength(1);
+    expect(f.createdWorktrees[0]?.newRefName).toContain("/lead");
+    expect(f.createdWorktrees.some((worktree) => worktree.newRefName?.includes("/task/"))).toBe(
+      false,
+    );
+  }).pipe(Effect.provide(f.layer));
+});
+
+it.effect(
+  "Standard assigns workers from saved order even when the Lead prefers another profile",
+  () => {
+    const plan = attempt({
+      id: "standard-plan-with-preference",
+      role: "plan",
+      owner: baseRun().lead,
+      status: "succeeded",
+      result: JSON.stringify({
+        acceptance: ["The task is verified"],
+        tasks: [
+          {
+            id: "standard-task",
+            objective: "Implement the bounded change",
+            acceptance: ["Focused verification passes"],
+            dependencies: [],
+            preferredProfileId: failoverProfile.id,
+            context: "The Lead preference must not override Standard saved order.",
+          },
+        ],
+        rationale: "Delegate one bounded task.",
+      }),
+    });
+    const f = fixture(
+      baseRun({
+        status: "planning",
+        acceptance: [],
+        attempts: [plan],
+      }),
+    );
+
+    return Effect.gen(function* () {
+      const runtime = yield* make;
+      yield* runtime.tick();
+      const run = f.current()!;
+
+      expect(run.policy.flowMode).toBe("standard");
+      expect(run.tasks[0]?.owner.profileId).toBe(leadProfile.id);
+      expect(f.profileCalls).toEqual([]);
+    }).pipe(Effect.provide(f.layer));
+  },
+);
+
+it.effect("stops hosted Worker selection after the first Auto profile fallback", () => {
+  const autoPolicy: TeamSettings["policy"] = { ...policy, flowMode: "auto" };
+  const plan = attempt({
+    id: "auto-plan-profile-fallback",
+    role: "plan",
+    owner: baseRun().lead,
+    status: "succeeded",
+    result: JSON.stringify({
+      acceptance: ["Both tasks are verified"],
+      tasks: [
+        {
+          id: "auto-task-a",
+          objective: "Implement change A",
+          acceptance: ["A passes"],
+          dependencies: [],
+          preferredProfileId: failoverProfile.id,
+          context: "Independent task A",
+        },
+        {
+          id: "auto-task-b",
+          objective: "Implement change B",
+          acceptance: ["B passes"],
+          dependencies: [],
+          preferredProfileId: failoverProfile.id,
+          context: "Independent task B",
+        },
+      ],
+      rationale: "Delegate two independent tasks.",
+    }),
+  });
+  const f = fixture(
+    baseRun({
+      status: "planning",
+      policy: autoPolicy,
+      acceptance: [],
+      attempts: [plan],
+    }),
+    true,
+    { profileAdvisorSource: "policy" },
+  );
+
+  return Effect.gen(function* () {
+    const runtime = yield* make;
+    yield* runtime.tick();
+    const run = f.current()!;
+
+    expect(run.policy.flowMode).toBe("standard");
+    expect(run.tasks.map((task) => task.owner.profileId)).toEqual([leadProfile.id, leadProfile.id]);
+    expect(run.decisions).toContain(
+      "Smart Routing was unavailable or uncertain. Flow continued with Standard using your saved model order.",
+    );
+    expect(f.profileCalls).toHaveLength(1);
+  }).pipe(Effect.provide(f.layer));
+});
+
+it.effect(
+  "pauses for a user decision with comparable alternatives when the active provider limit is hit",
+  () => {
+    const leadThreadId = ThreadId.make("team-limit-lead");
+    const attemptId = "attempt-limit";
+    const seed: TeamRun = {
+      id: "limit-run",
+      commandId: "limit-command",
+      projectId,
+      revision: 0,
+      executionMode: "orchestrated",
+      runtimeMode: "approval-required",
+      prompt: "Migrate the API",
+      policy,
+      lead: { role: "lead", profileId: leadProfile.id, threadId: leadThreadId, taskId: null },
+      acceptance: ["API migration is verified"],
+      decisions: [],
+      status: "running",
+      statusReason: null,
+      workspace: {
+        root: "/repo",
+        baseCommit: head,
+        integrationHead: head,
+        leadBranch: "orchestration/limit-run/lead",
+        leadWorktreePath: "/repo/.dispatch-worktrees/lead",
       },
-    ]);
-    yield* runtime.tick();
-    expect(f.commands).toHaveLength(1);
+      tasks: [],
+      attempts: [
+        {
+          id: attemptId,
+          commandId: "attempt-limit-command",
+          requestMessageId: "attempt-limit-message" as never,
+          taskId: null,
+          role: "integrate",
+          sequence: 0,
+          owner: { role: "lead", profileId: leadProfile.id, threadId: leadThreadId, taskId: null },
+          selection: leadProfile.selection,
+          prompt: "Verify the run",
+          attachments: [],
+          status: "reserved",
+          providerTurnId: null,
+          resultMessageId: null,
+          result: null,
+          failure: null,
+          createdAt: now,
+          updatedAt: now,
+        },
+      ],
+      messages: [],
+      settlements: [],
+      failovers: [],
+      attachments: [],
+      createdAt: now,
+      updatedAt: now,
+    };
+    const f = fixture(seed, false);
+    return Effect.gen(function* () {
+      const runtime = yield* make;
+      yield* runtime.tick();
+      const run = f.current()!;
 
-    const result = '{"acceptance":["Combined result"],"tasks":[],"rationale":"Confirmed scope"}';
-    f.complete(
+      expect(run.status).toBe("awaiting-provider-decision");
+      expect(run.failovers).toHaveLength(1);
+      expect(run.failovers[0]).toMatchObject({
+        attemptId,
+        fromProfileId: leadProfile.id,
+        candidateProfileIds: [failoverProfile.id],
+        status: "pending",
+        trigger: { kind: "provider-limit" },
+      });
+      expect(f.commands).toEqual([]);
+    }).pipe(Effect.provide(f.layer));
+  },
+);
+
+it.effect("uses Worker-role candidates when a direct executor needs provider failover", () => {
+  const directWorker: TeamModelProfile = {
+    ...leadProfile,
+    label: "Direct Worker",
+    lead: false,
+    worker: true,
+    capability: "general",
+  };
+  const replacementWorker: TeamModelProfile = {
+    ...failoverProfile,
+    id: "replacement-worker",
+    label: "Replacement Worker",
+    lead: false,
+    worker: true,
+    capability: "general",
+  };
+  const leadOnly: TeamModelProfile = {
+    ...failoverProfile,
+    id: "lead-only",
+    label: "Lead Only",
+    selection: { instanceId: ProviderInstanceId.make("google"), model: "frontier" },
+    lead: true,
+    worker: false,
+    capability: "frontier",
+  };
+  const directPolicy: TeamSettings["policy"] = {
+    ...policy,
+    profiles: [directWorker, leadOnly, replacementWorker],
+  };
+  const directOwner = {
+    role: "lead" as const,
+    profileId: directWorker.id,
+    threadId: leadThreadId,
+    taskId: null,
+  };
+  const limited = attempt({
+    id: "direct-provider-limit",
+    role: "integrate",
+    owner: directOwner,
+  });
+  const f = fixture(
+    baseRun({
+      executionMode: "direct",
+      policy: directPolicy,
+      lead: directOwner,
+      status: "review",
+      attempts: [limited],
+    }),
+    false,
+  );
+
+  return Effect.gen(function* () {
+    const runtime = yield* make;
+    yield* runtime.tick();
+    const run = f.current()!;
+
+    expect(run.status).toBe("awaiting-provider-decision");
+    expect(run.failovers).toHaveLength(1);
+    expect(run.failovers[0]).toMatchObject({
+      attemptId: limited.id,
+      fromProfileId: directWorker.id,
+      candidateProfileIds: [replacementWorker.id],
+      status: "pending",
+    });
+    expect(run.failovers[0]?.candidateProfileIds).not.toContain(leadOnly.id);
+  }).pipe(Effect.provide(f.layer));
+});
+
+it.effect(
+  "requires a provider decision for auto failover when capability metadata and Smart Routing are unavailable",
+  () => {
+    const unknownLeadProfile: TeamModelProfile = { ...leadProfile, capability: undefined };
+    const autoPolicy: TeamSettings["policy"] = {
+      ...policy,
+      flowMode: "auto",
+      providerLimitBehavior: "auto",
+      profiles: [unknownLeadProfile, failoverProfile, secondFailoverProfile],
+    };
+    const limited = attempt({
+      id: "auto-limit-without-capability",
+      role: "integrate",
+      owner: baseRun().lead,
+    });
+    const f = fixture(
+      baseRun({
+        policy: autoPolicy,
+        attempts: [limited],
+      }),
+      false,
+    );
+
+    return Effect.gen(function* () {
+      const runtime = yield* make;
+      yield* runtime.tick();
+      const run = f.current()!;
+
+      expect(run.status).toBe("awaiting-provider-decision");
+      expect(run.statusReason).toContain("cannot prove an equivalent automatic replacement");
+      expect(run.failovers).toHaveLength(1);
+      expect(run.failovers[0]).toMatchObject({
+        attemptId: limited.id,
+        fromProfileId: unknownLeadProfile.id,
+        candidateProfileIds: [failoverProfile.id, secondFailoverProfile.id],
+        status: "pending",
+      });
+      expect(run.attempts).toHaveLength(1);
+      expect(f.commands).toEqual([]);
+    }).pipe(Effect.provide(f.layer));
+  },
+);
+
+it.effect(
+  "requires a provider decision when Smart Routing falls back to policy without capability metadata",
+  () => {
+    const unknownLeadProfile: TeamModelProfile = { ...leadProfile, capability: undefined };
+    const autoPolicy: TeamSettings["policy"] = {
+      ...policy,
+      flowMode: "auto",
+      providerLimitBehavior: "auto",
+      profiles: [unknownLeadProfile, failoverProfile, secondFailoverProfile],
+    };
+    const limited = attempt({
+      id: "auto-limit-jev-policy-fallback",
+      role: "integrate",
+      owner: baseRun().lead,
+    });
+    const f = fixture(
+      baseRun({
+        policy: autoPolicy,
+        attempts: [limited],
+      }),
+      false,
+      { advisorConfigured: true, advisorSource: "policy" },
+    );
+
+    return Effect.gen(function* () {
+      const runtime = yield* make;
+      yield* runtime.tick();
+      const run = f.current()!;
+
+      expect(run.status).toBe("awaiting-provider-decision");
+      expect(run.policy.flowMode).toBe("standard");
+      expect(run.decisions).toContain(
+        "Smart Routing was unavailable or uncertain. Flow continued with Standard using your saved model order.",
+      );
+      expect(run.statusReason).toBe(
+        "A provider limit was reached, but Dispatch cannot prove an equivalent automatic replacement because capability metadata is missing and Smart Routing did not return a confident decision. Choose another selected provider.",
+      );
+      expect(run.failovers).toHaveLength(1);
+      expect(run.failovers[0]).toMatchObject({
+        attemptId: limited.id,
+        fromProfileId: unknownLeadProfile.id,
+        candidateProfileIds: [failoverProfile.id, secondFailoverProfile.id],
+        status: "pending",
+        decision: null,
+      });
+      expect(run.attempts).toHaveLength(1);
+      expect(run.attempts[0]?.id).toBe(limited.id);
+      expect(f.commands).toEqual([]);
+    }).pipe(Effect.provide(f.layer));
+  },
+);
+
+it.effect(
+  "keeps Auto and skips hosted profile selection when one capability-safe failover remains",
+  () => {
+    const autoPolicy: TeamSettings["policy"] = {
+      ...policy,
+      flowMode: "auto",
+      providerLimitBehavior: "auto",
+    };
+    const limited = attempt({
+      id: "auto-single-safe-failover",
+      role: "integrate",
+      owner: baseRun().lead,
+    });
+    const f = fixture(
+      baseRun({
+        policy: autoPolicy,
+        status: "review",
+        attempts: [limited],
+      }),
+      false,
+      { advisorConfigured: true, profileAdvisorSource: "policy" },
+    );
+
+    return Effect.gen(function* () {
+      const runtime = yield* make;
+      yield* runtime.tick();
+      const run = f.current()!;
+
+      expect(run.policy.flowMode).toBe("auto");
+      expect(run.failovers[0]).toMatchObject({
+        status: "applied",
+        candidateProfileIds: [failoverProfile.id],
+        decision: {
+          action: "switch",
+          profileId: failoverProfile.id,
+          source: "policy",
+        },
+      });
+      expect(f.profileCalls).toEqual([]);
+    }).pipe(Effect.provide(f.layer));
+  },
+);
+
+it.effect(
+  "falls back to Standard and uses saved equivalent order when Auto failover profile selection is uncertain",
+  () => {
+    const autoPolicy: TeamSettings["policy"] = {
+      ...policy,
+      flowMode: "auto",
+      providerLimitBehavior: "auto",
+      profiles: [leadProfile, failoverProfile, secondFailoverProfile],
+    };
+    const limited = attempt({
+      id: "auto-limit-profile-fallback",
+      role: "integrate",
+      owner: baseRun().lead,
+    });
+    const f = fixture(
+      baseRun({
+        policy: autoPolicy,
+        status: "review",
+        attempts: [limited],
+      }),
+      false,
+      { advisorConfigured: true, profileAdvisorSource: "policy" },
+    );
+
+    return Effect.gen(function* () {
+      const runtime = yield* make;
+      yield* runtime.tick();
+      const run = f.current()!;
+      const replacement = run.attempts.find((candidate) => candidate.id !== limited.id);
+
+      expect(run.policy.flowMode).toBe("standard");
+      expect(run.decisions).toContain(
+        "Smart Routing was unavailable or uncertain. Flow continued with Standard using your saved model order.",
+      );
+      expect(run.failovers[0]).toMatchObject({
+        status: "applied",
+        decision: {
+          action: "switch",
+          profileId: failoverProfile.id,
+          source: "policy",
+        },
+      });
+      expect(replacement).toMatchObject({ owner: { profileId: failoverProfile.id } });
+      expect(f.profileCalls).toHaveLength(1);
+    }).pipe(Effect.provide(f.layer));
+  },
+);
+
+it.effect(
+  "allows automatic failover when Smart Routing confidently selects the alternate provider without capability metadata",
+  () => {
+    const unknownLeadProfile: TeamModelProfile = { ...leadProfile, capability: undefined };
+    const autoPolicy: TeamSettings["policy"] = {
+      ...policy,
+      flowMode: "auto",
+      providerLimitBehavior: "auto",
+      profiles: [unknownLeadProfile, failoverProfile, secondFailoverProfile],
+    };
+    const limited = attempt({
+      id: "auto-limit-jev-confident",
+      role: "integrate",
+      owner: baseRun().lead,
+    });
+    const f = fixture(
+      baseRun({
+        policy: autoPolicy,
+        attempts: [limited],
+      }),
+      false,
+      { advisorConfigured: true, advisorSource: "jev" },
+    );
+
+    return Effect.gen(function* () {
+      const runtime = yield* make;
+      yield* runtime.tick();
+      const run = f.current()!;
+      const replacement = run.attempts.find((candidate) => candidate.id !== limited.id);
+
+      expect(run.status).toBe("review");
+      expect(run.statusReason).toBeNull();
+      expect(run.failovers).toHaveLength(1);
+      expect(run.failovers[0]).toMatchObject({
+        attemptId: limited.id,
+        fromProfileId: unknownLeadProfile.id,
+        candidateProfileIds: [failoverProfile.id, secondFailoverProfile.id],
+        status: "applied",
+        decision: {
+          action: "switch",
+          profileId: failoverProfile.id,
+          source: "advisor",
+        },
+      });
+      expect(replacement).toMatchObject({
+        role: "integrate",
+        taskId: null,
+        status: "running",
+        owner: { profileId: failoverProfile.id },
+      });
+      expect(run.attempts).toHaveLength(2);
+      expect(
+        f.commands.some(
+          (command) =>
+            command.type === "thread.turn.start" &&
+            command.threadId === replacement?.owner.threadId,
+        ),
+      ).toBe(true);
+      const replacementCreate = f.commands.find(
+        (command) =>
+          command.type === "thread.create" && command.threadId === replacement?.owner.threadId,
+      );
+      const replacementTurn = f.commands.find(
+        (command) =>
+          command.type === "thread.turn.start" && command.threadId === replacement?.owner.threadId,
+      );
+      expect(replacementCreate?.type === "thread.create" && replacementCreate.runtimeMode).toBe(
+        "approval-required",
+      );
+      expect(replacementTurn?.type === "thread.turn.start" && replacementTurn.runtimeMode).toBe(
+        "approval-required",
+      );
+    }).pipe(Effect.provide(f.layer));
+  },
+);
+
+it.effect("restart continues an existing managed thread with the frozen approval mode", () => {
+  const f = fixture(baseRun({ status: "review", runtimeMode: "auto-accept-edits" }), true, {
+    existingThreads: [leadThreadId],
+  });
+
+  return Effect.gen(function* () {
+    const runtime = yield* make;
+    yield* runtime.tick();
+
+    expect(
+      f.commands.some(
+        (command) => command.type === "thread.create" && command.threadId === leadThreadId,
+      ),
+    ).toBe(false);
+    const continuation = f.commands.find(
+      (command) => command.type === "thread.turn.start" && command.threadId === leadThreadId,
+    );
+    expect(continuation?.type === "thread.turn.start" && continuation.runtimeMode).toBe(
+      "auto-accept-edits",
+    );
+  }).pipe(Effect.provide(f.layer));
+});
+
+it.effect("dispatches a newly reserved worker attempt in the same scheduler tick", () => {
+  const workerThreadId = ThreadId.make("team-runtime-worker");
+  const task: TeamTask = {
+    id: "worker-task",
+    objective: "Implement the worker slice",
+    acceptance: ["Worker slice is verified"],
+    dependencies: [],
+    owner: {
+      role: "worker",
+      profileId: leadProfile.id,
+      threadId: workerThreadId,
+      taskId: "worker-task",
+    },
+    branch: null,
+    worktreePath: null,
+    status: "pending",
+    attemptIds: [],
+    settlementId: null,
+    result: null,
+  };
+  const f = fixture(baseRun({ tasks: [task] }));
+
+  return Effect.gen(function* () {
+    const runtime = yield* make;
+    yield* runtime.tick();
+
+    const run = f.current()!;
+    const work = run.attempts.find((candidate) => candidate.role === "work");
+    expect(work).toMatchObject({ taskId: task.id, status: "running" });
+    expect(
+      f.commands.some(
+        (command) => command.type === "thread.turn.start" && command.threadId === workerThreadId,
+      ),
+    ).toBe(true);
+  }).pipe(Effect.provide(f.layer));
+});
+
+it.effect("dispatches a newly reserved lead review in the same scheduler tick", () => {
+  const workerThreadId = ThreadId.make("team-runtime-review-worker");
+  const taskId = "review-task";
+  const workerOwner: TeamAttempt["owner"] = {
+    role: "worker",
+    profileId: leadProfile.id,
+    threadId: workerThreadId,
+    taskId,
+  };
+  const work = attempt({
+    id: "completed-work",
+    role: "work",
+    owner: workerOwner,
+    taskId,
+    status: "succeeded",
+    result: JSON.stringify({
+      summary: "Worker finished",
+      commit: head,
+      changedFiles: ["src/runtime.ts"],
+      checks: [],
+      limitations: [],
+    }),
+  });
+  const task: TeamTask = {
+    id: taskId,
+    objective: "Implement the reviewed slice",
+    acceptance: ["Reviewed slice is correct"],
+    dependencies: [],
+    owner: workerOwner,
+    branch: `orchestration/runtime-run/task/${taskId}`,
+    worktreePath: "/repo/.dispatch-worktrees/review-task",
+    status: "running",
+    attemptIds: [work.id],
+    settlementId: null,
+    result: null,
+  };
+  const f = fixture(baseRun({ tasks: [task], attempts: [work] }));
+
+  return Effect.gen(function* () {
+    const runtime = yield* make;
+    yield* runtime.tick();
+
+    const run = f.current()!;
+    const review = run.attempts.find((candidate) => candidate.role === "review");
+    expect(review).toMatchObject({ taskId, status: "running" });
+    expect(
+      f.commands.some(
+        (command) => command.type === "thread.turn.start" && command.threadId === leadThreadId,
+      ),
+    ).toBe(true);
+  }).pipe(Effect.provide(f.layer));
+});
+
+it.effect("dispatches a newly reserved integration attempt in the same scheduler tick", () => {
+  const f = fixture(baseRun({ status: "review" }));
+
+  return Effect.gen(function* () {
+    const runtime = yield* make;
+    yield* runtime.tick();
+
+    const run = f.current()!;
+    const integration = run.attempts.find((candidate) => candidate.role === "integrate");
+    expect(integration).toMatchObject({ status: "running" });
+    expect(
+      f.commands.some(
+        (command) => command.type === "thread.turn.start" && command.threadId === leadThreadId,
+      ),
+    ).toBe(true);
+  }).pipe(Effect.provide(f.layer));
+});
+
+it.effect("enforces lead-only planning and dispatches final integration in the same tick", () => {
+  const leadOnlyPolicy: TeamSettings["policy"] = { ...policy, maxActive: 1 };
+  const planAcceptance = ["The complete lead-only objective is verified"];
+  const plan = attempt({
+    id: "lead-only-plan",
+    role: "plan",
+    owner: baseRun().lead,
+    status: "succeeded",
+    result: JSON.stringify({
+      acceptance: planAcceptance,
+      tasks: [
+        {
+          id: "should-not-run",
+          objective: "Delegate work even though only the lead is allowed",
+          acceptance: ["Worker result exists"],
+          dependencies: [],
+          preferredProfileId: leadProfile.id,
+          context: "This proposal must be ignored by the runtime.",
+        },
+      ],
+      rationale: "A worker could do this independently.",
+    }),
+  });
+  const f = fixture(
+    baseRun({
+      status: "planning",
+      policy: leadOnlyPolicy,
+      acceptance: [],
+      attempts: [plan],
+    }),
+  );
+
+  return Effect.gen(function* () {
+    const runtime = yield* make;
+    yield* runtime.tick();
+
+    const run = f.current()!;
+    const integration = run.attempts.find(
+      (candidate) => candidate.role === "integrate" && candidate.taskId === null,
+    );
+    expect(run.policy.maxActive).toBe(1);
+    expect(run.acceptance).toEqual(planAcceptance);
+    expect(run.tasks).toEqual([]);
+    expect(run.status).toBe("review");
+    expect(run.decisions.at(-1)).toContain(
+      "Dispatch enforced Lead-only execution because maxActive is 1; delegated tasks were not scheduled.",
+    );
+    expect(integration).toMatchObject({
+      role: "integrate",
+      taskId: null,
+      status: "running",
+      owner: { role: "lead", threadId: leadThreadId },
+    });
+    expect(f.createdWorktrees).toEqual([]);
+    expect(
+      f.commands
+        .filter((command) => command.type === "thread.create")
+        .map((command) => command.threadId),
+    ).toEqual([leadThreadId]);
+    expect(
+      f.commands.some(
+        (command) =>
+          command.type === "thread.turn.start" && command.threadId === integration?.owner.threadId,
+      ),
+    ).toBe(true);
+    expect(
+      f.commands.some(
+        (command) => "threadId" in command && String(command.threadId).includes("-worker-"),
+      ),
+    ).toBe(false);
+  }).pipe(Effect.provide(f.layer));
+});
+
+it.effect(
+  "does not dispatch two lead-owned pending attempts concurrently to the same lead thread",
+  () => {
+    const first = attempt({
+      id: "lead-review-pending",
+      role: "review",
+      owner: baseRun().lead,
+    });
+    const second = attempt({
+      id: "lead-integration-pending",
+      role: "integrate",
+      owner: baseRun().lead,
+      sequence: 1,
+    });
+    const f = fixture(baseRun({ status: "review", attempts: [first, second] }));
+
+    return Effect.gen(function* () {
+      const runtime = yield* make;
+      yield* runtime.tick();
+
+      const starts = f.commands.filter(
+        (command): command is Extract<OrchestrationCommand, { type: "thread.turn.start" }> =>
+          command.type === "thread.turn.start",
+      );
+      expect(starts).toHaveLength(1);
+      expect(starts[0]?.threadId).toBe(leadThreadId);
+      expect(f.current()!.attempts.map(({ id, status }) => ({ id, status }))).toEqual([
+        { id: first.id, status: "running" },
+        { id: second.id, status: "reserved" },
+      ]);
+    }).pipe(Effect.provide(f.layer));
+  },
+);
+
+function applyingSettlementSeed(): {
+  readonly run: TeamRun;
+  readonly settlement: TeamSettlement;
+  readonly workerHead: string;
+} {
+  const workerHead = "b".repeat(40);
+  const workerThreadId = ThreadId.make("team-runtime-settlement-worker");
+  const taskId = "settlement-task";
+  const owner: TeamTask["owner"] = {
+    role: "worker",
+    profileId: leadProfile.id,
+    threadId: workerThreadId,
+    taskId,
+  };
+  const settlement: TeamSettlement = {
+    id: "settlement-applying",
+    taskId,
+    attemptId: "settlement-work",
+    owner,
+    sourceWorktreePath: "/repo/.dispatch-worktrees/settlement-task",
+    baseCommit: head,
+    headCommit: workerHead,
+    appliedCommit: null,
+    status: "applying",
+    summary: "Worker reviewed and ready",
+    createdAt: now,
+    updatedAt: now,
+  };
+  const task: TeamTask = {
+    id: taskId,
+    objective: "Apply the worker settlement",
+    acceptance: ["Worker commit is integrated"],
+    dependencies: [],
+    owner,
+    branch: `orchestration/runtime-run/task/${taskId}`,
+    worktreePath: settlement.sourceWorktreePath,
+    status: "settling",
+    attemptIds: [settlement.attemptId],
+    settlementId: settlement.id,
+    result: "Worker reviewed and ready",
+  };
+  return {
+    workerHead,
+    settlement,
+    run: baseRun({
+      status: "settling",
+      tasks: [task],
+      settlements: [settlement],
+    }),
+  };
+}
+
+function appliedSettlementSeed(): {
+  readonly run: TeamRun;
+  readonly settlement: TeamSettlement;
+  readonly workerPath: string;
+  readonly workerBranch: string;
+} {
+  const seed = applyingSettlementSeed();
+  const appliedCommit = "c".repeat(40);
+  const settlement: TeamSettlement = {
+    ...seed.settlement,
+    status: "applied",
+    appliedCommit,
+  };
+  const task = seed.run.tasks[0]!;
+  return {
+    settlement,
+    workerPath: task.worktreePath!,
+    workerBranch: task.branch!,
+    run: baseRun({
+      status: "running",
+      workspace: { ...seed.run.workspace!, integrationHead: appliedCommit },
+      tasks: [{ ...task, status: "settled" }],
+      settlements: [settlement],
+    }),
+  };
+}
+
+it.effect(
+  "clears worker workspace metadata after a normal applied settlement cleanup succeeds",
+  () => {
+    const seed = applyingSettlementSeed();
+    const ready: TeamSettlement = { ...seed.settlement, status: "ready" };
+    const integratedHead = "f".repeat(40);
+    const workerPath = seed.run.tasks[0]!.worktreePath!;
+    const workerBranch = seed.run.tasks[0]!.branch!;
+    const f = fixture(
+      baseRun({
+        status: "settling",
+        tasks: seed.run.tasks,
+        settlements: [ready],
+      }),
+      true,
       {
-        ...plan,
-        commandId: CommandId.make("question-answer"),
-        message: {
-          ...plan.message,
-          messageId: MessageId.make("async-answer:scope"),
-          text: "frontend",
+        process: (input) => {
+          if (input.command !== "git") return undefined;
+          if (input.args[0] === "rev-list") return { stdout: "1\n" };
+          if (input.args[0] === "merge" && input.args[1] === "--no-edit") return { code: 0 };
+          if (input.args[0] === "rev-parse" && input.args[1] === "HEAD")
+            return { stdout: `${integratedHead}\n` };
+          return undefined;
         },
       },
-      result,
     );
-    yield* runtime.tick();
-    const run = yield* store.get(initial.id);
-    expect(run.execution?.turns[0]?.result).toBe(result);
-    expect(run.execution?.turns[0]?.succeeded).toBe(true);
-    expect(run.execution?.phase).toBe("integrate");
-  }).pipe(Effect.provide(runtimeInfrastructure));
-});
 
-it.effect("pauses when the provider cannot start the message-mode answer continuation", () => {
-  const f = fixture();
-  return Effect.gen(function* () {
-    const store = yield* Store.make;
-    yield* store.create(initial);
-    const runtime = yield* make.pipe(
-      Effect.provideService(Store.TeamStore, store),
-      Effect.provide(f.layers),
-    );
-    yield* runtime.tick();
-    const plan = f.commands[0]!;
-    if (plan.type !== "thread.turn.start") throw new Error("Expected plan");
-    f.complete(plan, "Which scope should I use?");
-    const question = {
-      id: EventId.make("question"),
-      kind: "user-input.requested",
-      tone: "info" as const,
-      summary: "Choose scope",
-      turnId: TurnId.make(`turn-${plan.commandId}`),
-      createdAt: date,
-      payload: { requestId: "scope", responseMode: "message" },
-    };
-    f.setActivities(plan.threadId, [
-      question,
-      {
-        ...question,
-        id: EventId.make("answer"),
-        kind: "user-input.resolved",
-        payload: { requestId: "scope", responseMode: "message", answers: { scope: "frontend" } },
-      },
-      {
-        ...question,
-        id: EventId.make("start-failed"),
-        kind: "provider.turn.start.failed",
-        turnId: null,
-        payload: { requestId: "async-answer:scope", detail: "Provider unavailable" },
-      },
-    ]);
-    yield* runtime.tick();
-    const run = yield* store.get(initial.id);
-    expect(run.status).toBe("paused");
-    expect(run.execution?.turns[0]?.status).toBe("dispatched");
-    expect(f.commands).toHaveLength(1);
-  }).pipe(Effect.provide(runtimeInfrastructure));
-});
+    return Effect.gen(function* () {
+      const runtime = yield* make;
+      yield* runtime.tick();
 
-it.effect("pauses an overtaken partial turn instead of accepting its forced completion", () => {
-  const f = fixture();
+      const run = f.current()!;
+      expect(run.settlements[0]).toMatchObject({
+        status: "applied",
+        appliedCommit: integratedHead,
+      });
+      expect(run.tasks[0]).toMatchObject({
+        status: "settled",
+        branch: null,
+        worktreePath: null,
+      });
+      expect(f.removedWorktrees).toEqual([workerPath]);
+      expect(
+        f.processCalls.some(
+          (call) =>
+            call.command === "git" &&
+            call.args[0] === "branch" &&
+            call.args[1] === "-D" &&
+            call.args[2] === workerBranch,
+        ),
+      ).toBe(true);
+    }).pipe(Effect.provide(f.layer));
+  },
+);
+
+it.effect("restart retries cleanup for an applied settlement with stale worker metadata", () => {
+  const { run: seed, workerPath, workerBranch } = appliedSettlementSeed();
+  const f = fixture(seed);
+
   return Effect.gen(function* () {
-    const store = yield* Store.make;
-    yield* store.create(initial);
-    const runtime = yield* make.pipe(
-      Effect.provideService(Store.TeamStore, store),
-      Effect.provide(f.layers),
-    );
+    const runtime = yield* make;
     yield* runtime.tick();
-    const plan = f.commands[0]!;
-    if (plan.type !== "thread.turn.start") throw new Error("Expected plan");
-    f.supersede(plan, '{"acceptance":["Partial scope"],"tasks":[],"rationale":"Partial"}');
-    const threadReceipts = f.receipts.get(plan.threadId) ?? [];
-    const original = threadReceipts.find((receipt) => receipt.turnId === `turn-${plan.commandId}`);
-    const manual = threadReceipts.find((receipt) => receipt.turnId === `manual-${plan.commandId}`);
-    if (!original || !manual?.startedAt) throw new Error("Expected managed and manual receipts");
-    f.receipts.set(
-      plan.threadId,
-      threadReceipts.map((receipt) =>
-        receipt === original ? { ...receipt, completedAt: manual.startedAt } : receipt,
+
+    const run = f.current()!;
+    expect(f.removedWorktrees).toEqual([workerPath]);
+    expect(
+      f.processCalls.some(
+        (call) => call.command === "git" && call.args.join(" ") === `branch -D ${workerBranch}`,
       ),
-    );
-    yield* runtime.tick();
-    const run = yield* store.get(initial.id);
-    expect(run.status).toBe("paused");
-    expect(run.execution?.notice).toContain("interrupted");
-    expect(run.execution?.turns[0]?.succeeded).toBe(false);
-    expect(f.commands).toHaveLength(1);
-  }).pipe(Effect.provide(runtimeInfrastructure));
+    ).toBe(true);
+    expect(run.tasks[0]).toMatchObject({ status: "settled", branch: null, worktreePath: null });
+  }).pipe(Effect.provide(f.layer));
 });
 
-it.effect("pause retains in-flight reservations and resume never replays a dispatched turn", () => {
-  const f = fixture();
-  return Effect.gen(function* () {
-    const store = yield* Store.make;
-    yield* store.create(initial);
-    const runtime = yield* make.pipe(
-      Effect.provideService(Store.TeamStore, store),
-      Effect.provide(f.layers),
-    );
-    yield* runtime.tick();
-    const run = yield* store.get(initial.id);
-    const paused = yield* runtime.control({ id: run.id, revision: run.revision, action: "pause" });
-    yield* runtime.tick();
-    expect(f.commands).toHaveLength(1);
-    expect(paused.execution?.turns[0]?.status).toBe("dispatched");
-    yield* runtime.control({ id: paused.id, revision: paused.revision, action: "resume" });
-    yield* runtime.tick();
-    expect(f.commands).toHaveLength(1);
-  }).pipe(Effect.provide(runtimeInfrastructure));
-});
-
-it.effect("settles a dispatched managed turn from its exact provider start failure receipt", () => {
-  const f = fixture();
-  return Effect.gen(function* () {
-    const store = yield* Store.make;
-    yield* store.create(initial);
-    const runtime = yield* make.pipe(
-      Effect.provideService(Store.TeamStore, store),
-      Effect.provide(f.layers),
-    );
-    yield* runtime.tick();
-    const command = f.commands[0]!;
-    if (command.type !== "thread.turn.start") throw new Error("Expected turn");
-    f.failStart(command, "writer collision");
-    yield* runtime.tick();
-    const run = yield* store.get(initial.id);
-    expect(run.execution?.turns[0]).toMatchObject({
-      status: "settled",
-      succeeded: false,
-      result: "writer collision",
+it.effect(
+  "restart treats already-removed worker cleanup side effects as clean and clears stale metadata",
+  () => {
+    const { run: seed, workerPath, workerBranch } = appliedSettlementSeed();
+    const f = fixture(seed, true, {
+      removeWorktreeFails: true,
+      process: (input) => {
+        if (input.command !== "git") return undefined;
+        if (input.args[0] === "worktree" && input.args[1] === "list")
+          return { code: 0, stdout: "worktree /repo\n" };
+        if (input.args[0] === "branch" && input.args[1] === "-D") return { code: 1 };
+        if (input.args[0] === "show-ref" && input.args.at(-1) === `refs/heads/${workerBranch}`)
+          return { code: 1 };
+        return undefined;
+      },
     });
-    expect(run.status).toBe("paused");
-    expect(run.execution?.notice).toContain("Lead planning failed");
-  }).pipe(Effect.provide(runtimeInfrastructure));
-});
 
-it.effect(
-  "repairs lead acceptance IDs without retrying the worker, then verifies combined output",
-  () => {
-    const f = fixture();
     return Effect.gen(function* () {
-      const store = yield* Store.make;
-      yield* store.create(initial);
-      const runtime = yield* make.pipe(
-        Effect.provideService(Store.TeamStore, store),
-        Effect.provide(f.layers),
-      );
-      const finish = (index: number, text: string) => {
-        const command = f.commands[index]!;
-        if (command.type !== "thread.turn.start") throw new Error("Expected turn");
-        f.complete(command, text);
-      };
+      const runtime = yield* make;
       yield* runtime.tick();
-      finish(
-        0,
-        '{"acceptance":["Combined result"],"tasks":[{"id":"edit","objective":"Edit label","acceptance":["Exact label check"],"dependencies":[],"profileId":"p","context":"contract"}],"rationale":"bounded worker"}',
-      );
-      yield* runtime.tick();
-      finish(1, "Worker complete; commit abc.");
-      yield* runtime.tick();
-      const reviewPrompt = f.commands[2];
-      if (reviewPrompt?.type !== "thread.turn.start") throw new Error("Expected review");
-      expect(reviewPrompt.message.text).toContain("team_read_messages");
-      expect(reviewPrompt.message.text).toContain("team_send_message");
-      expect(reviewPrompt.message.text).toContain("Return ONLY JSON");
-      finish(
-        2,
-        '{"action":"accept","summary":"Looks correct","checks":[{"criterion":"Reworded label check","command":"python3","args":[]}]}',
-      );
-      yield* runtime.tick();
-      let run = yield* store.get(initial.id);
-      expect(run.tasks[0]?.attempts).toBe(1);
-      expect(run.execution?.turns.map((t) => t.role)).toEqual([
-        "plan",
-        "worker",
-        "review",
-        "review",
-      ]);
-      expect(f.checks).toEqual([]);
-      finish(
-        3,
-        '{"action":"accept","summary":"Corrected evidence mapping","checks":[{"criterionIndex":0,"criterion":"Reworded label check","command":"python3","args":[]}]}',
-      );
-      yield* runtime.tick();
-      run = yield* store.get(initial.id);
-      expect(run.tasks[0]?.status).toBe("accepted");
-      expect(run.status).not.toBe("completed");
-      expect(f.checks).toEqual(["python3"]);
-      const integratePrompt = f.commands[4];
-      if (integratePrompt?.type !== "thread.turn.start") throw new Error("Expected integration");
-      expect(integratePrompt.message.text).toContain("team_read_messages");
-      expect(integratePrompt.message.text).toContain("team_send_message");
-      expect(integratePrompt.message.text).toContain("Return ONLY JSON");
-      finish(
-        4,
-        '{"action":"accept","summary":"Integrated and verified","checks":[{"criterion":"Combined result","command":"python3","args":[]}]}',
-      );
-      yield* runtime.tick();
-      run = yield* store.get(initial.id);
-      expect(run.status).toBe("completed");
-      expect(f.checks).toEqual(["python3", "python3"]);
-      expect(run.tasks[0]?.attempts).toBe(1);
-      expect(run.decisions.some((d) => d.includes("passed"))).toBe(true);
-    }).pipe(Effect.provide(runtimeInfrastructure));
+
+      const run = f.current()!;
+      expect(f.removedWorktrees).toEqual([workerPath]);
+      expect(run.status).not.toBe("paused");
+      expect(run.tasks[0]).toMatchObject({ status: "settled", branch: null, worktreePath: null });
+    }).pipe(Effect.provide(f.layer));
   },
 );
 
-for (const resumePausedRun of [false, true]) {
-  it.effect(
-    `follows a lead correction despite uncertain routing${resumePausedRun ? " after resume" : ""}`,
-    () => {
-      const f = fixture(false, "codex", {
-        action: "lead_review",
-        reason: "Failure diagnosis is uncertain; no automatic escalation.",
-        profileId: "p",
-        source: "policy",
-      });
-      return Effect.gen(function* () {
-        const store = yield* Store.make;
-        yield* store.create(initial);
-        const runtime = yield* make.pipe(
-          Effect.provideService(Store.TeamStore, store),
-          Effect.provide(f.layers),
-        );
-        const finish = (index: number, text: string) => {
-          const command = f.commands[index]!;
-          if (command.type !== "thread.turn.start") throw new Error("Expected turn");
-          f.complete(command, text);
-          return command;
-        };
-
-        yield* runtime.tick();
-        finish(
-          0,
-          '{"acceptance":["Combined result"],"tasks":[{"id":"edit","objective":"Edit label","acceptance":["Exact label check"],"dependencies":[],"profileId":"p","context":"contract"}],"rationale":"bounded worker"}',
-        );
-        yield* runtime.tick();
-        const worker = finish(1, "Worker complete; commit abc, but boundary coverage missing.");
-        yield* runtime.tick();
-        finish(
-          2,
-          '{"action":"correct","summary":"Add a real child-process cancellation check; the current test mocks the owner and does not exercise runtime cleanup.","checks":[]}',
-        );
-
-        if (resumePausedRun) {
-          const run = yield* store.get(initial.id);
-          yield* runtime.control({ id: run.id, revision: run.revision, action: "pause" });
-          yield* runtime.tick();
-          expect(f.commands).toHaveLength(3);
-          const paused = yield* store.get(initial.id);
-          yield* runtime.control({ id: paused.id, revision: paused.revision, action: "resume" });
-        }
-
-        yield* runtime.tick();
-        let run = yield* store.get(initial.id);
-        expect(run.status).toBe("running");
-        expect(run.tasks[0]?.attempts).toBe(2);
-        const correction = f.commands[3];
-        if (correction?.type !== "thread.turn.start")
-          throw new Error("Expected correction dispatch");
-        expect(correction.threadId).toBe(worker.threadId);
-        expect(correction.modelSelection).toEqual(worker.modelSelection);
-        expect(correction.message.text).toContain("real child-process cancellation check");
-
-        finish(3, "Added real child-process cancellation coverage; commit def; checks pass.");
-        yield* runtime.tick();
-        finish(
-          4,
-          '{"action":"accept","summary":"Worker correction verified","checks":[{"criterionIndex":0,"criterion":"Exact label check","command":"python3","args":[]}]}',
-        );
-        yield* runtime.tick();
-        expect((yield* store.get(initial.id)).status).not.toBe("completed");
-        finish(
-          5,
-          '{"action":"accept","summary":"Integrated worker commit def and verified the combined result.","checks":[{"criterionIndex":0,"criterion":"Combined result","command":"python3","args":[]}]}',
-        );
-        yield* runtime.tick();
-        run = yield* store.get(initial.id);
-        expect(run.status).toBe("completed");
-        expect(run.execution?.notice).toBe(
-          "Integrated worker commit def and verified the combined result.",
-        );
-        expect(run.tasks[0]?.status).toBe("accepted");
-        expect(f.checks).toEqual(["python3", "python3"]);
-      }).pipe(Effect.provide(runtimeInfrastructure));
+it.effect("keeps cleanup metadata and pauses when the worker worktree is still registered", () => {
+  const { run: seed, workerPath, workerBranch } = appliedSettlementSeed();
+  const f = fixture(seed, true, {
+    removeWorktreeFails: true,
+    process: (input) => {
+      if (input.command === "git" && input.args[0] === "worktree" && input.args[1] === "list")
+        return { code: 0, stdout: `worktree /repo\n\nworktree ${workerPath}\n` };
+      return undefined;
     },
-  );
-}
+  });
 
-for (const advice of [
-  { action: "stop", profileId: "p" },
-  { action: "wait", profileId: "p" },
-  { action: "repair_environment", profileId: "p" },
-  { action: "supply_context", profileId: "p" },
-  { action: "lead_review", profileId: null },
-] as const) {
-  it.effect(
-    `keeps recovery blocker ${advice.action} with profile ${advice.profileId ?? "none"}`,
-    () => {
-      const f = fixture(false, "codex", {
-        ...advice,
-        reason: "Explicit recovery blocker",
-        source: "policy",
-      });
-      return Effect.gen(function* () {
-        const store = yield* Store.make;
-        yield* store.create(initial);
-        const runtime = yield* make.pipe(
-          Effect.provideService(Store.TeamStore, store),
-          Effect.provide(f.layers),
-        );
-        const finish = (index: number, text: string) => {
-          const command = f.commands[index]!;
-          if (command.type !== "thread.turn.start") throw new Error("Expected turn");
-          f.complete(command, text);
-        };
-
-        yield* runtime.tick();
-        finish(
-          0,
-          '{"acceptance":["Combined result"],"tasks":[{"id":"edit","objective":"Edit label","acceptance":["Exact label check"],"dependencies":[],"profileId":"p","context":"contract"}],"rationale":"bounded worker"}',
-        );
-        yield* runtime.tick();
-        finish(1, "Worker result");
-        yield* runtime.tick();
-        finish(2, '{"action":"correct","summary":"Add a real cleanup check","checks":[]}');
-        yield* runtime.tick();
-
-        const run = yield* store.get(initial.id);
-        expect(run.status).toBe("paused");
-        expect(run.execution?.notice).toContain("Explicit recovery blocker");
-        expect(run.tasks[0]?.attempts).toBe(1);
-        expect(f.commands).toHaveLength(3);
-      }).pipe(Effect.provide(runtimeInfrastructure));
-    },
-  );
-}
-
-it.effect("retains an uncertain dispatch reservation and interrupts it on cancellation", () => {
-  const f = fixture(true);
   return Effect.gen(function* () {
-    const store = yield* Store.make;
-    yield* store.create(initial);
-    const runtime = yield* make.pipe(
-      Effect.provideService(Store.TeamStore, store),
-      Effect.provide(f.layers),
-    );
+    const runtime = yield* make;
     yield* runtime.tick();
-    let run = yield* store.get(initial.id);
+
+    const run = f.current()!;
     expect(run.status).toBe("paused");
-    expect(run.execution?.turns[0]?.status).toBe("dispatching");
-    yield* runtime.control({ id: run.id, revision: run.revision, action: "cancel" });
-    expect(f.commands[1]?.type).toBe("thread.turn.interrupt");
-    const sent = f.commands[0]!;
-    if (sent.type !== "thread.turn.start") throw new Error("Expected start");
-    f.complete(sent, "Turn terminated after cancellation.");
-    yield* runtime.tick();
-    run = yield* store.get(initial.id);
-    expect(run.status).toBe("cancelled");
-    expect(run.execution?.turns[0]?.status).toBe("settled");
-    expect(f.commands).toHaveLength(2);
-  }).pipe(Effect.provide(runtimeInfrastructure));
+    expect(run.statusReason).toBe("Worker workspace cleanup failed after accepted integration.");
+    expect(run.tasks[0]).toMatchObject({
+      status: "settled",
+      branch: workerBranch,
+      worktreePath: workerPath,
+    });
+    expect(f.processCalls.some((call) => call.command === "git" && call.args[0] === "branch")).toBe(
+      false,
+    );
+  }).pipe(Effect.provide(f.layer));
 });
 
-it.effect("admits ready providers through the common adapter contract", () => {
-  const f = fixture(false, "opencode");
+it.effect("keeps cleanup metadata and pauses when the worker branch is still present", () => {
+  const { run: seed, workerPath, workerBranch } = appliedSettlementSeed();
+  const f = fixture(seed, true, {
+    process: (input) => {
+      if (input.command !== "git") return undefined;
+      if (input.args[0] === "branch" && input.args[1] === "-D") return { code: 1 };
+      if (input.args[0] === "show-ref" && input.args.at(-1) === `refs/heads/${workerBranch}`)
+        return { code: 0 };
+      return undefined;
+    },
+  });
+
   return Effect.gen(function* () {
-    const store = yield* Store.make;
-    yield* store.create(initial);
-    const runtime = yield* make.pipe(
-      Effect.provideService(Store.TeamStore, store),
-      Effect.provide(f.layers),
-    );
+    const runtime = yield* make;
     yield* runtime.tick();
-    expect((yield* store.get(initial.id)).execution?.turns[0]?.status).toBe("dispatched");
-  }).pipe(Effect.provide(runtimeInfrastructure));
+
+    const run = f.current()!;
+    expect(f.removedWorktrees).toEqual([workerPath]);
+    expect(run.status).toBe("paused");
+    expect(run.statusReason).toBe("Worker branch cleanup failed after accepted integration.");
+    expect(run.tasks[0]).toMatchObject({
+      status: "settled",
+      branch: workerBranch,
+      worktreePath: workerPath,
+    });
+  }).pipe(Effect.provide(f.layer));
 });
+
+function conflictSettlementSeed(resolutionStatus: TeamAttempt["status"] = "succeeded"): {
+  readonly run: TeamRun;
+  readonly settlement: TeamSettlement;
+  readonly workerHead: string;
+  readonly resolution: TeamAttempt;
+} {
+  const seed = applyingSettlementSeed();
+  const settlement: TeamSettlement = {
+    ...seed.settlement,
+    status: "conflict",
+    updatedAt: now,
+  };
+  const resolution = attempt({
+    id: "settlement-conflict-resolution",
+    role: "integrate",
+    owner: seed.run.lead,
+    taskId: settlement.taskId,
+    status: resolutionStatus,
+    result: resolutionStatus === "succeeded" ? "Resolved the merge conflict" : null,
+  });
+  return {
+    workerHead: seed.workerHead,
+    settlement,
+    resolution,
+    run: baseRun({
+      status: "settling",
+      tasks: seed.run.tasks.map((task) => ({
+        ...task,
+        attemptIds: [...task.attemptIds, resolution.id],
+      })),
+      attempts: [resolution],
+      settlements: [settlement],
+    }),
+  };
+}
 
 it.effect(
-  "rejects incomplete combined acceptance, allows one correction, and never loops on resume",
+  "creates and dispatches a task-specific lead resolution attempt in the same tick when settlement merge conflicts",
   () => {
-    const f = fixture();
+    const seed = applyingSettlementSeed();
+    const ready: TeamSettlement = { ...seed.settlement, status: "ready" };
+    const f = fixture(
+      baseRun({
+        status: "settling",
+        tasks: seed.run.tasks,
+        settlements: [ready],
+      }),
+      true,
+      {
+        process: (input) => {
+          if (input.command !== "git") return undefined;
+          if (input.args[0] === "rev-list") return { stdout: "1\n" };
+          if (input.args[0] === "merge" && input.args[1] === "--no-edit") return { code: 1 };
+          return undefined;
+        },
+      },
+    );
+
     return Effect.gen(function* () {
-      const store = yield* Store.make;
-      yield* store.create(initial);
-      const runtime = yield* make.pipe(
-        Effect.provideService(Store.TeamStore, store),
-        Effect.provide(f.layers),
+      const runtime = yield* make;
+      yield* runtime.tick();
+
+      const run = f.current()!;
+      const resolution = run.attempts.find(
+        (candidate) => candidate.role === "integrate" && candidate.taskId === ready.taskId,
       );
-      const finish = (index: number, text: string) => {
-        const command = f.commands[index]!;
-        if (command.type !== "thread.turn.start") throw new Error("Expected turn");
-        f.complete(command, text);
-      };
-      yield* runtime.tick();
-      finish(
-        0,
-        '{"acceptance":["Behavior works","Constraints preserved"],"tasks":[],"rationale":"Lead alone"}',
+      expect(run.status).toBe("settling");
+      expect(run.statusReason).toBe(
+        "The lead is resolving a conflict while integrating an accepted worker result.",
       );
+      expect(run.settlements[0]?.status).toBe("conflict");
+      expect(resolution).toMatchObject({
+        role: "integrate",
+        taskId: ready.taskId,
+        status: "running",
+      });
+      expect(run.tasks[0]?.attemptIds).toContain(resolution?.id);
+      expect(
+        f.commands.some(
+          (command) =>
+            command.type === "thread.turn.start" &&
+            command.threadId === leadThreadId &&
+            command.message.messageId === resolution?.requestMessageId,
+        ),
+      ).toBe(true);
+    }).pipe(Effect.provide(f.layer));
+  },
+);
+
+it.effect(
+  "finalizes a conflict settlement only after the accepted worker head is an ancestor and cleans the worker workspace",
+  () => {
+    const { run: seed, settlement, workerHead } = conflictSettlementSeed();
+    const integratedHead = "e".repeat(40);
+    const workerPath = seed.tasks[0]!.worktreePath!;
+    const workerBranch = seed.tasks[0]!.branch!;
+    const f = fixture(seed, true, {
+      process: (input) => {
+        if (input.command !== "git") return undefined;
+        if (
+          input.args[0] === "merge-base" &&
+          input.args[1] === "--is-ancestor" &&
+          input.args[2] === workerHead
+        )
+          return { code: 0 };
+        if (input.args[0] === "rev-parse" && input.args[1] === "HEAD")
+          return { stdout: `${integratedHead}\n` };
+        if (input.args[0] === "rev-list") return { stdout: "1\n" };
+        return undefined;
+      },
+    });
+
+    return Effect.gen(function* () {
+      const runtime = yield* make;
       yield* runtime.tick();
-      finish(
-        1,
-        '{"action":"accept","summary":"Only one criterion checked","checks":[{"criterionIndex":0,"criterion":"Behavior works","command":"python3","args":[]}]}',
-      );
+
+      const run = f.current()!;
+      expect(run.tasks[0]?.status).toBe("settled");
+      expect(run.settlements.find((candidate) => candidate.id === settlement.id)).toMatchObject({
+        status: "applied",
+        appliedCommit: integratedHead,
+      });
+      expect(run.workspace?.integrationHead).toBe(integratedHead);
+      expect(f.removedWorktrees).toEqual([workerPath]);
+      expect(
+        f.processCalls.some(
+          (call) =>
+            call.command === "git" &&
+            call.cwd === seed.workspace?.root &&
+            call.args[0] === "branch" &&
+            call.args[1] === "-D" &&
+            call.args[2] === workerBranch,
+        ),
+      ).toBe(true);
+    }).pipe(Effect.provide(f.layer));
+  },
+);
+
+it.effect(
+  "pauses when a successful lead conflict-resolution attempt did not integrate the accepted worker head",
+  () => {
+    const { run: seed, workerHead } = conflictSettlementSeed();
+    const f = fixture(seed, true, {
+      process: (input) => {
+        if (
+          input.command === "git" &&
+          input.args[0] === "merge-base" &&
+          input.args[1] === "--is-ancestor" &&
+          input.args[2] === workerHead
+        )
+          return { code: 1 };
+        return undefined;
+      },
+    });
+
+    return Effect.gen(function* () {
+      const runtime = yield* make;
       yield* runtime.tick();
-      let run = yield* store.get(initial.id);
-      expect(run.status).not.toBe("completed");
-      expect(f.checks).toEqual([]);
-      expect(f.commands).toHaveLength(3);
-      expect(run.decisions.join(" ")).toContain("Constraints preserved");
-      finish(2, '{"action":"correct","summary":"Missing external input","checks":[]}');
-      yield* runtime.tick();
-      run = yield* store.get(initial.id);
+
+      const run = f.current()!;
       expect(run.status).toBe("paused");
-      expect(run.execution?.notice).toContain("automatic retries stopped");
-      yield* runtime.control({ id: run.id, revision: run.revision, action: "resume" });
-      yield* runtime.tick();
-      yield* runtime.tick();
-      expect(f.commands).toHaveLength(3);
-      expect((yield* store.get(initial.id)).status).toBe("paused");
-    }).pipe(Effect.provide(runtimeInfrastructure));
+      expect(run.statusReason).toBe(
+        "Lead conflict resolution finished without integrating the accepted worker commit.",
+      );
+      expect(run.tasks[0]?.status).toBe("settling");
+      expect(run.settlements[0]?.status).toBe("conflict");
+      expect(f.removedWorktrees).toEqual([]);
+    }).pipe(Effect.provide(f.layer));
   },
 );
 
-it.effect("does not admit workers when the plan omits whole-objective acceptance", () => {
-  const f = fixture();
-  return Effect.gen(function* () {
-    const store = yield* Store.make;
-    yield* store.create(initial);
-    const runtime = yield* make.pipe(
-      Effect.provideService(Store.TeamStore, store),
-      Effect.provide(f.layers),
+it.effect(
+  "keeps task-specific integrate failover in settling and carries durable task state to the replacement provider",
+  () => {
+    const { run: seed, settlement, resolution } = conflictSettlementSeed("reserved");
+    const autoPolicy: TeamSettings["policy"] = { ...policy, providerLimitBehavior: "auto" };
+    const f = fixture(
+      {
+        ...seed,
+        policy: autoPolicy,
+      },
+      false,
     );
-    yield* runtime.tick();
-    const command = f.commands[0]!;
-    if (command.type !== "thread.turn.start") throw new Error("Expected turn");
-    f.complete(command, '{"tasks":[],"rationale":"No criteria"}');
-    yield* runtime.tick();
-    expect((yield* store.get(initial.id)).status).toBe("paused");
-    expect(f.commands).toHaveLength(1);
-  }).pipe(Effect.provide(runtimeInfrastructure));
+
+    return Effect.gen(function* () {
+      const runtime = yield* make;
+      yield* runtime.tick();
+
+      const run = f.current()!;
+      const replacement = run.attempts.find(
+        (candidate) => candidate.id !== resolution.id && candidate.role === "integrate",
+      );
+      expect(run.status).toBe("settling");
+      expect(run.settlements.find((candidate) => candidate.id === settlement.id)?.status).toBe(
+        "conflict",
+      );
+      expect(replacement).toMatchObject({
+        role: "integrate",
+        taskId: settlement.taskId,
+        status: "running",
+        owner: { profileId: failoverProfile.id },
+      });
+      expect(replacement?.prompt).toContain("Durable handoff state:");
+      expect(replacement?.prompt).toContain(`"taskId":"${settlement.taskId}"`);
+      expect(replacement?.prompt).toContain(`"settlementId":"${settlement.id}"`);
+      expect(run.failovers[0]).toMatchObject({
+        attemptId: resolution.id,
+        status: "applied",
+        decision: { action: "switch", profileId: failoverProfile.id },
+      });
+    }).pipe(Effect.provide(f.layer));
+  },
+);
+
+it.effect(
+  "does not count task-specific integrate attempts against final integration retries",
+  () => {
+    const taskId = "settled-task";
+    const taskScopedIntegration = attempt({
+      id: "task-conflict-integrate",
+      role: "integrate",
+      owner: baseRun().lead,
+      taskId,
+      status: "succeeded",
+      result: "Resolved task conflict",
+    });
+    const finalIntegration = attempt({
+      id: "final-integrate-correction",
+      role: "integrate",
+      owner: baseRun().lead,
+      status: "succeeded",
+      result: JSON.stringify({ action: "correct", summary: "One final correction", checks: [] }),
+    });
+    const task: TeamTask = {
+      id: taskId,
+      objective: "Settled task",
+      acceptance: ["Task is settled"],
+      dependencies: [],
+      owner: {
+        role: "worker",
+        profileId: leadProfile.id,
+        threadId: ThreadId.make("team-runtime-settled-worker"),
+        taskId,
+      },
+      branch: null,
+      worktreePath: null,
+      status: "settled",
+      attemptIds: [taskScopedIntegration.id],
+      settlementId: "settled-settlement",
+      result: "Settled",
+    };
+    const f = fixture(
+      baseRun({
+        status: "review",
+        acceptance: ["Run is complete"],
+        tasks: [task],
+        attempts: [taskScopedIntegration, finalIntegration],
+      }),
+    );
+
+    return Effect.gen(function* () {
+      const runtime = yield* make;
+      yield* runtime.tick();
+
+      const run = f.current()!;
+      const finalAttempts = run.attempts.filter(
+        (candidate) => candidate.role === "integrate" && candidate.taskId === null,
+      );
+      expect(run.status).toBe("review");
+      expect(finalAttempts).toHaveLength(2);
+      expect(finalAttempts[1]).toMatchObject({ status: "running", taskId: null });
+      expect(run.statusReason).toBeNull();
+    }).pipe(Effect.provide(f.layer));
+  },
+);
+
+it.effect(
+  "persists materialized attempt attachments before dispatch and releases the run lease on cancel",
+  () => {
+    const f = fixture();
+    return Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      const attachment: ChatAttachment = {
+        type: "image",
+        id: "pending-00000000-0000-4000-8000-0000000000ef" as never,
+        name: "runtime-attachment.png",
+        mimeType: "image/png",
+        sizeBytes: 7,
+      };
+      const pendingPath = NodePath.join(config.attachmentsDir, `${attachment.id}.png`);
+      NodeFS.writeFileSync(pendingPath, Buffer.from("content"));
+
+      const runtime = yield* make;
+      const run = yield* runtime.start({
+        commandId: "start-with-attachment",
+        projectId,
+        runtimeMode: "approval-required",
+        prompt: "Use the attached diagram",
+        attachments: [attachment],
+      });
+      const plan = run.attempts[0]!;
+      const dispatch = f.turnDispatches[0]!;
+
+      expect(plan.status).toBe("running");
+      expect(plan.attachments).toHaveLength(1);
+      expect(plan.attachments[0]?.id).not.toBe(attachment.id);
+      expect(dispatch.persistedAttachments).toEqual(plan.attachments);
+      expect(dispatch.dispatchedAttachments).toEqual(plan.attachments);
+      expect(
+        pendingAttachmentLeaseHasOwner({
+          attachmentsDir: config.attachmentsDir,
+          attachmentId: attachment.id,
+          ownerId: run.id,
+        }),
+      ).toBe(true);
+
+      const cancelled = yield* runtime.control({
+        id: run.id,
+        revision: run.revision,
+        action: "cancel",
+      });
+      expect(cancelled.status).toBe("cancelled");
+      expect(
+        pendingAttachmentLeaseHasOwner({
+          attachmentsDir: config.attachmentsDir,
+          attachmentId: attachment.id,
+          ownerId: run.id,
+        }),
+      ).toBe(false);
+      expect(NodeFS.existsSync(pendingPath)).toBe(false);
+    }).pipe(Effect.provide(f.layer));
+  },
+);
+
+it.effect("uses stable approval request ids when cancellation resumes after partial cleanup", () => {
+  const running = attempt({
+    id: "pending-approval",
+    role: "plan",
+    owner: baseRun().lead,
+    status: "running",
+  });
+  const firstRequestId = "approval-request-a";
+  const secondRequestId = "approval-request-b";
+  const firstPass = fixture(baseRun({ attempts: [running] }), true, {
+    existingThreads: [leadThreadId],
+    threadActivities: [
+      {
+        id: "approval-event-a" as never,
+        tone: "approval",
+        kind: "approval.requested",
+        summary: "First command approval",
+        payload: { requestId: firstRequestId },
+        turnId: null,
+        createdAt: now,
+      },
+      {
+        id: "approval-event-b" as never,
+        tone: "approval",
+        kind: "approval.requested",
+        summary: "Second command approval",
+        payload: { requestId: secondRequestId },
+        turnId: null,
+        createdAt: now,
+      },
+    ],
+  });
+  const retry = fixture(baseRun({ attempts: [running] }), true, {
+    existingThreads: [leadThreadId],
+    threadActivities: [
+      {
+        id: "approval-event-a" as never,
+        tone: "approval",
+        kind: "approval.requested",
+        summary: "First command approval",
+        payload: { requestId: firstRequestId },
+        turnId: null,
+        createdAt: now,
+      },
+      {
+        id: "approval-event-b" as never,
+        tone: "approval",
+        kind: "approval.requested",
+        summary: "Second command approval",
+        payload: { requestId: secondRequestId },
+        turnId: null,
+        createdAt: now,
+      },
+      {
+        id: "approval-resolved-a" as never,
+        tone: "info",
+        kind: "approval.resolved",
+        summary: "First approval resolved",
+        payload: { requestId: firstRequestId },
+        turnId: null,
+        createdAt: now,
+      },
+    ],
+  });
+
+  return Effect.gen(function* () {
+    const firstCancelled = yield* Effect.provide(
+      make.pipe(
+        Effect.flatMap((runtime) =>
+          runtime.control({ id: "runtime-run", revision: 0, action: "cancel" }),
+        ),
+      ),
+      firstPass.layer,
+    );
+    const retryCancelled = yield* Effect.provide(
+      make.pipe(
+        Effect.flatMap((runtime) =>
+          runtime.control({ id: "runtime-run", revision: 0, action: "cancel" }),
+        ),
+      ),
+      retry.layer,
+    );
+
+    expect(firstCancelled.status).toBe("cancelled");
+    expect(retryCancelled.status).toBe("cancelled");
+    expect(firstPass.commands.map((command) => command.type)).toEqual([
+      "thread.approval.respond",
+      "thread.approval.respond",
+      "thread.turn.interrupt",
+    ]);
+    const firstApprovalCommands = firstPass.commands.filter(
+      (command) => command.type === "thread.approval.respond",
+    );
+    expect(firstApprovalCommands.map((command) => command.commandId)).toEqual([
+      `team-cancel-approval-${running.id}-${firstRequestId}`,
+      `team-cancel-approval-${running.id}-${secondRequestId}`,
+    ]);
+    expect(retry.commands.map((command) => command.type)).toEqual([
+      "thread.approval.respond",
+      "thread.turn.interrupt",
+    ]);
+    const retryApproval = retry.commands.find(
+      (command) => command.type === "thread.approval.respond",
+    );
+    expect(retryApproval).toMatchObject({
+      type: "thread.approval.respond",
+      commandId: `team-cancel-approval-${running.id}-${secondRequestId}`,
+      threadId: leadThreadId,
+      requestId: secondRequestId,
+      decision: "cancel",
+    });
+    expect(retryApproval?.commandId).toBe(firstApprovalCommands[1]?.commandId);
+    expect(retryApproval?.commandId).not.toBe(firstApprovalCommands[0]?.commandId);
+  });
 });
+
+it.effect(
+  "restart-reconciles an applying settlement already contained in lead HEAD without re-merging",
+  () => {
+    const { run: seed, settlement, workerHead } = applyingSettlementSeed();
+    const integratedHead = "c".repeat(40);
+    const f = fixture(seed, true, {
+      process: (input) => {
+        if (input.command !== "git") return undefined;
+        if (input.args[0] === "rev-list") return { stdout: "1\n" };
+        if (
+          input.args[0] === "merge-base" &&
+          input.args[1] === "--is-ancestor" &&
+          input.args[2] === workerHead
+        )
+          return { code: 0 };
+        if (input.args[0] === "rev-parse" && input.args[1] === "HEAD")
+          return { stdout: `${integratedHead}\n` };
+        return undefined;
+      },
+    });
+
+    return Effect.gen(function* () {
+      const runtime = yield* make;
+      yield* runtime.tick();
+
+      const reconciled = f.current()!;
+      expect(
+        reconciled.settlements.find((candidate) => candidate.id === settlement.id),
+      ).toMatchObject({ status: "applied", appliedCommit: integratedHead });
+      expect(reconciled.tasks[0]?.status).toBe("settled");
+      expect(reconciled.workspace?.integrationHead).toBe(integratedHead);
+      expect(
+        f.processCalls.some(
+          (call) =>
+            call.command === "git" && call.args[0] === "merge" && call.args[1] === "--no-edit",
+        ),
+      ).toBe(false);
+    }).pipe(Effect.provide(f.layer));
+  },
+);
+
+it.effect(
+  "restart-retries an applying settlement safely when the worker head is not yet in lead HEAD",
+  () => {
+    const { run: seed, settlement, workerHead } = applyingSettlementSeed();
+    const integratedHead = "d".repeat(40);
+    const f = fixture(seed, true, {
+      process: (input) => {
+        if (input.command !== "git") return undefined;
+        if (input.args[0] === "rev-list") return { stdout: "1\n" };
+        if (
+          input.args[0] === "merge-base" &&
+          input.args[1] === "--is-ancestor" &&
+          input.args[2] === workerHead
+        )
+          return { code: 1 };
+        if (input.args[0] === "merge" && input.args[1] === "--abort") return { code: 0 };
+        if (input.args[0] === "merge" && input.args[1] === "--no-edit") return { code: 0 };
+        if (input.args[0] === "rev-parse" && input.args[1] === "HEAD")
+          return { stdout: `${integratedHead}\n` };
+        return undefined;
+      },
+    });
+
+    return Effect.gen(function* () {
+      const runtime = yield* make;
+      yield* runtime.tick();
+
+      const reconciled = f.current()!;
+      expect(
+        reconciled.settlements.find((candidate) => candidate.id === settlement.id),
+      ).toMatchObject({ status: "applied", appliedCommit: integratedHead });
+      const mergeCalls = f.processCalls.filter(
+        (call) => call.command === "git" && call.args[0] === "merge",
+      );
+      expect(mergeCalls.map((call) => call.args.slice(0, 3))).toEqual([
+        ["merge", "--abort"],
+        ["merge", "--no-edit", workerHead],
+      ]);
+    }).pipe(Effect.provide(f.layer));
+  },
+);

@@ -1,57 +1,83 @@
 import { useAtomValue } from "@effect/atom-react";
-import { useState, type ReactNode } from "react";
+import { useState } from "react";
+import { useNavigate } from "@tanstack/react-router";
 import { Trash2Icon } from "lucide-react";
 import type {
   EnvironmentId,
-  TeamSettings,
-  TeamPolicy,
-  TeamModelProfile,
+  ProviderOptionSelection,
   ServerProvider,
+  TeamFlowMode,
+  TeamModelProfile,
+  TeamPolicy,
+  TeamProviderLimitBehavior,
+  TeamSettings,
 } from "@dispatch/contracts";
 import { squashAtomCommandFailure } from "@dispatch/client-runtime/state/runtime";
+import { createModelSelection } from "@dispatch/shared/model";
+
 import { randomUUID } from "../../lib/utils";
+import { smartRoutingReasonMessage } from "../../flowPresentation";
+import {
+  hasAssignedFlowModel,
+  hasFlowLead,
+  hasRequiredFlowRole,
+  readyFlowProviders,
+} from "../../flowPolicy";
 import { deriveProviderInstanceEntries } from "../../providerInstances";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 import { teamEnvironment } from "../../state/team";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { Button } from "../ui/button";
-import { Input } from "../ui/input";
-import { Switch } from "../ui/switch";
-import { Select, SelectTrigger, SelectValue, SelectPopup, SelectItem } from "../ui/select";
-import { ProviderModelPicker } from "../chat/ProviderModelPicker";
-import { SettingsPageContainer, SettingsSection, SettingsRow } from "./settingsLayout";
+import { usePrimaryEnvironmentId } from "../../state/environments";
 import {
-  findReadyCapableLead,
-  initialRecommendedPolicy,
-  recommendedProfileForModel,
-  refreshedRecommendationPolicy,
-  routingTierLabels,
-  subscriptionRoutingPolicy,
+  DispatchConnectAccountAccess,
+  DispatchConnectAuthActions,
+} from "../../connect/DispatchConnectAccountAccess";
+import { readDispatchConnectAccountToken } from "../../connect/accountToken";
+import { resolveDispatchConnectUrl } from "../../connect/dispatchConnect";
+import { ensurePrimaryDispatchConnectEnvironmentLinked } from "../../connect/environmentRegistration";
+import { dispatchFlowSessionPayload } from "../../connect/flowSession";
+import { ProviderModelPicker } from "../chat/ProviderModelPicker";
+import { TraitsPicker } from "../chat/TraitsPicker";
+import { Button } from "../ui/button";
+import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
+import { Switch } from "../ui/switch";
+import {
+  Dialog,
+  DialogClose,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogPanel,
+  DialogPopup,
+  DialogTitle,
+} from "../ui/dialog";
+import {
+  SETTINGS_PICKER_TRIGGER_CLASSNAME,
+  SettingsPageContainer,
+  SettingsRow,
+  SettingsSection,
+} from "./settingsLayout";
+import {
+  applyRecommendedRoles,
+  mergeRecommendedCapabilities,
+  recommendationForProfile,
+  recommendationForSelection,
 } from "./teamProfileDefaults";
 
-function ProfileOptions({
-  initiallyOpen,
-  children,
-}: {
-  initiallyOpen: boolean;
-  children: ReactNode;
-}) {
-  const [open, setOpen] = useState(initiallyOpen);
-  return (
-    <details
-      open={open}
-      onToggle={(event) => setOpen(event.currentTarget.open)}
-      className={
-        open
-          ? "text-xs text-muted-foreground"
-          : "text-xs text-muted-foreground [&>:not(summary)]:hidden"
-      }
-    >
-      {children}
-    </details>
-  );
-}
+const PROVIDER_LIMIT_OPTIONS: ReadonlyArray<{
+  value: TeamProviderLimitBehavior;
+  label: string;
+}> = [
+  { value: "ask", label: "Ask me" },
+  { value: "auto", label: "Continue with another selected provider" },
+  { value: "pause", label: "Pause Flow" },
+];
+
+const FLOW_MODE_OPTIONS: ReadonlyArray<{ value: TeamFlowMode; label: string }> = [
+  { value: "standard", label: "Standard" },
+  { value: "auto", label: "Auto" },
+];
 
 function Choice({
   label,
@@ -62,30 +88,57 @@ function Choice({
 }: {
   label: string;
   value: string;
-  options: ReadonlyArray<{ value: string; label: string; disabled?: boolean }>;
+  options: ReadonlyArray<{ value: string; label: string }>;
   onChange: (value: string) => void;
   disabled?: boolean;
 }) {
   return (
     <Select
       value={value}
-      onValueChange={(v) => {
-        if (v !== null) onChange(v);
+      onValueChange={(next) => {
+        if (next !== null) onChange(next);
       }}
       disabled={disabled}
     >
-      <SelectTrigger size="sm" aria-label={label} className="w-auto max-w-full sm:max-w-72">
-        <SelectValue>{options.find((o) => o.value === value)?.label ?? value}</SelectValue>
+      <SelectTrigger size="sm" aria-label={label} className="w-auto max-w-full sm:max-w-80">
+        <SelectValue>
+          {options.find((option) => option.value === value)?.label ?? value}
+        </SelectValue>
       </SelectTrigger>
       <SelectPopup align="end" alignItemWithTrigger={false}>
-        {options.map((o) => (
-          <SelectItem key={o.value} value={o.value} disabled={o.disabled}>
-            {o.label}
+        {options.map((option) => (
+          <SelectItem key={option.value} value={option.value}>
+            {option.label}
           </SelectItem>
         ))}
       </SelectPopup>
     </Select>
   );
+}
+
+function roleLabel(profile: Pick<TeamModelProfile, "lead" | "worker">): string {
+  if (profile.lead && profile.worker) return "Lead + Worker";
+  if (profile.lead) return "Lead";
+  if (profile.worker) return "Worker";
+  return "No role";
+}
+
+export function withTeamProfileModelOptions(
+  profile: TeamModelProfile,
+  options: ReadonlyArray<ProviderOptionSelection> | undefined,
+): TeamModelProfile {
+  return {
+    ...profile,
+    selection: createModelSelection(profile.selection.instanceId, profile.selection.model, options),
+  };
+}
+
+export function teamProfileRolesFromRecommendation(
+  recommendation: TeamModelProfile | undefined,
+): Pick<TeamModelProfile, "lead" | "worker"> {
+  return recommendation && (recommendation.lead || recommendation.worker)
+    ? { lead: recommendation.lead, worker: recommendation.worker }
+    : { lead: false, worker: false };
 }
 
 export function TeamSettingsPanel({ environmentId }: { environmentId: EnvironmentId }) {
@@ -95,14 +148,16 @@ export function TeamSettingsPanel({ environmentId }: { environmentId: Environmen
   ) : (
     <SettingsPageContainer>
       <p className="text-sm text-muted-foreground">
-        This environment does not support Jev routing. Update its server to continue.
+        This environment does not support Dispatch Flow. Update its server to continue.
       </p>
     </SettingsPageContainer>
   );
 }
+
 function TeamSettingsPanelContent({ environmentId }: { environmentId: EnvironmentId }) {
   const settings = useEnvironmentQuery(teamEnvironment.settings({ environmentId, input: {} }));
   const config = useAtomValue(serverEnvironment.configValueAtom(environmentId));
+
   if (settings.error)
     return (
       <SettingsPageContainer>
@@ -111,14 +166,16 @@ function TeamSettingsPanelContent({ environmentId }: { environmentId: Environmen
         </p>
       </SettingsPageContainer>
     );
+
   if (!settings.data)
     return (
       <SettingsPageContainer>
         <span className="sr-only" role="status">
-          Loading routing settings
+          Loading Flow settings
         </span>
       </SettingsPageContainer>
     );
+
   return (
     <TeamSettingsForm
       key={`${environmentId}:${settings.data.policy.revision}`}
@@ -129,6 +186,7 @@ function TeamSettingsPanelContent({ environmentId }: { environmentId: Environmen
     />
   );
 }
+
 function TeamSettingsForm({
   environmentId,
   initial,
@@ -140,277 +198,572 @@ function TeamSettingsForm({
   providers: ReadonlyArray<ServerProvider>;
   refresh: () => void;
 }) {
-  const [policy, setPolicy] = useState<TeamPolicy>(() => subscriptionRoutingPolicy(initial.policy));
-  const [key, setKey] = useState("");
-  const [editingKey, setEditingKey] = useState(false);
-  const [newVariantId, setNewVariantId] = useState<string | null>(null);
+  const [policy, setPolicy] = useState<TeamPolicy>(initial.policy);
+  const navigate = useNavigate();
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const connectBaseUrl = resolveDispatchConnectUrl();
   const [pending, setPending] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
-  const save = useAtomCommand(teamEnvironment.saveSettings, { reportFailure: false });
-  const suggest = useAtomCommand(teamEnvironment.suggestPool, { reportFailure: false });
-  const [poolNote, setPoolNote] = useState<string | null>(null);
+  const [recommendationNote, setRecommendationNote] = useState<string | null>(null);
   const [recommendations, setRecommendations] = useState<ReadonlyArray<TeamModelProfile>>([]);
-  const normalizedInitialPolicy = subscriptionRoutingPolicy(initial.policy);
-  const hasUnsavedEdits = JSON.stringify(policy) !== JSON.stringify(normalizedInitialPolicy);
-  async function refreshRecommendations() {
-    if (pending || hasUnsavedEdits) return;
-    setPending(true);
-    const result = await suggest({ environmentId, input: {} });
-    setPending(false);
-    if (result._tag === "Failure") {
-      const error = squashAtomCommandFailure(result);
-      setPoolNote(
-        error instanceof Error ? error.message : "Could not refresh model recommendations.",
+  const [autoConfirmationOpen, setAutoConfirmationOpen] = useState(false);
+
+  const saveSettings = useAtomCommand(teamEnvironment.saveSettings, { reportFailure: false });
+  const setSmartRoutingSession = useAtomCommand(teamEnvironment.setSmartRoutingSession, {
+    reportFailure: false,
+  });
+  const recommendModels = useAtomCommand(teamEnvironment.recommendModels, { reportFailure: false });
+
+  const readyProviders = readyFlowProviders(providers, initial.supportedProviderInstanceIds);
+  const modelOptionsByInstance = new Map(
+    readyProviders.map((provider) => [
+      provider.instanceId,
+      provider.models.filter((model) => !model.isLegacy),
+    ]),
+  );
+  const firstProvider = readyProviders[0];
+  const firstModel = firstProvider
+    ? modelOptionsByInstance.get(firstProvider.instanceId)?.[0]
+    : undefined;
+
+  const hasUnsavedEdits = JSON.stringify(policy) !== JSON.stringify(initial.policy);
+  const hasLead = hasFlowLead(policy);
+  const hasAssignedModel = hasAssignedFlowModel(policy);
+  const hasRequiredRole = hasRequiredFlowRole(policy);
+  const hasUnassignedModel = policy.profiles.some((profile) => !profile.lead && !profile.worker);
+  const policyValid = (!policy.enabled || hasRequiredRole) && !hasUnassignedModel;
+
+  function updateProfile(id: string, update: Partial<TeamModelProfile>) {
+    setPolicy((current) => ({
+      ...current,
+      profiles: current.profiles.map((profile) =>
+        profile.id === id ? { ...profile, ...update } : profile,
+      ),
+    }));
+    setMessage(null);
+  }
+
+  function setEnabled(enabled: boolean) {
+    if (enabled && !hasRequiredRole) {
+      setMessage(
+        policy.flowMode === "auto"
+          ? "Choose at least one Lead or Worker model before enabling Flow Auto."
+          : "Choose at least one Lead model before enabling Flow Standard.",
       );
       return;
     }
-    setRecommendations(result.value.profiles);
-    if (result.value.profiles.length)
-      setPolicy((current) => refreshedRecommendationPolicy(current, result.value.profiles));
-    setPoolNote(
-      `${result.value.source === "jev" ? "Jev-assisted" : "Provider inventory"} model recommendations refreshed. ${result.value.notes.join(" ")}`,
-    );
+    setPolicy((current) => ({ ...current, enabled }));
+    setMessage(null);
   }
-  const secret = useAtomCommand(teamEnvironment.setSecret, { reportFailure: false });
-  const available = providers.filter((p) => p.enabled && p.availability !== "unavailable");
-  const first = available.find((p) => p.models.length > 0);
-  const dirty =
-    hasUnsavedEdits ||
-    initial.policy.estimatedBudgetUsd != null ||
-    initial.policy.profiles.some((p) => p.estimatedAttemptUsd !== null);
-  function updateProfile(id: string, update: Partial<TeamModelProfile>) {
-    setPolicy((p) => ({
-      ...p,
-      preferredCapableProfileId:
-        p.preferredCapableProfileId === id &&
-        (update.lead === false || (update.tier && update.tier !== "capable"))
-          ? null
-          : p.preferredCapableProfileId,
-      profiles: p.profiles.map((profile) =>
-        profile.id === id
-          ? { ...profile, ...update, ...(update.tier ? { reviewRequired: false } : {}) }
-          : profile,
-      ),
-    }));
+
+  function requestFlowMode(mode: TeamFlowMode) {
+    setMessage(null);
+    if (mode === "standard") {
+      setPolicy((current) => ({ ...current, flowMode: "standard" }));
+      return;
+    }
+    if (!initial.smartRouting.available) {
+      setMessage(
+        "Sign in to Dispatch Connect and link this environment before enabling Flow Auto.",
+      );
+      return;
+    }
+    setAutoConfirmationOpen(true);
   }
-  async function persist(kind: "policy" | "key" | "remove-key") {
-    if (pending) return;
+
+  async function syncCurrentSmartRoutingSession(accountToken: string): Promise<boolean> {
+    const result = await setSmartRoutingSession({
+      environmentId,
+      input: dispatchFlowSessionPayload(connectBaseUrl, accountToken),
+    });
+    if (result._tag === "Failure") {
+      const error = squashAtomCommandFailure(result);
+      setMessage(
+        error instanceof Error ? error.message : "Could not enable Flow Auto for this environment.",
+      );
+      return false;
+    }
+    refresh();
+    return true;
+  }
+
+  async function prepareAutoForToken(accountToken: string, refreshAccount?: () => void) {
+    if (pending || !connectBaseUrl) return;
     setPending(true);
     setMessage(null);
     try {
-      const result =
-        kind === "policy"
-          ? await save({ environmentId, input: { policy: subscriptionRoutingPolicy(policy) } })
-          : await secret({ environmentId, input: { apiKey: kind === "remove-key" ? "" : key } });
-      if (result._tag === "Failure") {
-        const error = squashAtomCommandFailure(result);
-        setMessage(error instanceof Error ? error.message : "Could not save routing settings.");
-      } else {
-        let successMessage =
-          kind === "policy"
-            ? "Routing settings saved."
-            : kind === "key"
-              ? "Key saved securely."
-              : "Key removed. Routing is off.";
-        if (
-          kind === "key" &&
-          !initial.jevConfigured &&
-          !findReadyCapableLead(result.value.policy.profiles) &&
-          !hasUnsavedEdits
-        ) {
-          const suggested = await suggest({ environmentId, input: {} });
-          if (suggested._tag === "Failure") {
-            successMessage =
-              "Key saved securely, but model recommendations could not be loaded. Refresh recommendations to finish orchestration setup.";
-          } else {
-            setRecommendations(suggested.value.profiles);
-            const recommendedPolicy = initialRecommendedPolicy(
-              result.value.policy,
-              suggested.value.profiles,
-            );
-            if (!recommendedPolicy) {
-              successMessage =
-                "Key saved securely, but Jev did not return a ready capable lead. Check the key and providers, then refresh recommendations.";
-            } else {
-              const saved = await save({ environmentId, input: { policy: recommendedPolicy } });
-              if (saved._tag === "Failure") {
-                successMessage =
-                  "Key saved securely, but the recommended routing setup could not be saved. Refresh recommendations and save again.";
-              } else {
-                setPolicy(subscriptionRoutingPolicy(saved.value.policy));
-                successMessage = "Key saved securely. Model recommendations are ready to use.";
-              }
-            }
-          }
-        } else if (
-          kind === "key" &&
-          !initial.jevConfigured &&
-          !findReadyCapableLead(result.value.policy.profiles) &&
-          hasUnsavedEdits
-        )
-          successMessage =
-            "Key saved securely. Save or reset your current edits before refreshing model recommendations.";
-        setKey("");
-        setEditingKey(false);
-        refresh();
-        setMessage(successMessage);
+      if (environmentId === primaryEnvironmentId) {
+        await ensurePrimaryDispatchConnectEnvironmentLinked(connectBaseUrl);
       }
+      await syncCurrentSmartRoutingSession(accountToken);
+      refreshAccount?.();
+    } catch (cause) {
+      setMessage(
+        cause instanceof Error
+          ? cause.message
+          : "Could not link this environment to Dispatch Connect.",
+      );
     } finally {
       setPending(false);
     }
   }
-  async function addModel(instanceId: string, slug: string) {
-    const provider = available.find((p) => p.instanceId === instanceId);
-    const model = provider?.models.find((m) => m.slug === slug);
+
+  async function savePolicy() {
+    if (pending || !hasUnsavedEdits || !policyValid) return;
+    setPending(true);
+    setMessage(null);
+    try {
+      const result = await saveSettings({ environmentId, input: { policy } });
+      if (result._tag === "Failure") {
+        const error = squashAtomCommandFailure(result);
+        setMessage(error instanceof Error ? error.message : "Could not save Flow settings.");
+        return;
+      }
+      setPolicy(result.value.policy);
+      setMessage("Flow settings saved.");
+      refresh();
+    } finally {
+      setPending(false);
+    }
+  }
+
+  async function refreshRecommendations() {
+    if (pending || hasUnsavedEdits) return;
+    setPending(true);
+    setRecommendationNote(null);
+    try {
+      const result = await recommendModels({ environmentId, input: {} });
+      if (result._tag === "Failure") {
+        const error = squashAtomCommandFailure(result);
+        setRecommendationNote(
+          error instanceof Error ? error.message : "Could not refresh model recommendations.",
+        );
+        return;
+      }
+      setRecommendations(result.value.profiles);
+      setPolicy((current) => ({
+        ...current,
+        profiles: mergeRecommendedCapabilities(current.profiles, result.value.profiles),
+      }));
+      setRecommendationNote(
+        `${result.value.source === "jev" ? "Smart Routing recommendations refreshed." : "Ready provider models refreshed."} ${result.value.notes.join(" ")}`,
+      );
+    } finally {
+      setPending(false);
+    }
+  }
+
+  function addModel(instanceId: TeamModelProfile["selection"]["instanceId"], modelSlug: string) {
+    const provider = readyProviders.find((candidate) => candidate.instanceId === instanceId);
+    const model = modelOptionsByInstance
+      .get(instanceId)
+      ?.find((candidate) => candidate.slug === modelSlug);
     if (!provider || !model) return;
     if (
       policy.profiles.some(
-        (p) => p.selection.instanceId === instanceId && p.selection.model === slug,
+        (profile) =>
+          profile.selection.instanceId === instanceId && profile.selection.model === modelSlug,
       )
     ) {
-      setMessage("That model is already in your allowed models.");
+      setMessage("That model is already selected for Flow.");
       return;
     }
-    let recommendation = recommendedProfileForModel(
-      recommendations,
-      provider.instanceId,
-      model.slug,
-    );
-    if (initial.jevConfigured && !recommendation) {
-      setPending(true);
-      const result = await suggest({ environmentId, input: {} });
-      setPending(false);
-      if (result._tag === "Success") {
-        setRecommendations(result.value.profiles);
-        recommendation = recommendedProfileForModel(
-          result.value.profiles,
-          provider.instanceId,
-          model.slug,
-        );
-      }
-    }
-    const profile =
-      recommendation ??
-      ({
-        id: randomUUID(),
-        label: `${provider.displayName ?? provider.instanceId} · ${model.name}`,
-        selection: { instanceId: provider.instanceId, model: model.slug },
-        tier: "capable",
-        reviewRequired: true,
-        lead: false,
-        worker: false,
-        estimatedAttemptUsd: null,
-      } satisfies TeamModelProfile);
-    setPolicy((p) => ({
-      ...p,
-      profiles: [...p.profiles, profile],
-    }));
+
+    const recommendation = recommendationForSelection(recommendations, instanceId, modelSlug);
+    const roles = teamProfileRolesFromRecommendation(recommendation);
+    const hasRecommendedRole = roles.lead || roles.worker;
+    const profile: TeamModelProfile = {
+      id: randomUUID(),
+      label: `${provider.displayName ?? provider.instanceId} · ${model.name}`,
+      selection: { instanceId, model: modelSlug },
+      ...roles,
+      ...(recommendation?.capability === undefined
+        ? {}
+        : { capability: recommendation.capability }),
+    };
+    setPolicy((current) => ({ ...current, profiles: [...current.profiles, profile] }));
     setMessage(
-      recommendation
-        ? "Added with Jev-recommended task group, roles, and model options."
-        : initial.jevConfigured
-          ? "Added as inactive because no model recommendation was available. Review its task group and roles before saving."
-          : null,
+      hasRecommendedRole
+        ? `Added ${model.name} with the refreshed Lead/Worker recommendation. You can change it before saving.`
+        : null,
     );
   }
+
   return (
     <SettingsPageContainer>
-      <SettingsSection id="routing-connection" title="Jev connection">
+      <SettingsSection id="routing-general" title="Dispatch Flow">
         <SettingsRow
-          title="API key"
+          title="Enable Flow"
           description={
-            initial.jevConfigured
-              ? "Saved in this environment’s private secret store."
-              : "Add your Jev (TypeSafe) API key to set up automatic routing."
+            hasRequiredRole
+              ? "Makes Flow available in the composer for this environment."
+              : policy.flowMode === "auto"
+                ? "Choose at least one Lead or Worker model before enabling Flow Auto."
+                : "Choose at least one Lead model before enabling Flow Standard."
           }
           control={
-            initial.jevConfigured && !editingKey ? (
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={pending}
-                onClick={() => setEditingKey(true)}
-              >
-                Replace key
-              </Button>
-            ) : undefined
-          }
-        >
-          {(!initial.jevConfigured || editingKey) && (
-            <div className="flex flex-wrap items-center gap-2">
-              <Input
-                aria-label="Jev API key"
-                type="password"
-                autoComplete="off"
-                value={key}
-                onChange={(e) => setKey(e.target.value)}
-                placeholder="Enter API key"
-                className="min-w-0 flex-1"
-              />
-              <Button
-                size="sm"
-                disabled={pending || !key.trim()}
-                onClick={() => void persist("key")}
-              >
-                Save key
-              </Button>
-              {initial.jevConfigured && (
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  disabled={pending}
-                  onClick={() => {
-                    setKey("");
-                    setEditingKey(false);
-                  }}
-                >
-                  Cancel
-                </Button>
-              )}
-            </div>
-          )}
-          {initial.jevConfigured && editingKey && (
-            <Button
-              size="xs"
-              variant="ghost"
+            <Switch
+              aria-label="Enable Flow"
+              checked={policy.enabled}
               disabled={pending}
-              onClick={() => void persist("remove-key")}
-            >
-              Remove saved key
-            </Button>
-          )}
-        </SettingsRow>
-        <SettingsRow
-          title="Composer control"
-          description="Turn Orchestration on for a new task to select its lead and workers automatically. With it off, your selected model handles normal messages."
+              onCheckedChange={setEnabled}
+            />
+          }
         />
-      </SettingsSection>
-      <SettingsSection
-        id="routing-models"
-        title="Allowed models"
-        headerAction={
-          first && (
-            <ProviderModelPicker
-              activeInstanceId={first.instanceId}
-              model={first.models[0]!.slug}
-              lockedProvider={null}
-              instanceEntries={deriveProviderInstanceEntries(available)}
-              modelOptionsByInstance={new Map(available.map((p) => [p.instanceId, p.models]))}
-              onInstanceModelChange={addModel}
-              triggerLabel="Add model"
-              triggerAriaLabel="Add routing model"
-              size="xs"
+        <SettingsRow
+          title="Flow mode"
+          description={
+            policy.flowMode === "standard"
+              ? "Standard uses your selected Lead and Worker models without a Dispatch Connect account."
+              : initial.smartRouting.available
+                ? "Auto uses Dispatch-hosted Smart Routing to choose direct execution or a managed team. Worker-only setups can run direct work; managed-team or Standard fallback still needs a Lead."
+                : hasLead
+                  ? "Auto stays selected and can fall back to Standard while Smart Routing is unavailable."
+                  : "Auto stays selected, but Standard fallback cannot start until you add a Lead."
+          }
+          control={
+            <Dialog open={autoConfirmationOpen} onOpenChange={setAutoConfirmationOpen}>
+              <Choice
+                label="Flow mode"
+                value={policy.flowMode}
+                options={FLOW_MODE_OPTIONS}
+                onChange={(value) => requestFlowMode(value as TeamFlowMode)}
+                disabled={pending}
+              />
+              <DialogPopup className="sm:max-w-lg">
+                <DialogHeader>
+                  <DialogTitle>Enable Flow Auto?</DialogTitle>
+                  <DialogDescription>
+                    Auto uses Dispatch-hosted Smart Routing. Dispatch covers the routing service;
+                    your coding-model usage continues on your own provider accounts.
+                  </DialogDescription>
+                </DialogHeader>
+                <DialogPanel className="space-y-2 text-sm text-muted-foreground">
+                  <p>
+                    Auto sends the task objective and minimal selected-model metadata to Dispatch's
+                    hosted router, which may use JEV to make the routing decision.
+                  </p>
+                  <p>
+                    Flow remains controlled by this environment. If hosted routing is unavailable,
+                    the run continues with Standard and shows that fallback.
+                  </p>
+                </DialogPanel>
+                <DialogFooter>
+                  <DialogClose render={<Button variant="outline" disabled={pending} />}>
+                    Cancel
+                  </DialogClose>
+                  <Button
+                    disabled={pending}
+                    onClick={() => {
+                      setPolicy((current) => ({ ...current, flowMode: "auto" }));
+                      setAutoConfirmationOpen(false);
+                      setMessage(null);
+                    }}
+                  >
+                    Enable Auto
+                  </Button>
+                </DialogFooter>
+              </DialogPopup>
+            </Dialog>
+          }
+        />
+        <SettingsRow
+          id="routing-provider-limits"
+          title="Provider limits"
+          description="What Dispatch should do when a selected provider reaches its usage limit."
+          control={
+            <Choice
+              label="Provider limit behavior"
+              value={policy.providerLimitBehavior}
+              options={PROVIDER_LIMIT_OPTIONS}
+              onChange={(value) =>
+                setPolicy((current) => ({
+                  ...current,
+                  providerLimitBehavior: value as TeamProviderLimitBehavior,
+                }))
+              }
               disabled={pending}
             />
-          )
+          }
+        />
+      </SettingsSection>
+
+      <SettingsSection
+        id="routing-models"
+        title="Models Flow can use"
+        headerAction={
+          firstProvider && firstModel ? (
+            <ProviderModelPicker
+              activeInstanceId={firstProvider.instanceId}
+              model={firstModel.slug}
+              lockedProvider={null}
+              instanceEntries={deriveProviderInstanceEntries(readyProviders)}
+              modelOptionsByInstance={modelOptionsByInstance}
+              onInstanceModelChange={addModel}
+              triggerLabel="Add model"
+              triggerAriaLabel="Add Flow model"
+              size="xs"
+              disabled={pending || policy.profiles.length >= 40}
+            />
+          ) : undefined
         }
       >
+        {initial.supportedProviderInstanceIds === undefined ? (
+          <p className="text-xs text-muted-foreground" role="status">
+            Update this environment's server to choose supported Flow models.
+          </p>
+        ) : null}
+        {policy.profiles.length === 0 ? (
+          <SettingsRow
+            title="No models selected"
+            description={
+              firstProvider
+                ? "Add models, then choose whether each one can Lead, execute Worker tasks, or both. Worker models can also handle simple Auto work directly."
+                : "Connect a provider that supports Flow in Settings → Providers before adding models."
+            }
+          />
+        ) : null}
+
+        {policy.profiles.map((profile) => {
+          const provider = providers.find(
+            (candidate) => candidate.instanceId === profile.selection.instanceId,
+          );
+          const model = provider?.models.find(
+            (candidate) => candidate.slug === profile.selection.model,
+          );
+          const unavailable =
+            !provider?.enabled ||
+            provider.status !== "ready" ||
+            provider.auth.status === "unauthenticated" ||
+            provider.availability === "unavailable" ||
+            !model;
+          const recommendation = recommendationForProfile(profile, recommendations);
+          const recommendationHasRole =
+            recommendation !== undefined && (recommendation.lead || recommendation.worker);
+          const recommendationDiffers =
+            recommendationHasRole &&
+            (recommendation.lead !== profile.lead || recommendation.worker !== profile.worker);
+
+          return (
+            <SettingsRow
+              key={profile.id}
+              title={model?.name ?? profile.selection.model}
+              description={`${provider?.displayName ?? profile.selection.instanceId} · ${roleLabel(profile)}`}
+              control={
+                <div className="flex min-w-0 items-center justify-end gap-1">
+                  {!unavailable && provider && model ? (
+                    <TraitsPicker
+                      provider={provider.driver}
+                      instanceId={provider.instanceId}
+                      models={provider.models}
+                      model={profile.selection.model}
+                      prompt=""
+                      onPromptChange={() => {}}
+                      modelOptions={profile.selection.options ?? []}
+                      allowPromptInjectedEffort={false}
+                      planModeEnabled={false}
+                      size="xs"
+                      triggerVariant="ghost"
+                      triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
+                      onModelOptionsChange={(options) =>
+                        updateProfile(profile.id, {
+                          selection: withTeamProfileModelOptions(profile, options).selection,
+                        })
+                      }
+                    />
+                  ) : null}
+                  <Button
+                    size="icon-sm"
+                    variant="ghost"
+                    aria-label={`Remove ${profile.label}`}
+                    disabled={pending}
+                    onClick={() => {
+                      setPolicy((current) => ({
+                        ...current,
+                        profiles: current.profiles.filter(
+                          (candidate) => candidate.id !== profile.id,
+                        ),
+                      }));
+                      setMessage(null);
+                    }}
+                  >
+                    <Trash2Icon className="size-3.5" />
+                  </Button>
+                </div>
+              }
+            >
+              <div className="flex flex-wrap items-center gap-x-5 gap-y-2 py-1 text-xs text-muted-foreground">
+                <label className="flex cursor-pointer items-center gap-2">
+                  <Switch
+                    size="sm"
+                    aria-label={`Allow ${profile.label} as Lead`}
+                    checked={profile.lead}
+                    disabled={pending}
+                    onCheckedChange={(lead) => updateProfile(profile.id, { lead })}
+                  />
+                  Lead
+                </label>
+                <label className="flex cursor-pointer items-center gap-2">
+                  <Switch
+                    size="sm"
+                    aria-label={`Allow ${profile.label} as Worker`}
+                    checked={profile.worker}
+                    disabled={pending}
+                    onCheckedChange={(worker) => updateProfile(profile.id, { worker })}
+                  />
+                  Worker
+                </label>
+                {recommendationDiffers ? (
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span>Smart Routing suggests {roleLabel(recommendation)}</span>
+                    <Button
+                      size="xs"
+                      variant="outline"
+                      disabled={pending}
+                      onClick={() =>
+                        updateProfile(profile.id, applyRecommendedRoles(profile, recommendation))
+                      }
+                    >
+                      Apply recommendation
+                    </Button>
+                  </div>
+                ) : null}
+              </div>
+              {unavailable ? (
+                <p className="text-xs text-muted-foreground">
+                  This model is currently unavailable. Flow will use another eligible selected model
+                  until its provider is ready again.
+                </p>
+              ) : null}
+              {!profile.lead && !profile.worker ? (
+                <p className="text-xs text-destructive">
+                  Choose Lead, Worker, or remove this model before saving.
+                </p>
+              ) : null}
+            </SettingsRow>
+          );
+        })}
+      </SettingsSection>
+
+      <SettingsSection id="routing-teams" title="Team limits">
+        <SettingsRow
+          title="Simultaneous agents"
+          description="Maximum agents active at once. Auto may use one direct executor; managed teams count the lead and workers."
+          control={
+            <Choice
+              label="Maximum active agents"
+              value={String(policy.maxActive)}
+              options={[1, 2, 3, 4, 5].map((count) => ({
+                value: String(count),
+                label: count === 1 ? "1 agent · no delegation" : `${count} agents`,
+              }))}
+              onChange={(value) =>
+                setPolicy((current) => ({ ...current, maxActive: Number(value) }))
+              }
+              disabled={pending}
+            />
+          }
+        />
+        <SettingsRow
+          title="Attempts per worker"
+          description="Includes the first attempt and corrections for one delegated task."
+          control={
+            <Choice
+              label="Attempts per worker"
+              value={String(policy.maxAttempts)}
+              options={[1, 2, 3].map((count) => ({
+                value: String(count),
+                label: String(count),
+              }))}
+              onChange={(value) =>
+                setPolicy((current) => ({ ...current, maxAttempts: Number(value) }))
+              }
+              disabled={pending}
+            />
+          }
+        />
+      </SettingsSection>
+
+      <SettingsSection id="routing-recommendations" title="Smart Routing">
+        <DispatchConnectAccountAccess>
+          {(account) => (
+            <SettingsRow
+              title="Dispatch Connect"
+              description={
+                initial.smartRouting.available
+                  ? "Auto is available. Dispatch covers Smart Routing; coding-model usage stays on your provider accounts."
+                  : smartRoutingReasonMessage(initial.smartRouting.reason)
+              }
+              control={
+                <div className="flex flex-wrap items-center justify-end gap-2">
+                  {initial.smartRouting.available ? (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => void navigate({ to: "/settings/connections" })}
+                    >
+                      Manage account
+                    </Button>
+                  ) : account.pending ? (
+                    <Button size="sm" variant="outline" disabled>
+                      Checking account…
+                    </Button>
+                  ) : !account.configured ? (
+                    <Button size="sm" variant="outline" disabled>
+                      Connect unavailable
+                    </Button>
+                  ) : !account.signedIn ? (
+                    <DispatchConnectAuthActions
+                      disabled={pending}
+                      onAuthenticated={async () => {
+                        account.refresh();
+                        if (!connectBaseUrl) return;
+                        const token = readDispatchConnectAccountToken(connectBaseUrl);
+                        if (token && environmentId === primaryEnvironmentId) {
+                          await prepareAutoForToken(token, account.refresh);
+                        }
+                      }}
+                    />
+                  ) : environmentId === primaryEnvironmentId && account.accountToken ? (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={pending}
+                      onClick={() =>
+                        void prepareAutoForToken(account.accountToken!, account.refresh)
+                      }
+                    >
+                      Link environment for Auto
+                    </Button>
+                  ) : (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => void navigate({ to: "/settings/connections" })}
+                    >
+                      Manage Connect
+                    </Button>
+                  )}
+                  <Button size="sm" variant="ghost" disabled={pending} onClick={refresh}>
+                    Refresh status
+                  </Button>
+                </div>
+              }
+            >
+              <p className="text-xs text-muted-foreground">
+                Auto sends the task objective and minimal selected-model metadata to Dispatch's
+                hosted router and TypeSafe's JEV for routing decisions. Standard does not use the
+                hosted routing service.
+              </p>
+            </SettingsRow>
+          )}
+        </DispatchConnectAccountAccess>
         <SettingsRow
           title="Model recommendations"
           description={
             hasUnsavedEdits
-              ? "Save or reset your current edits before refreshing recommendations."
-              : "Refresh recommended task groups, agent roles, and model options from ready providers. Existing saved overrides are preserved."
+              ? "Save or reset your current model changes before refreshing recommendations."
+              : "Refresh optional role and capability suggestions. Saved Lead and Worker choices are never overwritten automatically."
           }
           control={
             <Button
@@ -423,250 +776,49 @@ function TeamSettingsForm({
             </Button>
           }
         >
-          {poolNote && (
+          {recommendationNote ? (
             <p className="text-xs text-muted-foreground" role="status">
-              {poolNote}
+              {recommendationNote}
             </p>
-          )}
+          ) : null}
         </SettingsRow>
-        {policy.profiles.length === 0 && (
-          <SettingsRow
-            title="Choose models for Orchestration"
-            description={
-              first
-                ? "Add models from your connected providers. With Jev configured, Dispatch recommends their task group, team roles, and reasoning defaults; you can customize any recommendation."
-                : "Enable a provider in Settings → Providers, then add its models here."
-            }
-          />
-        )}
-        {policy.profiles.map((profile) => {
-          const provider = providers.find((p) => p.instanceId === profile.selection.instanceId);
-          const model = provider?.models.find((m) => m.slug === profile.selection.model);
-          const effort = profile.selection.options?.find((o) =>
-            ["reasoningEffort", "effort", "reasoning", "variant"].includes(o.id),
-          )?.value;
-          return (
-            <SettingsRow
-              key={profile.id}
-              title={model?.name ?? profile.selection.model}
-              description={`${provider?.displayName ?? profile.selection.instanceId} · ${profile.reviewRequired ? "Needs review · inactive" : routingTierLabels[profile.tier]} · ${typeof effort === "string" ? effort : "Provider default effort"}`}
-              control={
-                <Button
-                  size="icon-sm"
-                  variant="ghost"
-                  aria-label={`Remove ${profile.label}`}
-                  disabled={pending}
-                  onClick={() =>
-                    setPolicy((p) => ({
-                      ...p,
-                      profiles: p.profiles.filter((v) => v.id !== profile.id),
-                      preferredCapableProfileId:
-                        p.preferredCapableProfileId === profile.id
-                          ? null
-                          : p.preferredCapableProfileId,
-                    }))
-                  }
-                >
-                  <Trash2Icon className="size-3.5" />
-                </Button>
-              }
-            >
-              {(!provider?.enabled || !model || provider.availability === "unavailable") && (
-                <p className="text-xs text-destructive">
-                  This model is unavailable. Reconnect its provider or remove it before saving.
-                </p>
-              )}
-              <ProfileOptions initiallyOpen={profile.id === newVariantId}>
-                <summary className="w-fit cursor-pointer py-1 hover:text-foreground">
-                  Customize
-                </summary>
-                <div className="mt-3 space-y-3">
-                  <div className="flex flex-wrap items-center justify-between gap-3">
-                    <span>Task group</span>
-                    <Choice
-                      label={`Task group for ${profile.label}`}
-                      value={profile.reviewRequired ? "unreviewed" : profile.tier}
-                      options={[
-                        { value: "unreviewed", label: "Choose task group", disabled: true },
-                        ...Object.entries(routingTierLabels).map(([value, label]) => ({
-                          value,
-                          label,
-                        })),
-                      ]}
-                      onChange={(tier) =>
-                        updateProfile(profile.id, { tier: tier as TeamModelProfile["tier"] })
-                      }
-                      disabled={pending}
-                    />
-                  </div>
-                  <p>
-                    Jev provides a starting recommendation. Change it if your own evaluation or
-                    preference differs.
-                  </p>
-                  {(model?.capabilities?.optionDescriptors ?? []).map((option) => {
-                    const value = profile.selection.options?.find((o) => o.id === option.id)?.value;
-                    const change = (v: string | boolean | null) =>
-                      updateProfile(profile.id, {
-                        selection: {
-                          ...profile.selection,
-                          options: [
-                            ...(profile.selection.options ?? []).filter((o) => o.id !== option.id),
-                            ...(v === null ? [] : [{ id: option.id, value: v }]),
-                          ],
-                        },
-                      });
-                    return (
-                      <div
-                        key={option.id}
-                        className="flex flex-wrap items-center justify-between gap-3"
-                      >
-                        <span>{option.label}</span>
-                        {option.type === "boolean" ? (
-                          <Switch
-                            aria-label={`${option.label} for ${profile.label}`}
-                            checked={
-                              typeof value === "boolean" ? value : (option.currentValue ?? false)
-                            }
-                            onCheckedChange={change}
-                            disabled={pending}
-                          />
-                        ) : (
-                          <Choice
-                            label={`${option.label} for ${profile.label}`}
-                            value={typeof value === "string" ? value : "__default"}
-                            options={[
-                              { value: "__default", label: "Provider default" },
-                              ...option.options.map((o) => ({ value: o.id, label: o.label })),
-                            ]}
-                            onChange={(v) => change(v === "__default" ? null : v)}
-                            disabled={pending}
-                          />
-                        )}
-                      </div>
-                    );
-                  })}
-                  <Button
-                    size="xs"
-                    variant="outline"
-                    disabled={pending || policy.profiles.length >= 40}
-                    onClick={() => {
-                      const id = randomUUID();
-                      setNewVariantId(id);
-                      setPolicy((p) => ({ ...p, profiles: [...p.profiles, { ...profile, id }] }));
-                      setMessage(
-                        "Added a profile. Choose its reasoning effort below before saving.",
-                      );
-                    }}
-                  >
-                    Add effort variant
-                  </Button>
-                  <div className="flex items-center justify-between gap-3">
-                    <span>Can lead a team</span>
-                    <Switch
-                      aria-label={`Allow ${profile.label} as lead`}
-                      checked={profile.lead}
-                      disabled={pending}
-                      onCheckedChange={(lead) => updateProfile(profile.id, { lead })}
-                    />
-                  </div>
-                  <div className="flex items-center justify-between gap-3">
-                    <span>Can work on delegated tasks</span>
-                    <Switch
-                      aria-label={`Allow ${profile.label} as worker`}
-                      checked={profile.worker}
-                      disabled={pending}
-                      onCheckedChange={(worker) => updateProfile(profile.id, { worker })}
-                    />
-                  </div>
-                </div>
-              </ProfileOptions>
-            </SettingsRow>
-          );
-        })}
-        {policy.profiles.length > 0 && (
-          <SettingsRow
-            title="Preferred lead for complex tasks"
-            description="Used for complex or uncertain requests. Routine tasks can use other models."
-            control={
-              <Choice
-                label="Preferred complex-task lead"
-                value={policy.preferredCapableProfileId ?? "__pool"}
-                options={[
-                  { value: "__pool", label: "Use model list order" },
-                  ...policy.profiles
-                    .filter((p) => p.lead && p.tier === "capable")
-                    .map((p) => ({ value: p.id, label: p.label })),
-                ]}
-                onChange={(value) =>
-                  setPolicy((p) => ({
-                    ...p,
-                    preferredCapableProfileId: value === "__pool" ? null : value,
-                  }))
-                }
-                disabled={pending}
-              />
-            }
-          />
-        )}
       </SettingsSection>
-      <SettingsSection id="routing-teams" title="Team limits">
-        <SettingsRow
-          title="Simultaneous agents"
-          description="Includes the lead. More workers can use your subscription allowance faster."
-          control={
-            <Choice
-              label="Maximum active agents"
-              value={String(policy.maxActive)}
-              options={[1, 2, 3, 4, 5].map((n) => ({
-                value: String(n),
-                label: n === 1 ? "1 · Lead only" : `${n} agents`,
-              }))}
-              onChange={(v) => setPolicy((p) => ({ ...p, maxActive: Number(v) }))}
-              disabled={pending}
-            />
-          }
-        />
-        <SettingsRow
-          title="Attempts per worker"
-          description="Includes the first attempt and corrections for one work item. Repeated failures pause the team for review."
-          control={
-            <Choice
-              label="Attempts per worker"
-              value={String(policy.maxAttempts)}
-              options={[1, 2, 3].map((n) => ({ value: String(n), label: String(n) }))}
-              onChange={(v) => setPolicy((p) => ({ ...p, maxAttempts: Number(v) }))}
-              disabled={pending}
-            />
-          }
-        />
-      </SettingsSection>
+
       <div className="flex flex-wrap items-center gap-3 px-3 sm:px-4">
-        <Button size="sm" disabled={pending || !dirty} onClick={() => void persist("policy")}>
+        <Button
+          size="sm"
+          disabled={pending || !hasUnsavedEdits || !policyValid}
+          onClick={() => void savePolicy()}
+        >
           {pending ? "Working…" : "Save changes"}
         </Button>
-        {dirty && (
+        {hasUnsavedEdits ? (
           <Button
             size="sm"
             variant="ghost"
             disabled={pending}
             onClick={() => {
-              setPolicy(subscriptionRoutingPolicy(initial.policy));
+              setPolicy(initial.policy);
               setMessage(null);
             }}
           >
             Reset changes
           </Button>
-        )}
-        {message && (
+        ) : null}
+        {!policyValid ? (
+          <p className="text-xs text-destructive">
+            {hasUnassignedModel
+              ? "Every selected model needs Lead, Worker, or both."
+              : policy.flowMode === "auto" && !hasAssignedModel
+                ? "Choose at least one Lead or Worker model before enabling Flow Auto."
+                : "Choose at least one Lead model before enabling Flow Standard."}
+          </p>
+        ) : null}
+        {message ? (
           <p role="status" className="text-xs text-muted-foreground">
             {message}
           </p>
-        )}
-        {initial.policy.estimatedBudgetUsd != null && (
-          <p className="text-xs text-muted-foreground">
-            Saving removes the previous dollar estimate limit. Team turn and attempt limits remain.
-          </p>
-        )}
+        ) : null}
       </div>
     </SettingsPageContainer>
   );

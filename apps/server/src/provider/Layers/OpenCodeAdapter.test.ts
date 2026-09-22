@@ -667,6 +667,7 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
   it.effect("completes once for the v2 execution-succeeded and session-idle notifications", () =>
     Effect.gen(function* () {
       const adapter = yield* OpenCodeAdapter;
+      NodeAssert.equal(adapter.capabilities.managedTeamNativeDelegation, "blocked");
       const threadId = asThreadId("thread-v2-double-idle");
       const push = makeOpenCodeEventQueue();
       const eventsFiber = yield* adapter.streamEvents.pipe(

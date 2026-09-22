@@ -91,6 +91,11 @@ on:
       relay_url:
         required: true
         type: string
+      # Public Dispatch Connect origin. This is not a credential; the build
+      # bootstrap expands it to the Vite public alias for renderer/CLI builds.
+      connect_url:
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -101,6 +106,7 @@ jobs:
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 30
     env:
+      DISPATCH_CONNECT_URL: ${{ inputs.connect_url }}
       DISPATCH_CLERK_PUBLISHABLE_KEY: ${{ inputs.clerk_publishable_key }}
       DISPATCH_CLERK_JWT_TEMPLATE: ${{ inputs.clerk_jwt_template }}
       DISPATCH_CLERK_CLI_OAUTH_CLIENT_ID: ${{ inputs.clerk_cli_oauth_client_id }}
@@ -527,12 +533,10 @@ jobs:
             "release/*.AppImage"
             "release/*.exe"
           )
-          # Preview builds have no publish config, so electron-builder writes
-          # no feed manifest for them, but it still emits blockmaps beside the
-          # installers. Neither belongs on a release no updater may follow.
-          if [[ "${{ inputs.release_channel }}" != "preview" ]]; then
-            patterns+=("release/*.blockmap" "release/*.yml")
-          fi
+          # Every published desktop channel carries its own updater manifests
+          # and blockmaps. Preview uses a dedicated `preview` manifest and can
+          # therefore never be discovered through stable/latest metadata.
+          patterns+=("release/*.blockmap" "release/*.yml")
           for pattern in "${patterns[@]}"; do
             for file in $pattern; do
               cp "$file" release-publish/

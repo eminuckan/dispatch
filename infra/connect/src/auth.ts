@@ -26,6 +26,20 @@ export function createConnectAuth(config: ConnectConfig, pool: Pool) {
     secret: config.betterAuthSecret,
     emailAndPassword: { enabled: true },
     trustedOrigins: [...config.allowedOrigins],
+    advanced: {
+      // The Node handler overwrites this header from the socket/trusted proxy chain.
+      ipAddress: { ipAddressHeaders: ["x-dispatch-client-ip"] },
+    },
+    rateLimit: {
+      enabled: true,
+      storage: "database" as const,
+      window: 60,
+      max: 100,
+      customRules: {
+        "/sign-up/email": { window: 3600, max: 5 },
+        "/sign-in/email": { window: 60, max: 10 },
+      },
+    },
     plugins,
   };
   const auth = betterAuth(options);

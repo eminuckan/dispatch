@@ -79,3 +79,52 @@ NodeTest.test("production requires an independent Connect credential secret", ()
     /CONNECT_CREDENTIAL_SECRET is required in production/,
   );
 });
+
+NodeTest.test(
+  "Smart Routing is operator configured, explicitly disableable and starts with bounded budgets",
+  () => {
+    const env = {
+      DATABASE_URL: "postgres://unused",
+      BETTER_AUTH_SECRET: "test-secret",
+      BETTER_AUTH_URL: "https://connect.example.test",
+    };
+    NodeAssert.equal(loadConfig(env).smartRouting, null);
+    NodeAssert.equal(
+      loadConfig({
+        ...env,
+        CONNECT_JEV_API_KEY: "test-key",
+        CONNECT_SMART_ROUTING_ENABLED: "false",
+      }).smartRouting,
+      null,
+    );
+    const routing = loadConfig({ ...env, CONNECT_JEV_API_KEY: "test-key" }).smartRouting!;
+    NodeAssert.equal(routing.monthlyBudgetNanos, 25_000_000_000);
+    NodeAssert.equal(routing.dailyBudgetNanos, 2_000_000_000);
+    NodeAssert.equal(routing.maxConcurrentPerAccount, 2);
+    NodeAssert.equal(routing.requestCostNanos, 65_536 * 42);
+    NodeAssert.equal(
+      loadConfig({
+        ...env,
+        CONNECT_JEV_API_KEY: "test-key",
+        CONNECT_ROUTING_MONTHLY_BUDGET_USD: "0",
+      }).smartRouting!.monthlyBudgetNanos,
+      0,
+    );
+    for (const value of ["-1", "NaN", "10001"])
+      NodeAssert.throws(() =>
+        loadConfig({
+          ...env,
+          CONNECT_JEV_API_KEY: "test-key",
+          CONNECT_ROUTING_MONTHLY_BUDGET_USD: value,
+        }),
+      );
+    for (const value of ["12junk", "1.2", "0"])
+      NodeAssert.throws(() =>
+        loadConfig({
+          ...env,
+          CONNECT_JEV_API_KEY: "test-key",
+          CONNECT_ROUTING_ACCOUNT_CONCURRENCY: value,
+        }),
+      );
+  },
+);

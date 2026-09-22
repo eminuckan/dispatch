@@ -16,6 +16,8 @@ function config(deviceVerificationUrl: string): ConnectConfig {
     allowedOrigins: [],
     deviceVerificationUrl,
     managedTunnel: null,
+    smartRouting: null,
+    trustedProxyCidrs: [],
   };
 }
 

@@ -145,6 +145,61 @@ const withIdentity = <A, E, R>(
 };
 
 describe("DesktopAppIdentity", () => {
+  it.effect("uses the product userData path by default when no legacy directory exists", () =>
+    withIdentity(
+      Effect.gen(function* () {
+        const identity = yield* DesktopAppIdentity.DesktopAppIdentity;
+        const userDataPath = yield* identity.resolveUserDataPath;
+
+        assert.equal(userDataPath, "/Users/alice/Library/Application Support/dispatch");
+      }),
+    ),
+  );
+
+  it.effect("uses an explicit absolute userData override before probing product paths", () =>
+    withIdentity(
+      Effect.gen(function* () {
+        const identity = yield* DesktopAppIdentity.DesktopAppIdentity;
+        const userDataPath = yield* identity.resolveUserDataPath;
+
+        assert.equal(userDataPath, "/tmp/dispatch-native-updater/user-data");
+      }),
+      {
+        legacyPathProbeError: PlatformError.systemError({
+          _tag: "PermissionDenied",
+          module: "FileSystem",
+          method: "exists",
+          description: "product userData path must not be probed",
+          pathOrDescriptor: "/Users/alice/Library/Application Support/dispatch",
+        }),
+        environment: {
+          env: {
+            DISPATCH_DESKTOP_USER_DATA_DIR: "/tmp/dispatch-native-updater/user-data",
+          },
+        },
+      },
+    ),
+  );
+
+  it.effect("rejects a relative userData override", () =>
+    withIdentity(
+      Effect.gen(function* () {
+        const identity = yield* DesktopAppIdentity.DesktopAppIdentity;
+        const error = yield* identity.resolveUserDataPath.pipe(Effect.flip);
+
+        assert.instanceOf(error, DesktopAppIdentity.DesktopUserDataPathOverrideError);
+        assert.equal(error.path, "relative/user-data");
+      }),
+      {
+        environment: {
+          env: {
+            DISPATCH_DESKTOP_USER_DATA_DIR: "relative/user-data",
+          },
+        },
+      },
+    ),
+  );
+
   it.effect("keeps using the legacy userData path when it already exists", () =>
     withIdentity(
       Effect.gen(function* () {

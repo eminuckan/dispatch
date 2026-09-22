@@ -5,6 +5,7 @@ import {
   TeamRoutingStatus,
   TeamRoutingActions,
   TeamManualModelControls,
+  FlowDiscoveryCard,
 } from "./TeamRoutingPreview";
 import { DESKTOP_PASTE_AS_TEXT_EVENT } from "../../lib/desktopPasteAsText";
 import { isLocalEnvironmentDisabled } from "../../localEnvironment";
@@ -3759,6 +3760,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     scopeKey: composerTargetKey(composerDraftTarget),
     environmentId,
     projectId: routeKind === "draft" ? props.teamProjectId : null,
+    runtimeMode,
     prompt: routeKind === "draft" ? prompt : "",
     allowRouting: routeKind === "draft" && multipleModelSelections === null,
     hasAttachments: composerImages.length + composerFiles.length > 0,
@@ -6112,6 +6114,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // ------------------------------------------------------------------
   return (
     <TeamRoutingProvider state={teamRouting}>
+      <FlowDiscoveryCard show={routeKind === "draft"} />
       <TeamRoutingStatus />
       <form
         ref={composerFormRef}

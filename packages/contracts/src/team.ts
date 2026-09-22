@@ -1,285 +1,363 @@
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+
 import {
   ChatAttachment,
   ModelSelection,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
-  ThreadTurnStartCommand,
+  RuntimeMode,
 } from "./orchestration.ts";
 import { MessageId, ProjectId, ThreadId, TurnId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { ProviderInstanceId } from "./providerInstance.ts";
 
 const Id = TrimmedNonEmptyString.check(Schema.isMaxLength(128));
 const Count = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
-export const TeamTier = Schema.Literals(["economy", "balanced", "capable"]);
-export type TeamTier = typeof TeamTier.Type;
+const Timestamp = Schema.String;
+const Commit = TrimmedNonEmptyString.check(Schema.isMaxLength(256));
+const BoundedText = Schema.String.check(Schema.isMaxLength(64_000));
+const ManagedRuntimeMode = RuntimeMode.pipe(
+  Schema.withDecodingDefault(Effect.succeed("approval-required" as const)),
+);
+
+export const TeamCapability = Schema.Literals(["general", "complex", "frontier"]);
+export type TeamCapability = typeof TeamCapability.Type;
+
+export const TeamExecutionMode = Schema.Literals(["direct", "orchestrated"]);
+export type TeamExecutionMode = typeof TeamExecutionMode.Type;
+
 export const TeamModelProfile = Schema.Struct({
   id: Id,
   label: TrimmedNonEmptyString.check(Schema.isMaxLength(100)),
   selection: ModelSelection,
-  tier: TeamTier,
-  reviewRequired: Schema.optional(Schema.Boolean),
   lead: Schema.Boolean,
   worker: Schema.Boolean,
-  // A user estimate is never an actual provider bill or subscription price.
-  estimatedAttemptUsd: Schema.NullOr(
-    Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0), Schema.isLessThanOrEqualTo(1_000_000)),
-  ),
+  capability: Schema.optional(TeamCapability),
 });
 export type TeamModelProfile = typeof TeamModelProfile.Type;
+
+export const TeamProviderLimitBehavior = Schema.Literals(["ask", "auto", "pause"]);
+export type TeamProviderLimitBehavior = typeof TeamProviderLimitBehavior.Type;
+
+export const TeamFlowMode = Schema.Literals(["standard", "auto"]);
+export type TeamFlowMode = typeof TeamFlowMode.Type;
+
 export const TeamPolicy = Schema.Struct({
   revision: Count,
-  mode: Schema.Literals(["off", "shadow", "auto"]),
+  enabled: Schema.Boolean,
+  flowMode: TeamFlowMode.pipe(Schema.withDecodingDefault(Effect.succeed("standard" as const))),
   profiles: Schema.Array(TeamModelProfile).check(Schema.isMaxLength(40)),
   maxActive: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 5 })),
   maxAttempts: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 3 })),
-  estimatedBudgetUsd: Schema.optional(
-    Schema.NullOr(
-      Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0), Schema.isLessThanOrEqualTo(1_000_000)),
-    ),
-  ),
-  preferredCapableProfileId: Schema.optional(Schema.NullOr(Id)),
-  confidenceThreshold: Schema.Finite.check(Schema.isBetween({ minimum: 0.8, maximum: 1 })),
+  providerLimitBehavior: TeamProviderLimitBehavior,
 });
 export type TeamPolicy = typeof TeamPolicy.Type;
-export const TeamSettings = Schema.Struct({ policy: TeamPolicy, jevConfigured: Schema.Boolean });
+
+export const TeamSmartRoutingStatus = Schema.Struct({
+  available: Schema.Boolean,
+  reason: Schema.NullOr(Schema.String.check(Schema.isMaxLength(256))),
+});
+export type TeamSmartRoutingStatus = typeof TeamSmartRoutingStatus.Type;
+
+export const TeamSettings = Schema.Struct({
+  policy: TeamPolicy,
+  supportedProviderInstanceIds: Schema.optional(Schema.Array(ProviderInstanceId)),
+  // Recomputed from the environment's Connect access; old persisted settings stay readable.
+  smartRouting: TeamSmartRoutingStatus.pipe(
+    Schema.withDecodingDefault(
+      Effect.succeed({ available: false, reason: "smart_routing_session_required" } as const),
+    ),
+  ),
+});
 export type TeamSettings = typeof TeamSettings.Type;
-export const TeamDraft = Schema.Struct({
-  draftId: Id,
-  revision: Count,
-  policyRevision: Count,
-  prompt: Schema.String.check(Schema.isMaxLength(64000)),
-  // Non-text context is deliberately conservative until semantic inspection exists.
-  hasAttachments: Schema.Boolean,
-});
-export type TeamDraft = typeof TeamDraft.Type;
-export const TeamPlanningHints = Schema.Struct({
-  context: Schema.Literals(["sufficient", "missing", "unknown"]),
-  verification: Schema.Literals(["deterministic", "review", "unknown"]),
-  delegation: Schema.Literals(["single", "separable", "unknown"]),
-});
-export type TeamPlanningHints = typeof TeamPlanningHints.Type;
-export const TeamAssessment = Schema.Struct({
-  draftId: Id,
-  revision: Count,
-  fingerprint: Id,
-  policyRevision: Count,
-  profileId: Schema.NullOr(Id),
-  selection: Schema.NullOr(ModelSelection),
-  tier: TeamTier,
-  confidence: Schema.Finite,
-  reason: Schema.String,
-  source: Schema.Literals(["jev", "fallback"]),
-  inputTokens: Schema.NullOr(Count),
-  outputTokens: Schema.NullOr(Count),
-  // Advisory only: never authorizes workers or replaces acceptance evidence.
-  planning: Schema.optional(TeamPlanningHints),
-});
-export type TeamAssessment = typeof TeamAssessment.Type;
+
 export class TeamError extends Schema.TaggedError<TeamError>()("TeamError", {
   code: Schema.Literals(["invalid", "conflict", "unavailable", "not-found", "persistence"]),
   message: Schema.String,
 }) {}
+
 export const TeamSettingsUpdate = Schema.Struct({ policy: TeamPolicy });
-export const TeamSecretUpdate = Schema.Struct({
-  // Write-only. Never returned in settings, assessments or events.
-  apiKey: Schema.String.check(Schema.isMaxLength(512)),
+export type TeamSettingsUpdate = typeof TeamSettingsUpdate.Type;
+
+export const TeamSmartRoutingSessionUpdate = Schema.Struct({
+  // Write-only account bearer. Never returned from settings or durable run state.
+  accountToken: Schema.NullOr(Schema.String.check(Schema.isMaxLength(4_096))),
+  // Origin that issued the bearer. The server binds it to the persisted Connect environment
+  // before storing the token so a session can never be forwarded to another Connect origin.
+  baseUrl: Schema.NullOr(Schema.String.check(Schema.isMaxLength(2_048))),
 });
+export type TeamSmartRoutingSessionUpdate = typeof TeamSmartRoutingSessionUpdate.Type;
+
+export const TeamModelRecommendations = Schema.Struct({
+  profiles: Schema.Array(TeamModelProfile).check(Schema.isMaxLength(40)),
+  notes: Schema.Array(Schema.String),
+  source: Schema.Literals(["jev", "catalog"]),
+});
+export type TeamModelRecommendations = typeof TeamModelRecommendations.Type;
+
+/** Explicit owner snapshot used by tasks, attempts and teammate messages. */
+export const TeamOwner = Schema.Struct({
+  role: Schema.Literals(["lead", "worker"]),
+  profileId: Id,
+  threadId: Schema.NullOr(ThreadId),
+  taskId: Schema.NullOr(Id),
+});
+export type TeamOwner = typeof TeamOwner.Type;
+
 export const TeamTask = Schema.Struct({
   id: Id,
-  objective: TrimmedNonEmptyString,
-  acceptance: Schema.Array(TrimmedNonEmptyString).check(Schema.isMinLength(1)),
-  dependencies: Schema.Array(Id),
-  profileId: Id,
-  status: Schema.Literals(["pending", "running", "review", "accepted", "failed", "cancelled"]),
-  generation: Count,
-  attempts: Count,
-  threadId: Schema.NullOr(ThreadId),
-  context: Schema.String,
-  result: Schema.NullOr(Schema.String),
-  recoveryHistory: Schema.optional(
-    Schema.Array(
-      Schema.Struct({
-        generation: Count,
-        profileId: Id,
-        result: Schema.NullOr(Schema.String),
-        correction: TrimmedNonEmptyString,
-      }),
-    ).check(Schema.isMaxLength(3)),
+  objective: TrimmedNonEmptyString.check(Schema.isMaxLength(8_000)),
+  acceptance: Schema.Array(TrimmedNonEmptyString.check(Schema.isMaxLength(2_000))).check(
+    Schema.isMinLength(1),
+    Schema.isMaxLength(20),
   ),
+  dependencies: Schema.Array(Id).check(Schema.isMaxLength(50)),
+  owner: TeamOwner,
+  branch: Schema.NullOr(TrimmedNonEmptyString),
+  worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  status: Schema.Literals([
+    "pending",
+    "running",
+    "review",
+    "settling",
+    "settled",
+    "blocked",
+    "failed",
+    "cancelled",
+  ]),
+  attemptIds: Schema.Array(Id),
+  settlementId: Schema.NullOr(Id),
+  result: Schema.NullOr(Schema.String),
 });
 export type TeamTask = typeof TeamTask.Type;
-export const TeamExecutionTurn = Schema.Struct({
+
+export const TeamAttemptFailure = Schema.Struct({
+  kind: Schema.Literals([
+    "provider-limit",
+    "provider-unavailable",
+    "provider-error",
+    "invalid-result",
+    "cancelled",
+    "unknown",
+  ]),
+  message: Schema.String.check(Schema.isMaxLength(8_000)),
+});
+export type TeamAttemptFailure = typeof TeamAttemptFailure.Type;
+
+/** One provider-backed unit of managed work. The owner and model selection are frozen per attempt. */
+export const TeamAttempt = Schema.Struct({
   id: Id,
-  /** Canonical provider turn receipt for exact protocol-message presentation. */
-  providerTurnId: Schema.optional(TurnId),
-  /** Final assistant message emitted by this managed turn, when known. */
-  resultMessageId: Schema.optional(MessageId),
-  estimatedAttemptUsd: Schema.optional(
-    Schema.NullOr(
-      Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0), Schema.isLessThanOrEqualTo(1_000_000)),
-    ),
-  ),
-  role: Schema.Literals(["plan", "worker", "review", "integrate"]),
+  commandId: Id,
+  requestMessageId: MessageId,
   taskId: Schema.NullOr(Id),
-  command: ThreadTurnStartCommand,
-  status: Schema.Literals(["reserved", "dispatching", "dispatched", "settled"]),
-  result: Schema.NullOr(Schema.String),
-  succeeded: Schema.Boolean,
-});
-export type TeamExecutionTurn = typeof TeamExecutionTurn.Type;
-export const TeamExecution = Schema.Struct({
-  workspaceRoot: Schema.String,
-  baseCommit: Schema.String,
-  leadThreadId: ThreadId,
-  // Legacy clients may send this field; execution no longer uses a turn ceiling.
-  maxTurns: Schema.optional(Schema.Int),
-  turns: Schema.Array(TeamExecutionTurn),
-  acceptance: Schema.optional(
-    Schema.Array(TrimmedNonEmptyString).check(Schema.isMinLength(1), Schema.isMaxLength(20)),
+  role: Schema.Literals(["plan", "work", "review", "integrate"]),
+  sequence: Count,
+  owner: TeamOwner,
+  selection: ModelSelection,
+  /** Exact managed prompt persisted before provider dispatch so retries are replay-safe. */
+  prompt: BoundedText,
+  /** Thread-owned attachment copies persisted before provider dispatch for replay safety. */
+  attachments: Schema.Array(ChatAttachment).check(
+    Schema.isMaxLength(PROVIDER_SEND_TURN_MAX_ATTACHMENTS),
   ),
-  phase: Schema.Literals(["plan", "workers", "integrate", "done"]),
-  notice: Schema.NullOr(Schema.String),
+  status: Schema.Literals([
+    "reserved",
+    "dispatching",
+    "running",
+    "succeeded",
+    "failed",
+    "cancelled",
+  ]),
+  providerTurnId: Schema.NullOr(TurnId),
+  resultMessageId: Schema.NullOr(MessageId),
+  result: Schema.NullOr(Schema.String),
+  failure: Schema.NullOr(TeamAttemptFailure),
+  createdAt: Timestamp,
+  updatedAt: Timestamp,
 });
-export const TeamPeerMessage = Schema.Struct({
+export type TeamAttempt = typeof TeamAttempt.Type;
+
+export const TeamMessage = Schema.Struct({
   id: Id,
-  fromThreadId: ThreadId,
-  toThreadId: ThreadId,
-  text: TrimmedNonEmptyString.check(Schema.isMaxLength(8000)),
+  from: TeamOwner,
+  to: TeamOwner,
+  text: TrimmedNonEmptyString.check(Schema.isMaxLength(8_000)),
   replyRequested: Schema.Boolean,
   inReplyTo: Schema.optional(Id),
-  origin: Schema.optional(Schema.Literal("progress")),
-  sourceSequence: Schema.optional(Count),
-  createdAt: Schema.String,
-  readAt: Schema.NullOr(Schema.String),
+  createdAt: Timestamp,
+  readAt: Schema.NullOr(Timestamp),
 });
-export type TeamPeerMessage = typeof TeamPeerMessage.Type;
+export type TeamMessage = typeof TeamMessage.Type;
+
+/** Durable handoff from a worker worktree into the run's primary workspace. */
+export const TeamSettlement = Schema.Struct({
+  id: Id,
+  taskId: Id,
+  attemptId: Id,
+  owner: TeamOwner,
+  sourceWorktreePath: TrimmedNonEmptyString,
+  baseCommit: Commit,
+  headCommit: Schema.NullOr(Commit),
+  appliedCommit: Schema.NullOr(Commit),
+  status: Schema.Literals(["pending", "ready", "applying", "applied", "conflict", "rejected"]),
+  summary: Schema.NullOr(Schema.String.check(Schema.isMaxLength(8_000))),
+  createdAt: Timestamp,
+  updatedAt: Timestamp,
+});
+export type TeamSettlement = typeof TeamSettlement.Type;
+
+export const TeamFailoverTrigger = Schema.Struct({
+  kind: Schema.Literals(["provider-limit", "provider-unavailable", "attempt-failed"]),
+  providerInstanceId: ProviderInstanceId,
+  limitId: Schema.NullOr(TrimmedNonEmptyString.check(Schema.isMaxLength(128))),
+  detail: Schema.String.check(Schema.isMaxLength(4_000)),
+});
+export type TeamFailoverTrigger = typeof TeamFailoverTrigger.Type;
+
+export const TeamFailoverDecision = Schema.Struct({
+  action: Schema.Literals(["retry", "switch", "pause"]),
+  profileId: Schema.NullOr(Id),
+  source: Schema.Literals(["user", "policy", "advisor"]),
+  decidedAt: Timestamp,
+});
+export type TeamFailoverDecision = typeof TeamFailoverDecision.Type;
+
+/** Durable record of a blocked attempt and the decision used to continue, switch or pause. */
+export const TeamFailover = Schema.Struct({
+  id: Id,
+  taskId: Schema.NullOr(Id),
+  attemptId: Id,
+  fromProfileId: Id,
+  candidateProfileIds: Schema.Array(Id).check(Schema.isMaxLength(40)),
+  trigger: TeamFailoverTrigger,
+  status: Schema.Literals(["pending", "decided", "applied", "paused", "exhausted"]),
+  decision: Schema.NullOr(TeamFailoverDecision),
+  createdAt: Timestamp,
+  updatedAt: Timestamp,
+});
+export type TeamFailover = typeof TeamFailover.Type;
+
+export const TeamWorkspace = Schema.Struct({
+  root: TrimmedNonEmptyString,
+  baseCommit: Commit,
+  integrationHead: Commit,
+  leadBranch: Schema.NullOr(TrimmedNonEmptyString),
+  leadWorktreePath: Schema.NullOr(TrimmedNonEmptyString),
+});
+export type TeamWorkspace = typeof TeamWorkspace.Type;
+
 export const TeamRun = Schema.Struct({
   id: Id,
   commandId: Id,
   projectId: ProjectId,
   revision: Count,
-  objective: TrimmedNonEmptyString,
+  executionMode: TeamExecutionMode.pipe(
+    Schema.withDecodingDefault(Effect.succeed("orchestrated" as const)),
+  ),
+  runtimeMode: ManagedRuntimeMode,
+  prompt: BoundedText,
   policy: TeamPolicy,
-  lead: TeamModelProfile,
+  lead: TeamOwner,
+  acceptance: Schema.Array(TrimmedNonEmptyString.check(Schema.isMaxLength(2_000))).check(
+    Schema.isMaxLength(20),
+  ),
+  decisions: Schema.Array(Schema.String.check(Schema.isMaxLength(8_000))).check(
+    Schema.isMaxLength(200),
+  ),
   status: Schema.Literals([
     "planning",
     "running",
     "review",
-    "completed",
+    "settling",
+    "awaiting-provider-decision",
     "paused",
+    "completed",
     "cancelled",
     "failed",
   ]),
+  statusReason: Schema.NullOr(Schema.String.check(Schema.isMaxLength(8_000))),
+  workspace: Schema.NullOr(TeamWorkspace),
   tasks: Schema.Array(TeamTask),
-  decisions: Schema.Array(Schema.String),
-  messages: Schema.optional(Schema.Array(TeamPeerMessage)),
-  createdAt: Schema.String,
-  updatedAt: Schema.String,
-  attachments: Schema.optional(
-    Schema.Array(ChatAttachment).check(Schema.isMaxLength(PROVIDER_SEND_TURN_MAX_ATTACHMENTS)),
+  attempts: Schema.Array(TeamAttempt),
+  messages: Schema.Array(TeamMessage),
+  settlements: Schema.Array(TeamSettlement),
+  failovers: Schema.Array(TeamFailover),
+  attachments: Schema.Array(ChatAttachment).check(
+    Schema.isMaxLength(PROVIDER_SEND_TURN_MAX_ATTACHMENTS),
   ),
-  execution: Schema.optional(TeamExecution),
+  createdAt: Timestamp,
+  updatedAt: Timestamp,
 });
 export type TeamRun = typeof TeamRun.Type;
+
 export const TeamStart = Schema.Struct({
   commandId: Id,
   projectId: ProjectId,
-  draft: TeamDraft,
-  fingerprint: Id,
-  attachments: Schema.optional(
-    Schema.Array(ChatAttachment).check(Schema.isMaxLength(PROVIDER_SEND_TURN_MAX_ATTACHMENTS)),
+  runtimeMode: ManagedRuntimeMode,
+  prompt: BoundedText,
+  attachments: Schema.Array(ChatAttachment).check(
+    Schema.isMaxLength(PROVIDER_SEND_TURN_MAX_ATTACHMENTS),
   ),
-  // Legacy clients may send this field; execution no longer uses a turn ceiling.
-  maxTurns: Schema.optional(Schema.Int),
 });
 export type TeamStart = typeof TeamStart.Type;
+
 export const TeamRunId = Schema.Struct({ id: Id });
+export type TeamRunId = typeof TeamRunId.Type;
+
 export const TeamControl = Schema.Struct({
   id: Id,
   revision: Count,
   action: Schema.Literals(["pause", "resume", "cancel"]),
-  maxTurns: Schema.optional(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 100 }))),
 });
-
 export type TeamControl = typeof TeamControl.Type;
 
-export const TeamResolve = Schema.Struct({
-  prompt: Schema.String.check(Schema.isMaxLength(64000)),
-  hasAttachments: Schema.Boolean,
-});
-// Bounded diagnostic input. This endpoint recommends; it cannot dispatch or settle an attempt.
-export const TeamRecoveryInput = Schema.Struct({
-  policyRevision: Count,
-  currentProfileId: Id,
-  objective: TrimmedNonEmptyString.check(Schema.isMaxLength(4000)),
-  evidence: TrimmedNonEmptyString.check(Schema.isMaxLength(8000)),
-  correction: Schema.String.check(Schema.isMaxLength(4000)),
-  attemptsMade: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 3 })),
-  inFlight: Schema.Boolean,
-});
-export type TeamRecoveryInput = typeof TeamRecoveryInput.Type;
-export const TeamRecoveryAdvice = Schema.Struct({
-  action: Schema.Literals([
-    "wait",
-    "stop",
-    "repair_environment",
-    "supply_context",
-    "correct",
-    "increase_effort",
-    "new_worker",
-    "lead_review",
-  ]),
-  profileId: Schema.NullOr(Id),
-  reason: Schema.String,
-  source: Schema.Literals(["jev", "policy"]),
-});
-export type TeamRecoveryAdvice = typeof TeamRecoveryAdvice.Type;
-
-// Presentation read model: coordination prompts, review commands and context stay out of chat.
-export const TeamThreadInput = Schema.Struct({ threadId: ThreadId });
-export const TeamThreadView = Schema.Struct({
+export const TeamProviderDecision = Schema.Struct({
   id: Id,
-  coordinationMessageIds: Schema.Array(MessageId),
   revision: Count,
-  objective: Schema.String,
+  failoverId: Id,
+  action: TeamFailoverDecision.fields.action,
+  profileId: Schema.NullOr(Id),
+});
+export type TeamProviderDecision = typeof TeamProviderDecision.Type;
+
+export const TeamThreadInput = Schema.Struct({ threadId: ThreadId });
+export type TeamThreadInput = typeof TeamThreadInput.Type;
+
+export const TeamThreadTurnView = Schema.Struct({
+  id: Id,
+  role: Schema.Literals(["plan", "worker", "review", "integrate"]),
+  taskId: TeamAttempt.fields.taskId,
+  threadId: Schema.NullOr(ThreadId),
+  model: Schema.String,
+  status: Schema.Literals(["reserved", "dispatching", "dispatched", "settled"]),
+  succeeded: Schema.Boolean,
+  summary: Schema.NullOr(Schema.String),
+  providerTurnId: TeamAttempt.fields.providerTurnId,
+  resultMessageId: TeamAttempt.fields.resultMessageId,
+});
+export type TeamThreadTurnView = typeof TeamThreadTurnView.Type;
+
+/** Thread-scoped compatibility projection backed entirely by durable run state. */
+export const TeamThreadView = Schema.Struct({
+  id: TeamRun.fields.id,
+  threadId: ThreadId,
+  revision: TeamRun.fields.revision,
+  executionMode: TeamRun.fields.executionMode,
+  objective: TeamRun.fields.prompt,
+  prompt: TeamRun.fields.prompt,
   status: TeamRun.fields.status,
+  statusReason: TeamRun.fields.statusReason,
+  profiles: TeamPolicy.fields.profiles,
   lead: TeamModelProfile,
-  leadThreadId: ThreadId,
-  phase: TeamExecution.fields.phase,
+  leadOwner: TeamOwner,
+  leadThreadId: Schema.NullOr(ThreadId),
+  phase: Schema.Literals(["plan", "workers", "integrate", "done"]),
   notice: Schema.NullOr(Schema.String),
-  maxTurns: Schema.optional(Schema.Int),
-  tasks: Schema.Array(
-    Schema.Struct({
-      id: TeamTask.fields.id,
-      objective: TeamTask.fields.objective,
-      acceptance: TeamTask.fields.acceptance,
-      dependencies: TeamTask.fields.dependencies,
-      profileId: TeamTask.fields.profileId,
-      status: TeamTask.fields.status,
-      generation: TeamTask.fields.generation,
-      attempts: TeamTask.fields.attempts,
-      threadId: TeamTask.fields.threadId,
-    }),
-  ),
-  turns: Schema.Array(
-    Schema.Struct({
-      id: Id,
-      role: TeamExecutionTurn.fields.role,
-      taskId: Schema.NullOr(Id),
-      threadId: ThreadId,
-      model: Schema.String,
-      effort: Schema.NullOr(Schema.String),
-      status: TeamExecutionTurn.fields.status,
-      succeeded: Schema.Boolean,
-      summary: Schema.NullOr(Schema.String),
-      providerTurnId: Schema.optional(TurnId),
-      resultMessageId: Schema.optional(MessageId),
-    }),
-  ),
+  workspace: TeamRun.fields.workspace,
+  tasks: Schema.Array(TeamTask),
+  attempts: Schema.Array(TeamAttempt),
+  turns: Schema.Array(TeamThreadTurnView),
+  messages: Schema.Array(TeamMessage),
+  settlements: Schema.Array(TeamSettlement),
+  failovers: Schema.Array(TeamFailover),
 });
 export type TeamThreadView = typeof TeamThreadView.Type;
-
-export const TeamPoolSuggestion = Schema.Struct({
-  profiles: Schema.Array(TeamModelProfile),
-  notes: Schema.Array(Schema.String),
-  source: Schema.Literals(["jev", "catalog"]),
-});

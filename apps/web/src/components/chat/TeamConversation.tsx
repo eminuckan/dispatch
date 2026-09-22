@@ -3,7 +3,13 @@ import { squashAtomCommandFailure } from "@dispatch/client-runtime/state/runtime
 import { useRightPanelStore } from "../../rightPanelStore";
 import { Link } from "@tanstack/react-router";
 import type { TimelineEntry } from "../../session-logic";
-import { teamConversationEntries, teamAgentName, teamTurnLabel } from "./teamConversation.logic";
+import {
+  teamConversationEntries,
+  teamAgentName,
+  teamPrimaryRoleLabel,
+  teamProviderDecisionState,
+  teamTurnLabel,
+} from "./teamConversation.logic";
 import { useEffect, useState, type ReactNode } from "react";
 import { ChevronRightIcon, RefreshCwIcon } from "lucide-react";
 import type { EnvironmentId, TeamThreadView, ThreadId } from "@dispatch/contracts";
@@ -33,7 +39,9 @@ export function TeamConversation({
   const live =
     run &&
     (!["completed", "cancelled", "failed"].includes(run.status) ||
-      run.turns.some((t) => t.status !== "settled"));
+      run.attempts.some((attempt) =>
+        ["reserved", "dispatching", "running"].includes(attempt.status),
+      ));
   useEffect(() => {
     if (!live) return;
     // The team ledger also changes between native turns; do not subscribe to token deltas.
@@ -62,17 +70,32 @@ export function TeamConversation({
     );
   }
   const initialTurn = run.turns.find((turn) => turn.threadId === threadId);
+  const initialAttempt = initialTurn
+    ? run.attempts.find((attempt) => attempt.id === initialTurn.id)
+    : undefined;
   const objective =
     threadId === run.leadThreadId
       ? run.objective
-      : (run.tasks.find((task) => task.threadId === threadId)?.objective ?? run.objective);
+      : (run.tasks.find((task) => task.owner.threadId === threadId)?.objective ?? run.objective);
   const visibleEntries = teamConversationEntries(
     entries,
-    run.coordinationMessageIds,
+    run.attempts,
     run.turns,
-    initialTurn ? { id: `team-${initialTurn.id}`, objective } : undefined,
+    initialAttempt ? { id: initialAttempt.requestMessageId, objective } : undefined,
   );
-  return children(visibleEntries);
+  return (
+    <>
+      {run.notice ? (
+        <p
+          role="status"
+          className="mx-4 mt-2 rounded-md border border-border/60 bg-muted/25 px-3 py-2 text-xs text-muted-foreground"
+        >
+          {run.notice}
+        </p>
+      ) : null}
+      {children(visibleEntries)}
+    </>
+  );
 }
 
 function TeamActivity({
@@ -104,47 +127,58 @@ function TeamActivity({
     setControlPending(false);
     if (result._tag === "Failure") {
       const error = squashAtomCommandFailure(result);
-      setControlError(error instanceof Error ? error.message : "Could not update orchestration.");
+      setControlError(error instanceof Error ? error.message : "Could not update Flow.");
     }
     refresh();
   }
-  const leadTurn = run.turns.findLast((turn) => turn.threadId === run.leadThreadId);
+  const leadAttempt = run.attempts.findLast((attempt) => attempt.owner.role === "lead");
   const leadStatus = ["completed", "failed", "cancelled", "paused"].includes(run.status)
     ? run.status
-    : leadTurn && leadTurn.status !== "settled"
-      ? leadTurn.status === "reserved"
+    : leadAttempt && !["succeeded", "failed", "cancelled"].includes(leadAttempt.status)
+      ? leadAttempt.status === "reserved"
         ? "queued"
         : "running"
-      : "waiting";
+      : run.status === "planning"
+        ? "planning"
+        : "waiting";
+  const leadEffort = leadAttempt?.selection.options?.find((option) =>
+    ["reasoningEffort", "effort", "reasoning", "variant"].includes(option.id),
+  )?.value;
+  const primaryRole = teamPrimaryRoleLabel(run);
   const agents = [
     {
       id: run.leadThreadId,
-      role: "Lead",
-      name: teamAgentName(run, run.leadThreadId),
+      role: primaryRole,
+      name: run.leadThreadId ? teamAgentName(run, run.leadThreadId) : primaryRole,
       objective: run.objective,
       model: run.lead.label,
-      effort: run.turns.find((t) => t.threadId === run.leadThreadId)?.effort,
+      effort: typeof leadEffort === "string" ? leadEffort : undefined,
       status: leadStatus,
-      attempts: 0,
+      attempts: run.attempts.filter((attempt) => attempt.owner.role === "lead").length,
     },
     ...run.tasks.map((task, index) => {
-      const turn = run.turns.findLast((t) => t.role === "worker" && t.taskId === task.id);
+      const attempt = run.attempts.findLast(
+        (candidate) => candidate.role === "work" && candidate.taskId === task.id,
+      );
+      const effort = attempt?.selection.options?.find((option) =>
+        ["reasoningEffort", "effort", "reasoning", "variant"].includes(option.id),
+      )?.value;
       return {
-        id: task.threadId,
+        id: task.owner.threadId,
         role: "Worker",
-        name: task.threadId ? teamAgentName(run, task.threadId) : `Worker ${index + 1}`,
+        name: task.owner.threadId ? teamAgentName(run, task.owner.threadId) : `Worker ${index + 1}`,
         objective: task.objective,
-        model: turn?.model ?? "Waiting for assignment",
-        effort: turn?.effort,
+        model: attempt?.selection.model ?? "Waiting for assignment",
+        effort: typeof effort === "string" ? effort : undefined,
         status: task.status,
-        attempts: task.attempts,
+        attempts: task.attemptIds.length,
       };
     }),
   ];
   const working = new Set(
-    run.turns
-      .filter((turn) => turn.status === "dispatching" || turn.status === "dispatched")
-      .map((turn) => turn.threadId),
+    run.attempts
+      .filter((attempt) => ["dispatching", "running"].includes(attempt.status))
+      .flatMap((attempt) => (attempt.owner.threadId ? [attempt.owner.threadId] : [])),
   ).size;
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -165,8 +199,8 @@ function TeamActivity({
       <ScrollArea className="min-h-0 flex-1">
         <div className="space-y-1 px-2 pb-3">
           {agents.map((agent, index) => {
-            const successful = ["accepted", "completed"].includes(agent.status);
-            const active = ["planning", "running", "review"].includes(agent.status);
+            const successful = ["settled", "completed"].includes(agent.status);
+            const active = ["planning", "running", "review", "settling"].includes(agent.status);
             const body = (
               <>
                 <span
@@ -230,6 +264,12 @@ function TeamActivity({
               {run.notice}
             </p>
           )}
+          <TeamProviderLimitDecision
+            run={run}
+            environmentId={environmentId}
+            currentThreadId={threadId}
+            refresh={refresh}
+          />
           <details className="px-1.5 pt-3 text-xs text-muted-foreground">
             <summary className="cursor-pointer py-1 hover:text-foreground">
               Activity history
@@ -238,22 +278,29 @@ function TeamActivity({
               {run.turns.map((turn) => (
                 <details key={turn.id} className="py-1">
                   <summary className="cursor-pointer py-1 hover:text-foreground">
-                    {teamAgentName(run, turn.threadId)} · {teamTurnLabel(run, turn)}
+                    {turn.threadId
+                      ? teamAgentName(run, turn.threadId)
+                      : turn.role === "worker"
+                        ? "Worker"
+                        : primaryRole}{" "}
+                    · {teamTurnLabel(run, turn)}
                   </summary>
                   <div className="space-y-2 py-2">
-                    <Link
-                      to="/$environmentId/$threadId"
-                      params={{ environmentId, threadId: turn.threadId }}
-                      onClick={() =>
-                        useRightPanelStore
-                          .getState()
-                          .open({ environmentId, threadId: turn.threadId }, "agents")
-                      }
-                      className="inline-flex items-center gap-1 hover:text-foreground hover:underline"
-                    >
-                      Open {teamAgentName(run, turn.threadId)}
-                      <ChevronRightIcon className="size-3" />
-                    </Link>
+                    {turn.threadId ? (
+                      <Link
+                        to="/$environmentId/$threadId"
+                        params={{ environmentId, threadId: turn.threadId }}
+                        onClick={() =>
+                          useRightPanelStore
+                            .getState()
+                            .open({ environmentId, threadId: turn.threadId! }, "agents")
+                        }
+                        className="inline-flex items-center gap-1 hover:text-foreground hover:underline"
+                      >
+                        Open {teamAgentName(run, turn.threadId)}
+                        <ChevronRightIcon className="size-3" />
+                      </Link>
+                    ) : null}
                     {turn.summary ? (
                       <ChatMarkdown text={turn.summary} cwd={cwd} environmentId={environmentId} />
                     ) : (
@@ -301,11 +348,129 @@ function TeamActivity({
         <span>
           {working > 0
             ? `${working} working`
-            : `${run.tasks.filter((task) => task.status === "accepted").length} / ${run.tasks.length} tasks accepted`}
+            : `${run.tasks.filter((task) => task.status === "settled").length} / ${run.tasks.length} tasks accepted`}
         </span>
         <span>{run.turns.length} activity steps</span>
       </footer>
     </div>
+  );
+}
+
+export function TeamProviderLimitDecision({
+  run,
+  environmentId,
+  currentThreadId,
+  refresh,
+}: {
+  run: TeamThreadView;
+  environmentId: EnvironmentId;
+  currentThreadId: ThreadId;
+  refresh: () => void;
+}) {
+  const providerDecision = useAtomCommand(teamEnvironment.providerDecision, {
+    reportFailure: false,
+  });
+  const decisionState = teamProviderDecisionState(run);
+  const [pendingAction, setPendingAction] = useState<string | null>(null);
+  const [decisionError, setDecisionError] = useState<string | null>(null);
+
+  if (!decisionState) return null;
+
+  const { failover, currentProfile, candidates } = decisionState;
+  const triggerText =
+    failover.trigger.kind === "provider-limit"
+      ? "hit a provider limit"
+      : failover.trigger.kind === "provider-unavailable"
+        ? "became unavailable"
+        : "could not continue on the current provider";
+
+  async function decide(action: "switch" | "pause", profileId: string | null) {
+    if (pendingAction) return;
+    const actionKey = action === "switch" && profileId ? `switch:${profileId}` : action;
+    setPendingAction(actionKey);
+    setDecisionError(null);
+    const result = await providerDecision({
+      environmentId,
+      input: {
+        id: run.id,
+        revision: run.revision,
+        failoverId: failover.id,
+        action,
+        profileId,
+      },
+    });
+    setPendingAction(null);
+    if (result._tag === "Failure") {
+      const error = squashAtomCommandFailure(result);
+      setDecisionError(error instanceof Error ? error.message : "Could not continue Flow.");
+    } else if (action === "switch") {
+      const nextLeadThreadId = result.value.lead.threadId;
+      if (nextLeadThreadId && nextLeadThreadId !== currentThreadId) {
+        useRightPanelStore.getState().open({ environmentId, threadId: nextLeadThreadId }, "agents");
+      }
+    }
+    refresh();
+  }
+
+  return (
+    <section
+      aria-label="Provider limit decision"
+      className="mx-1.5 my-2 space-y-2 rounded-md border border-border bg-muted/30 p-3"
+    >
+      <div className="space-y-1">
+        <p className="text-xs font-medium text-foreground">Flow needs your choice</p>
+        <p className="text-xs text-muted-foreground">
+          {currentProfile?.label ?? "The current model"} {triggerText}. Flow can continue with
+          another selected model/provider, or you can pause it here.
+        </p>
+        {failover.trigger.detail ? (
+          <p className="text-[.7rem] text-muted-foreground/80">{failover.trigger.detail}</p>
+        ) : null}
+      </div>
+      {candidates.length > 0 ? (
+        <div className="flex flex-wrap gap-1.5">
+          {candidates.map((profile) => {
+            const key = `switch:${profile.id}`;
+            return (
+              <Button
+                key={profile.id}
+                size="xs"
+                variant="secondary"
+                disabled={pendingAction !== null}
+                onClick={() => void decide("switch", profile.id)}
+              >
+                {pendingAction === key ? "Switching…" : `Continue with ${profile.label}`}
+              </Button>
+            );
+          })}
+        </div>
+      ) : (
+        <p className="text-xs text-muted-foreground">
+          No alternate selected model is available right now. Pause Flow and adjust your models if
+          needed.
+        </p>
+      )}
+      <div className="flex items-center gap-1.5">
+        <Button
+          size="xs"
+          variant="ghost"
+          disabled={pendingAction !== null}
+          onClick={() => void decide("pause", null)}
+        >
+          {pendingAction === "pause" ? "Pausing…" : "Pause Flow"}
+        </Button>
+        {decisionError ? (
+          <Button size="xs" variant="ghost" onClick={refresh}>
+            Refresh
+          </Button>
+        ) : null}
+      </div>
+      {decisionError ? (
+        <p role="alert" className="text-xs text-destructive">
+          {decisionError}
+        </p>
+      ) : null}
+    </section>
   );
 }
 

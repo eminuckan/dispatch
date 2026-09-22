@@ -19,6 +19,8 @@ function isElectronReleaseNoteInfo(value: unknown): value is ElectronReleaseNote
 const MAX_RELEASE_NOTE_GROUPS = 6;
 const MAX_RELEASE_NOTE_ITEMS_PER_GROUP = 8;
 const MAX_RELEASE_NOTE_ITEM_LENGTH = 220;
+const MAX_WHATS_NEW_MARKDOWN_LENGTH = 64 * 1024;
+const HTML_TAG_PATTERN = /<\/?[a-z][\s\S]*?>/i;
 
 const HTML_ENTITY_REPLACEMENTS: Readonly<Record<string, string>> = {
   amp: "&",
@@ -124,9 +126,38 @@ interface NormalizedDesktopUpdateReleaseNotes {
   readonly omittedReleaseCount: number;
 }
 
+export function extractDesktopWhatsNewMarkdown(
+  releaseNotes: unknown,
+  targetVersion: string,
+): string | null {
+  const note =
+    typeof releaseNotes === "string"
+      ? releaseNotes
+      : Array.isArray(releaseNotes)
+        ? releaseNotes.find(
+            (entry): entry is ElectronReleaseNoteInfo =>
+              isElectronReleaseNoteInfo(entry) && entry.version === targetVersion,
+          )?.note
+        : null;
+  if (typeof note !== "string") return null;
+  const trimmed = note.trim();
+  if (trimmed.length === 0) return null;
+  // GitHubProvider.fullChangelog reads the Atom feed's <content> value. GitHub
+  // normally serves that as HTML even when the original release body was
+  // Markdown. The renderer intentionally skips raw HTML, so convert that
+  // payload to conservative Markdown/plain text here instead of persisting HTML
+  // that would render as an empty What's New dialog.
+  const renderable = HTML_TAG_PATTERN.test(trimmed)
+    ? stripMarkup(trimmed)
+        .replace(/\n{3,}/g, "\n\n")
+        .trim()
+    : trimmed;
+  return renderable.length === 0 ? null : renderable.slice(0, MAX_WHATS_NEW_MARKDOWN_LENGTH);
+}
+
 /**
  * Turns electron-updater's release notes into the groups the popover shows.
- * With `fullChangelog` on (nightly), electron-updater collects every GitHub
+ * With `fullChangelog` on (Preview and legacy Nightly), electron-updater collects every GitHub
  * release whose version is semver-greater than the running one, whatever
  * train it belongs to; a maintainers' `-preview.` cut sorts above every
  * `-nightly.` of the same base version and would lead the list. Only

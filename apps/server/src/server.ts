@@ -1,6 +1,8 @@
 import * as TeamRuntime from "./team/TeamRuntime.ts";
-import * as TeamRouter from "./team/TeamRouter.ts";
-import * as TeamStore from "./team/TeamStore.ts";
+import * as OrchestrationAdvisor from "./team/OrchestrationAdvisor.ts";
+import * as OrchestrationModelCatalog from "./team/OrchestrationModels.ts";
+import * as OrchestrationSettings from "./team/OrchestrationSettings.ts";
+import * as OrchestrationStore from "./team/OrchestrationStore.ts";
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeHttp from "node:http";
 
@@ -493,8 +495,10 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
   Layer.provideMerge(
     TeamRuntime.reactorLayer.pipe(
       Layer.provideMerge(TeamRuntime.layer),
-      Layer.provideMerge(TeamRouter.layer),
-      Layer.provideMerge(TeamStore.layer),
+      Layer.provideMerge(OrchestrationSettings.layer),
+      Layer.provideMerge(OrchestrationModelCatalog.layer),
+      Layer.provideMerge(OrchestrationAdvisor.layer),
+      Layer.provideMerge(OrchestrationStore.layer),
     ),
   ),
   Layer.provideMerge(AntigravityInstallationRefreshLive),

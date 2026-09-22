@@ -3,6 +3,7 @@ import {
   DesktopUpdateChannelSchema,
   DesktopUpdateCheckResultSchema,
   DesktopUpdateStateSchema,
+  DesktopWhatsNewSchema,
 } from "@dispatch/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -58,5 +59,25 @@ export const checkForUpdate = DesktopIpc.makeIpcMethod({
   handler: Effect.fn("desktop.ipc.updates.check")(function* () {
     const updates = yield* DesktopUpdates.DesktopUpdates;
     return yield* updates.check("web-ui");
+  }),
+});
+
+export const getWhatsNew = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.UPDATE_GET_WHATS_NEW_CHANNEL,
+  payload: Schema.Void,
+  result: Schema.NullOr(DesktopWhatsNewSchema),
+  handler: Effect.fn("desktop.ipc.updates.getWhatsNew")(function* () {
+    const updates = yield* DesktopUpdates.DesktopUpdates;
+    return yield* updates.getWhatsNew;
+  }),
+});
+
+export const dismissWhatsNew = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.UPDATE_DISMISS_WHATS_NEW_CHANNEL,
+  payload: Schema.Void,
+  result: Schema.Boolean,
+  handler: Effect.fn("desktop.ipc.updates.dismissWhatsNew")(function* () {
+    const updates = yield* DesktopUpdates.DesktopUpdates;
+    return yield* updates.dismissWhatsNew;
   }),
 });

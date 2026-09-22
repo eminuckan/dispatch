@@ -26,6 +26,7 @@ import type * as Effect from "effect/Effect";
 import type * as Stream from "effect/Stream";
 
 export type ProviderSessionModelSwitchMode = "in-session" | "unsupported";
+export type ProviderManagedTeamNativeDelegation = "blocked" | "uncontrolled";
 
 /**
  * How ProviderService runs manual context compaction for an adapter.
@@ -52,6 +53,13 @@ export interface ProviderAdapterCapabilities {
   readonly promptlessTurnContinuation?: boolean;
   /** False when native conversation history cannot be rewound. */
   readonly supportsConversationRollback?: boolean;
+  /**
+   * Whether managed-team sessions deterministically prevent the provider from
+   * spawning its own native subagents. Only `blocked` is a positive safety
+   * capability; omission is equivalent to `uncontrolled` so orchestration can
+   * fail closed without changing ordinary provider behavior.
+   */
+  readonly managedTeamNativeDelegation?: ProviderManagedTeamNativeDelegation;
 }
 
 export interface ProviderThreadTurnSnapshot {

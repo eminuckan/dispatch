@@ -1,5 +1,5 @@
 import { expect, it } from "@effect/vitest";
-import { EnvironmentId, ProviderInstanceId, ThreadId } from "@dispatch/contracts";
+import { EnvironmentId, ProviderInstanceId, ThreadId, type TeamOwner } from "@dispatch/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { McpSchema, McpServer } from "effect/unstable/ai";
@@ -11,6 +11,18 @@ import * as McpInvocationContext from "./McpInvocationContext.ts";
 const fromThreadId = ThreadId.make("team-runtime-worker");
 const toThreadId = ThreadId.make("team-runtime-lead");
 const environmentId = EnvironmentId.make("environment-team-mcp-test");
+const fromOwner: TeamOwner = {
+  role: "worker",
+  profileId: "worker-profile",
+  threadId: fromThreadId,
+  taskId: "task-1",
+};
+const toOwner: TeamOwner = {
+  role: "lead",
+  profileId: "lead-profile",
+  threadId: toThreadId,
+  taskId: null,
+};
 const invocation: McpInvocationContext.McpInvocationScope = {
   environmentId,
   threadId: fromThreadId,
@@ -50,8 +62,12 @@ it.effect(
       sendMessage: (senderThreadId: ThreadId, input: (typeof sent)[number]["input"]) => {
         sent.push({ fromThreadId: senderThreadId, input });
         return Effect.succeed({
-          ...input,
-          fromThreadId: senderThreadId,
+          id: input.id,
+          from: fromOwner,
+          to: toOwner,
+          text: input.text,
+          replyRequested: input.replyRequested,
+          ...(input.inReplyTo === undefined ? {} : { inReplyTo: input.inReplyTo }),
           createdAt: "2026-09-20T12:00:00.000Z",
           readAt: null,
         });
@@ -136,7 +152,10 @@ it.effect(
             },
           },
         ]);
-        expect(send.structuredContent).toMatchObject({ fromThreadId, toThreadId });
+        expect(send.structuredContent).toMatchObject({
+          from: { threadId: fromThreadId, role: "worker" },
+          to: { threadId: toThreadId, role: "lead" },
+        });
 
         const read = yield* server
           .callTool({ name: "team_read_messages", arguments: { includeRead: true } })

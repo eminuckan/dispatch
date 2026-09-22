@@ -113,6 +113,16 @@ An empty database is a bad test. Seed your worktree's local `.dispatch` state wi
 
 For authorized mobile verification, a missing or outdated native client is a build step, not a blocker. Run `node scripts/mobile-native-client.ts ensure <ios|android> <device-id>` on the simulator host before starting Metro. It checks the local Expo fingerprint and builds/installs when needed. See `test-t3-mobile` for the full workflow.
 
+## Desktop releases and update feeds
+
+Every distributed desktop release must remain updateable in place. A feedless Stable, Preview, or Nightly package is a release blocker, not an acceptable shortcut. Pull-request CI artifacts may remain explicitly download-only; never install a mock-update fixture as a user's real application.
+
+- Package `app-update.yml` for `eminuckan/dispatch` and publish the matching channel manifests and referenced update artifacts: Stable uses `latest`, Preview uses `preview`, and legacy Nightly uses `nightly`. Include the macOS updater ZIP as well as the DMG, correct platform/architecture entries, hashes, and any generated blockmaps. Preview manifests must not leak into Stable or Nightly feeds.
+- Preserve the canonical application/bundle identity and signing/notarization requirements. Stable and Preview replace the same installed Dispatch app without deleting user data. Keep installed/package/feed versions consistent and strictly increasing; switching Preview back to Stable must never downgrade.
+- Official builds must include the public `DISPATCH_CONNECT_URL` (`https://connect.opendispatch.dev` by default). Verify Sign in and Create account are reachable in the packaged client, not only in a dev build. Never ship hosted JEV keys, account tokens, or other server secrets with the app.
+- Before calling a release ready, inspect the packaged update configuration and published manifests, then verify check/download/install/restart from an older supported build, retained user state, and What's New for the installed version with persistent dismissal. Do not equate a configured feed with a published, working feed or report signing as notarization.
+- A one-time manual replacement is allowed only to bootstrap an old feedless installation. Subsequent releases must use the updater; uninstalling the app or clearing its data must not become the normal update procedure. Follow [the release and isolated updater validation procedure](docs/operations/release.md), including the macOS LaunchServices restart-isolation checks for test fixtures.
+
 ## Pull requests
 
 - Never make a PR unless the developer explicitly asks you to do so.

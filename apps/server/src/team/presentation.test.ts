@@ -1,126 +1,215 @@
 import { expect, it } from "vite-plus/test";
 import {
-  CommandId,
   MessageId,
   ProjectId,
   ProviderInstanceId,
   ThreadId,
+  type TeamAttempt,
   type TeamRun,
-  type TeamExecutionTurn,
 } from "@dispatch/contracts";
-import { teamThreadView } from "./presentation.ts";
-import { defaultTeamPolicy } from "./routing.ts";
+
+import { SMART_ROUTING_STANDARD_FALLBACK_NOTICE, teamThreadView } from "./presentation.ts";
+
 const profile = {
-  id: "p",
-  label: "Luna max",
+  id: "lead-profile",
+  label: "Luna",
   selection: { instanceId: ProviderInstanceId.make("codex"), model: "luna" },
-  tier: "economy" as const,
   lead: true,
   worker: true,
-  estimatedAttemptUsd: null,
+  capability: "frontier" as const,
 };
-const turn = (role: TeamExecutionTurn["role"], result: string | null): TeamExecutionTurn => ({
-  id: role,
+
+const leadThreadId = ThreadId.make("team-lead");
+const workerThreadId = ThreadId.make("team-worker");
+
+const attempt = (
+  role: TeamAttempt["role"],
+  result: string | null,
+  status: TeamAttempt["status"] = "succeeded",
+): TeamAttempt => ({
+  id: `attempt-${role}`,
+  commandId: `command-${role}`,
+  requestMessageId: MessageId.make(`message-${role}`),
+  taskId: role === "work" ? "task-1" : null,
   role,
-  taskId: null,
-  result,
-  succeeded: true,
-  status: "settled",
-  command: {
-    type: "thread.turn.start",
-    commandId: CommandId.make(role),
-    threadId: ThreadId.make("lead"),
-    message: {
-      messageId: MessageId.make(role),
-      role: "user",
-      text: "INTERNAL_PROMPT",
-      attachments: [],
-    },
-    modelSelection: profile.selection,
-    runtimeMode: "full-access",
-    interactionMode: "default",
-    createdAt: "now",
+  sequence: 0,
+  owner: {
+    role: role === "work" ? "worker" : "lead",
+    profileId: profile.id,
+    threadId: role === "work" ? workerThreadId : leadThreadId,
+    taskId: role === "work" ? "task-1" : null,
   },
+  selection: profile.selection,
+  prompt: `Internal ${role} prompt`,
+  attachments: [],
+  status,
+  providerTurnId: null,
+  resultMessageId: null,
+  result,
+  failure: null,
+  createdAt: "now",
+  updatedAt: "now",
 });
+
 const run: TeamRun = {
-  id: "r",
-  commandId: "c",
-  projectId: ProjectId.make("p"),
+  id: "run",
+  commandId: "command-run",
+  projectId: ProjectId.make("project"),
   revision: 2,
-  objective: "Rename heading",
-  policy: { ...defaultTeamPolicy, profiles: [profile] },
-  lead: profile,
+  executionMode: "orchestrated",
+  runtimeMode: "approval-required",
+  prompt: "Rename heading",
+  policy: {
+    revision: 3,
+    enabled: true,
+    flowMode: "standard",
+    profiles: [profile],
+    maxActive: 3,
+    maxAttempts: 2,
+    providerLimitBehavior: "ask",
+  },
+  lead: { role: "lead", profileId: profile.id, threadId: leadThreadId, taskId: null },
+  acceptance: ["Heading correct"],
+  decisions: ["INTERNAL_DECISION"],
   status: "completed",
+  statusReason: "Verified the heading.",
+  workspace: {
+    root: "/repo",
+    baseCommit: "abc",
+    integrationHead: "def",
+    leadBranch: "team/lead",
+    leadWorktreePath: "/repo/lead",
+  },
   tasks: [
     {
-      id: "t",
+      id: "task-1",
       objective: "Rename",
       acceptance: ["Heading correct"],
       dependencies: [],
-      profileId: "p",
-      status: "accepted",
-      generation: 0,
-      attempts: 1,
-      threadId: ThreadId.make("worker"),
-      context: "INTERNAL_CONTEXT",
+      owner: {
+        role: "worker",
+        profileId: profile.id,
+        threadId: workerThreadId,
+        taskId: "task-1",
+      },
+      branch: "team/task-1",
+      worktreePath: "/repo/task-1",
+      status: "settled",
+      attemptIds: ["attempt-work"],
+      settlementId: null,
       result: "done",
     },
   ],
-  decisions: ["INTERNAL_DECISION"],
+  attempts: [
+    attempt("plan", '{"tasks":[{"objective":"Rename heading"}],"rationale":"Check the heading."}'),
+    attempt("review", '{"action":"accept","summary":"Heading checked.","checks":[]}'),
+    attempt("work", 'A normal JSON example: {"action":"accept"}'),
+  ],
+  messages: [],
+  settlements: [],
+  failovers: [],
+  attachments: [],
   createdAt: "now",
   updatedAt: "now",
-  execution: {
-    workspaceRoot: "/repo",
-    baseCommit: "abc",
-    leadThreadId: ThreadId.make("lead"),
-    maxTurns: 10,
-    phase: "done",
-    notice: "Verified the heading.",
-    turns: [
-      turn(
-        "plan",
-        '{"tasks":[{"objective":"Rename heading","context":"INTERNAL_CONTEXT"}],"rationale":"Check the heading."}',
-      ),
-      turn(
-        "review",
-        '{"action":"accept","summary":"Heading checked.","checks":[{"command":"INTERNAL_COMMAND"}]}',
-      ),
-      turn("worker", 'A normal JSON example: {"action":"accept"}'),
-    ],
-  },
 };
-it("projects readable results without coordination prompts, context or executable checks", () => {
+
+it("projects attempts and derives the lead profile from the frozen policy", () => {
   const view = teamThreadView(run)!;
-  expect(view.turns.map((t) => t.summary)).toEqual([
-    "Check the heading.\n\n- Rename heading",
-    "Heading checked.",
-    'A normal JSON example: {"action":"accept"}',
-  ]);
-  expect(JSON.stringify(view)).not.toContain("INTERNAL_");
+  expect(view.lead).toEqual(profile);
+  expect(view.executionMode).toBe("orchestrated");
+  expect(view.leadThreadId).toBe(leadThreadId);
+  expect(view.phase).toBe("done");
   expect(view.notice).toBe("Verified the heading.");
-  expect(view.tasks[0]?.status).toBe("accepted");
+  expect(view.turns.map((turn) => [turn.role, turn.summary])).toEqual([
+    ["plan", "Check the heading.\n\n- Rename heading"],
+    ["review", "Heading checked."],
+    ["worker", 'A normal JSON example: {"action":"accept"}'],
+  ]);
 });
-it("does not expose malformed coordination output or treat it as a verified summary", () => {
+
+it("projects direct execution mode without changing internal lead ownership", () => {
+  const view = teamThreadView({ ...run, executionMode: "direct" })!;
+  expect(view.executionMode).toBe("direct");
+  expect(view.leadOwner.role).toBe("lead");
+});
+
+it("surfaces a durable Auto-to-Standard fallback without turning it into an error status", () => {
+  const view = teamThreadView({
+    ...run,
+    policy: { ...run.policy, flowMode: "standard" },
+    status: "planning",
+    statusReason: null,
+    decisions: [SMART_ROUTING_STANDARD_FALLBACK_NOTICE],
+  })!;
+  expect(view.statusReason).toBeNull();
+  expect(view.notice).toBe(SMART_ROUTING_STANDARD_FALLBACK_NOTICE);
+});
+
+it("does not advertise a Standard fallback for an Auto run with a stale decision notice", () => {
+  const view = teamThreadView({
+    ...run,
+    executionMode: "direct",
+    policy: { ...run.policy, flowMode: "auto" },
+    status: "running",
+    statusReason: null,
+    decisions: [SMART_ROUTING_STANDARD_FALLBACK_NOTICE],
+  })!;
+  expect(view.executionMode).toBe("direct");
+  expect(view.notice).toBeNull();
+});
+
+it("keeps leadThreadId nullable and scopes the view to a worker thread before lead dispatch", () => {
+  const workerOnly = {
+    ...run,
+    status: "running" as const,
+    statusReason: null,
+    lead: { ...run.lead, threadId: null },
+    tasks: run.tasks.map((task) => ({ ...task, status: "running" as const })),
+    attempts: [attempt("work", "working", "running")],
+    settlements: [],
+  };
+  const view = teamThreadView(workerOnly)!;
+  expect(view.threadId).toBe(workerThreadId);
+  expect(view.leadThreadId).toBeNull();
+  expect(view.phase).toBe("workers");
+  expect(view.turns[0]).toMatchObject({ role: "worker", status: "dispatched", succeeded: false });
+});
+
+it("derives integration phase from settled tasks and settlement state", () => {
   const view = teamThreadView({
     ...run,
     status: "paused",
-    execution: {
-      ...run.execution!,
-      phase: "workers",
-      notice: "Review needs correction.",
-      turns: [
-        turn("review", "not valid JSON INTERNAL_COMMAND"),
-        { ...turn("integrate", null), succeeded: false, status: "dispatched" },
-      ],
-    },
+    statusReason: "Conflict requires attention.",
+    settlements: [
+      {
+        id: "settlement-1",
+        taskId: "task-1",
+        attemptId: "attempt-work",
+        owner: run.tasks[0]!.owner,
+        sourceWorktreePath: "/repo/task-1",
+        baseCommit: "abc",
+        headCommit: "def",
+        appliedCommit: null,
+        status: "conflict",
+        summary: "Conflict",
+        createdAt: "now",
+        updatedAt: "now",
+      },
+    ],
   })!;
-  expect(view.turns.every((t) => t.summary === null)).toBe(true);
-  expect(view.status).toBe("paused");
-  expect(view.turns[1]?.status).toBe("dispatched");
-  expect(view.notice).toBe("Review needs correction.");
+  expect(view.phase).toBe("integrate");
+  expect(view.notice).toBe("Conflict requires attention.");
 });
-it("returns no managed view for missing or unbootstrapped runs", () => {
+
+it("returns null without a resolvable lead profile or managed thread scope", () => {
   expect(teamThreadView(null)).toBeNull();
-  const { execution: _, ...unbootstrapped } = run;
-  expect(teamThreadView(unbootstrapped)).toBeNull();
+  expect(teamThreadView({ ...run, policy: { ...run.policy, profiles: [] } })).toBeNull();
+  expect(
+    teamThreadView({
+      ...run,
+      lead: { ...run.lead, threadId: null },
+      tasks: [],
+      attempts: [],
+    }),
+  ).toBeNull();
 });

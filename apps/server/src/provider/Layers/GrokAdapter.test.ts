@@ -218,6 +218,7 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
       const threadId = ThreadId.make("grok-unsupported-rollback");
       const wrapperPath = yield* Effect.promise(() => makeMockGrokWrapper());
       const adapter = yield* makeTestAdapter(wrapperPath);
+      assert.equal(adapter.capabilities.managedTeamNativeDelegation, "uncontrolled");
       yield* adapter.startSession({
         threadId,
         cwd: process.cwd(),

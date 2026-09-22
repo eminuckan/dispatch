@@ -575,7 +575,7 @@ export const ServerConfig = Schema.Struct({
   shellRevealInFileManager: Schema.optionalKey(Schema.Boolean),
   /** File-manager wording clients should use for reveal actions. */
   shellRevealInFileManagerKind: Schema.optionalKey(FileManagerRevealKind),
-  /** Whether this environment supports BYOK Jev routing RPCs. */
+  /** Whether this environment supports Dispatch managed Orchestration RPCs. */
   teamRouting: Schema.optionalKey(Schema.Boolean),
   /** Whether thread subscriptions can emit an opt-in catch-up completion marker. */
   threadResumeCompletionMarker: Schema.optionalKey(Schema.Boolean),

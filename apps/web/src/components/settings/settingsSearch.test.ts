@@ -1,6 +1,13 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 import { EnvironmentId } from "@dispatch/contracts";
 
+const platform = vi.hoisted(() => ({ desktop: false }));
+vi.mock("~/env", () => ({
+  get isElectron() {
+    return platform.desktop;
+  },
+}));
+
 import {
   filterAvailableSettingsSearchItems,
   getSettingsSearchTargetScope,
@@ -45,6 +52,28 @@ const ITEMS: ReadonlyArray<SettingsSearchItem> = [
 ];
 
 describe("searchSettings", () => {
+  it("finds the installed version and desktop update channel at the About section", () => {
+    expect(searchSettings("about")[0]).toMatchObject({ id: "about", to: "/settings/general" });
+    expect(searchSettings("check updates").some((item) => item.id === "desktop-updates")).toBe(
+      false,
+    );
+    platform.desktop = true;
+    try {
+      for (const query of ["preview", "stable", "check updates"]) {
+        expect(searchSettings(query)).toContainEqual(
+          expect.objectContaining({
+            id: "desktop-updates",
+            to: "/settings/general",
+            targetId: "about",
+            desktopOnly: true,
+          }),
+        );
+      }
+    } finally {
+      platform.desktop = false;
+    }
+  });
+
   it.each(["send shortcut", "multiline", "new line"])("finds Send shortcut for %s", (query) => {
     expect(searchSettings(query).map((item) => item.id)).toContain("send-shortcut");
   });
@@ -240,6 +269,16 @@ describe("searchSettings", () => {
   it("keeps catalog result ids unique", () => {
     const ids = SETTINGS_SEARCH_ITEMS.map((item) => item.id);
     expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  it("uses Flow and Smart Routing terms for orchestration discovery", () => {
+    expect(SETTINGS_SEARCH_ITEMS.find((item) => item.id === "routing-enabled")).toMatchObject({
+      title: "Enable Flow",
+      to: "/settings/orchestration",
+    });
+    const smartRouting = SETTINGS_SEARCH_ITEMS.find((item) => item.id === "routing-jev");
+    expect(smartRouting).toMatchObject({ title: "Smart Routing" });
+    expect(smartRouting?.searchTerms).not.toContain("api key");
   });
 
   it("serves anchor props to panels from the catalog", () => {
