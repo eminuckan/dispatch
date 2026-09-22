@@ -129,12 +129,27 @@ export function ComposerAttachmentTray({
                   ) : attachment.file && svgMimeType(attachment) ? (
                     <SvgThumbnail file={attachment.file} name={attachment.name} />
                   ) : (
-                    <span className="relative flex size-full items-center justify-center bg-muted/60 [clip-path:polygon(1rem_0,100%_0,100%_100%,0_100%,0_1rem)] before:absolute before:left-0 before:top-0 before:size-4 before:bg-foreground/15 before:[clip-path:polygon(100%_0,100%_100%,0_100%)]">
+                    <span className="relative flex size-full items-center justify-center">
+                      <svg
+                        aria-hidden="true"
+                        viewBox="0 0 160 120"
+                        preserveAspectRatio="none"
+                        className="absolute inset-0 size-full"
+                      >
+                        <path
+                          d="M24 0H150Q160 0 160 10V110Q160 120 150 120H10Q0 120 0 110V24Q0 20 3 17L17 3Q20 0 24 0Z"
+                          className="fill-muted/60"
+                        />
+                        <path
+                          d="M19 5Q22 2 22 6V14Q22 22 14 22H6Q2 22 5 19Z"
+                          className="fill-foreground/15"
+                        />
+                      </svg>
                       <PierreEntryIcon
                         pathValue={attachment.name}
                         kind="file"
                         theme={theme}
-                        className="size-9"
+                        className="relative size-9"
                       />
                     </span>
                   )}
