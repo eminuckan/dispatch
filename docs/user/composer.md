@@ -201,7 +201,7 @@ provider supports it. Web and desktop also offer compaction from the context met
 ## Context in your message
 
 Context you attach lands where your cursor is, as a chip inside your text: a terminal excerpt,
-a review comment from a diff or file, a preview annotation, or a file. You can type before and
+a review comment from a diff or file, or a preview annotation. You can type before and
 after a chip, move it by cutting and pasting, and delete it like a character. Hover a chip for
 its brief details. Select a terminal excerpt to open its captured output, or select a review
 comment, picked element, or preview annotation to open its full details. Chips read as "Terminal
@@ -215,10 +215,11 @@ by any part of its pull request numbers. A complete number is also resolved dire
 pull request is older than the recent list. Type a single word after `#` to search pull requests in
 the repository by text. Choose a result to insert it as a chip.
 
-Images keep their thumbnail shelf above the text and also get a chip at your cursor, so you can
-say exactly which image you mean. Deleting an image chip leaves the image on the shelf; removing
-the thumbnail asks first when the image is still mentioned in your text, then removes both. Files
-exist only as chips: deleting a file's last chip removes the file from the message.
+On web and desktop, attached photos and files stay above your message instead of inserting text.
+Select an attachment to preview it, or remove it from the tray to leave it out of the message.
+On narrow screens, expand the attachment count to manage the files. Dispatch includes file names
+and references for the agent automatically when you send. Editing message text does not remove
+attachments; removing an attachment also clears any explicit references from older drafts.
 
 Copy text that holds chips and paste it into another draft, in the same thread or another one,
 and the chips come along with what they point to. Images and files are fetched again from the
