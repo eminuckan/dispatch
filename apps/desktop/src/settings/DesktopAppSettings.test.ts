@@ -28,7 +28,7 @@ const DesktopSettingsPatch = Schema.Struct({
   serverExposureMode: Schema.optionalKey(Schema.Literals(["local-only", "network-accessible"])),
   tailscaleServeEnabled: Schema.optionalKey(Schema.Boolean),
   tailscaleServePort: Schema.optionalKey(Schema.Number),
-  updateChannel: Schema.optionalKey(Schema.Literals(["latest", "nightly"])),
+  updateChannel: Schema.optionalKey(Schema.Literals(["latest", "nightly", "preview"])),
   updateChannelConfiguredByUser: Schema.optionalKey(Schema.Boolean),
   wslBackendEnabled: Schema.optionalKey(Schema.Boolean),
   wslMode: Schema.optionalKey(Schema.Literals(["local", "wsl"])),
@@ -136,6 +136,13 @@ describe("DesktopSettings", () => {
         wslOnly: false,
         wslDistro: null,
       } satisfies DesktopAppSettings.DesktopSettings,
+    );
+  });
+
+  it("defaults packaged preview builds to the preview update channel", () => {
+    assert.equal(
+      DesktopAppSettings.resolveDefaultDesktopSettings("0.0.18-preview.20260922.1").updateChannel,
+      "preview",
     );
   });
 
@@ -382,6 +389,39 @@ describe("DesktopSettings", () => {
         } satisfies DesktopAppSettings.DesktopSettings);
       }),
       { appVersion: "0.0.17-nightly.20260415.1" },
+    ),
+  );
+
+  it.effect("migrates a feedless preview's implicit latest channel to preview", () =>
+    withSettings(
+      Effect.gen(function* () {
+        const settings = yield* DesktopAppSettings.DesktopAppSettings;
+        yield* writeSettingsPatch({
+          updateChannel: "latest",
+        });
+
+        const loaded = yield* settings.load;
+        assert.equal(loaded.updateChannel, "preview");
+        assert.isFalse(loaded.updateChannelConfiguredByUser);
+      }),
+      { appVersion: "0.0.18-preview.20260922.1" },
+    ),
+  );
+
+  it.effect("preserves an explicit stable track on preview builds", () =>
+    withSettings(
+      Effect.gen(function* () {
+        const settings = yield* DesktopAppSettings.DesktopAppSettings;
+        yield* writeSettingsPatch({
+          updateChannel: "latest",
+          updateChannelConfiguredByUser: true,
+        });
+
+        const loaded = yield* settings.load;
+        assert.equal(loaded.updateChannel, "latest");
+        assert.isTrue(loaded.updateChannelConfiguredByUser);
+      }),
+      { appVersion: "0.0.18-preview.20260922.1" },
     ),
   );
 

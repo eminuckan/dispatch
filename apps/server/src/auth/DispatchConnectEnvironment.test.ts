@@ -27,6 +27,7 @@ import {
   DISPATCH_CONNECT_ENVIRONMENT_CONFIG_SECRET,
   DISPATCH_CONNECT_ENVIRONMENT_CREDENTIAL_SECRET,
   DISPATCH_CONNECT_MANAGED_ENDPOINT_CONFIG_SECRET,
+  DISPATCH_CONNECT_SMART_ROUTING_SESSION_SECRET,
   DispatchConnectEnvironment,
   DispatchConnectEnvironmentError,
   layer,
@@ -241,6 +242,25 @@ describe("DispatchConnectEnvironment", () => {
         if (Option.isSome(storedCredential)) {
           assert.equal(new TextDecoder().decode(storedCredential.value), DCE_CREDENTIAL);
         }
+        yield* secrets.set(
+          DISPATCH_CONNECT_SMART_ROUTING_SESSION_SECRET,
+          new TextEncoder().encode("account-session"),
+        );
+        const changed = yield* service.configure(
+          decodeConfigureInput({
+            baseUrl: "https://connect.dispatch.example/",
+            environmentId: "connect-environment-2",
+            credential: DCE_CREDENTIAL,
+          }),
+        );
+        assert.equal(changed.connection?.environmentId, "connect-environment-2");
+        assert.isTrue(
+          Option.isNone(yield* secrets.get(DISPATCH_CONNECT_SMART_ROUTING_SESSION_SECRET)),
+        );
+        yield* secrets.set(
+          DISPATCH_CONNECT_SMART_ROUTING_SESSION_SECRET,
+          new TextEncoder().encode("account-session"),
+        );
 
         assert.deepEqual(yield* service.disable(), { configured: false });
         assert.isTrue(
@@ -248,6 +268,9 @@ describe("DispatchConnectEnvironment", () => {
         );
         assert.isTrue(
           Option.isNone(yield* secrets.get(DISPATCH_CONNECT_ENVIRONMENT_CREDENTIAL_SECRET)),
+        );
+        assert.isTrue(
+          Option.isNone(yield* secrets.get(DISPATCH_CONNECT_SMART_ROUTING_SESSION_SECRET)),
         );
       }).pipe(
         Effect.provide(makeTestLayer({ prefix: "dispatch-connect-environment-config-test-" })),

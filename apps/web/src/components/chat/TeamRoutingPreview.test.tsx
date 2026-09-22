@@ -12,6 +12,8 @@ import { ATTACHMENT_ONLY_BOOTSTRAP_PROMPT } from "./composerPromptHistory";
 import {
   clearStartedTeamDraftIfUnchanged,
   isTeamRoutingReady,
+  TeamRoutingActions,
+  TeamRoutingProvider,
   useTeamRoutingState,
 } from "./TeamRoutingPreview";
 
@@ -21,8 +23,6 @@ import {
 
 const mocks = vi.hoisted(() => ({
   start: vi.fn(),
-  assess: vi.fn(),
-  save: vi.fn(),
   navigate: vi.fn(),
   openPanel: vi.fn(),
   waitForThreadShell: vi.fn(),
@@ -30,30 +30,13 @@ const mocks = vi.hoisted(() => ({
   awaitAttachmentUploads: vi.fn(),
   getUploadedAttachments: vi.fn(),
   forgetDraftAttachmentUploads: vi.fn(),
-  scheduledDrafts: [] as Array<Record<string, unknown>>,
-  settingsData: null as null | {
-    jevConfigured: boolean;
-    policy: {
-      revision: number;
-      mode: "off" | "shadow" | "auto";
-      profiles: Array<{
-        id: string;
-        label: string;
-        selection: { instanceId: string; model: string };
-        tier: "economy" | "balanced" | "capable";
-        reviewRequired?: boolean;
-        lead: boolean;
-        worker: boolean;
-        estimatedAttemptUsd: number | null;
-      }>;
-      maxActive: number;
-      maxAttempts: number;
-      confidenceThreshold: number;
-    };
-  },
+  settingsData: null as TeamSettings | null,
+  teamRoutingCapable: true,
 }));
 
-vi.mock("@effect/atom-react", () => ({ useAtomValue: () => ({ teamRouting: true }) }));
+vi.mock("@effect/atom-react", () => ({
+  useAtomValue: () => ({ teamRouting: mocks.teamRoutingCapable }),
+}));
 vi.mock("@dispatch/client-runtime/state/runtime", () => ({
   squashAtomCommandFailure: (failure: { cause?: unknown }) => failure.cause ?? new Error("failed"),
 }));
@@ -67,41 +50,16 @@ vi.mock("../../rightPanelStore", () => ({
 vi.mock("../../state/team", () => ({
   teamEnvironment: {
     start: "start",
-    assess: "assess",
-    saveSettings: "saveSettings",
     settings: () => "settings",
   },
 }));
 vi.mock("../../state/use-atom-command", () => ({
-  useAtomCommand: (command: string) =>
-    command === "start" ? mocks.start : command === "assess" ? mocks.assess : mocks.save,
+  useAtomCommand: () => mocks.start,
 }));
 vi.mock("../../state/query", () => ({
   useEnvironmentQuery: () => ({
     data: mocks.settingsData,
     refresh: vi.fn(),
-  }),
-}));
-vi.mock("@dispatch/client-runtime/state/team-draft", () => ({
-  createTeamDraftCoordinator: (options: { publish: (value: unknown) => void }) => ({
-    schedule: (draft: Record<string, unknown>) => {
-      mocks.scheduledDrafts.push(draft);
-      options.publish({
-        draftId: draft.draftId,
-        revision: draft.revision,
-        fingerprint: "fingerprint",
-        policyRevision: draft.policyRevision,
-        profileId: "lead",
-        selection: { instanceId: ProviderInstanceId.make("codex"), model: "test" },
-        tier: "capable",
-        confidence: 1,
-        reason: "test",
-        source: "jev",
-        inputTokens: null,
-        outputTokens: null,
-      });
-    },
-    dispose: vi.fn(),
   }),
 }));
 vi.mock("../../state/entities", () => ({ waitForThreadShell: mocks.waitForThreadShell }));
@@ -131,24 +89,23 @@ const uploadedAttachment = {
   sizeBytes: 42,
 };
 const configuredSettings = {
-  jevConfigured: true,
+  smartRouting: { available: false, reason: "smart_routing_session_required" },
   policy: {
     revision: 3,
-    mode: "shadow" as const,
+    enabled: true,
+    flowMode: "standard" as const,
     profiles: [
       {
         id: "lead",
         label: "Lead model",
         selection: { instanceId: ProviderInstanceId.make("codex"), model: "test" },
-        tier: "capable" as const,
         lead: true,
         worker: false,
-        estimatedAttemptUsd: null,
       },
     ],
     maxActive: 5,
     maxAttempts: 2,
-    confidenceThreshold: 0.9,
+    providerLimitBehavior: "ask" as const,
   },
 } satisfies TeamSettings;
 
@@ -165,6 +122,7 @@ function Harness(
     scopeKey: "draft:one",
     environmentId,
     projectId,
+    runtimeMode: "approval-required",
     prompt: "Fix it",
     hasAttachments: false,
     hasUnsupportedContext: false,
@@ -181,6 +139,32 @@ function Harness(
   return null;
 }
 
+function ActionsHarness(props: Partial<Parameters<typeof useTeamRoutingState>[0]> = {}) {
+  const state = useTeamRoutingState({
+    scopeKey: "draft:actions",
+    environmentId,
+    projectId,
+    runtimeMode: "approval-required",
+    prompt: "Fix it",
+    hasAttachments: false,
+    hasUnsupportedContext: false,
+    attachments: [],
+    attachmentUploadsCapabilityKnown: true,
+    supportsAttachmentUploads: true,
+    attachmentDraftTarget: "draft-actions" as Parameters<
+      typeof useTeamRoutingState
+    >[0]["attachmentDraftTarget"],
+    composing: false,
+    allowRouting: true,
+    ...props,
+  });
+  return (
+    <TeamRoutingProvider state={state}>
+      <TeamRoutingActions />
+    </TeamRoutingProvider>
+  );
+}
+
 async function mountAndEnable(props: Parameters<typeof Harness>[0] = {}) {
   await act(async () => {
     renderer = create(<Harness {...props} />);
@@ -188,9 +172,7 @@ async function mountAndEnable(props: Parameters<typeof Harness>[0] = {}) {
   await act(async () => {
     await latest!.setOrchestration(true);
   });
-  await act(async () => {});
   expect(latest?.orchestration).toBe(true);
-  expect(latest?.assessment).not.toBeNull();
 }
 
 async function submitRouting(): Promise<boolean> {
@@ -205,8 +187,6 @@ beforeEach(() => {
   latest = null;
   mocks.settingsData = configuredSettings;
   mocks.start.mockReset();
-  mocks.assess.mockReset();
-  mocks.save.mockReset();
   mocks.navigate.mockReset();
   mocks.openPanel.mockReset();
   mocks.waitForThreadShell.mockReset().mockResolvedValue(true);
@@ -214,14 +194,14 @@ beforeEach(() => {
   mocks.awaitAttachmentUploads.mockReset().mockResolvedValue(undefined);
   mocks.getUploadedAttachments.mockReset().mockReturnValue([uploadedAttachment]);
   mocks.forgetDraftAttachmentUploads.mockReset();
-  mocks.scheduledDrafts.length = 0;
+  mocks.teamRoutingCapable = true;
 });
 
 describe("team routing readiness", () => {
-  it("requires loaded JEV settings with an approved capable lead without requiring mode or worker", () => {
+  it("requires Lead for Standard but allows a Worker-only Auto setup", () => {
     expect(isTeamRoutingReady(true, null)).toBe(false);
     expect(isTeamRoutingReady(false, configuredSettings)).toBe(false);
-    expect(isTeamRoutingReady(true, { ...configuredSettings, jevConfigured: false })).toBe(false);
+    expect(isTeamRoutingReady(true, configuredSettings)).toBe(true);
     expect(
       isTeamRoutingReady(true, {
         ...configuredSettings,
@@ -237,12 +217,24 @@ describe("team routing readiness", () => {
     expect(
       isTeamRoutingReady(true, {
         ...configuredSettings,
+        smartRouting: { available: true, reason: null },
         policy: {
           ...configuredSettings.policy,
+          flowMode: "auto",
           profiles: configuredSettings.policy.profiles.map((profile) => ({
             ...profile,
-            tier: "balanced" as const,
+            lead: false,
+            worker: true,
           })),
+        },
+      }),
+    ).toBe(true);
+    expect(
+      isTeamRoutingReady(true, {
+        ...configuredSettings,
+        policy: {
+          ...configuredSettings.policy,
+          enabled: false,
         },
       }),
     ).toBe(false);
@@ -253,36 +245,26 @@ describe("team routing readiness", () => {
           ...configuredSettings.policy,
           profiles: configuredSettings.policy.profiles.map((profile) => ({
             ...profile,
-            reviewRequired: true,
+            worker: false,
           })),
-        },
-      }),
-    ).toBe(false);
-    expect(
-      isTeamRoutingReady(true, {
-        ...configuredSettings,
-        policy: {
-          ...configuredSettings.policy,
-          mode: "off",
-          profiles: configuredSettings.policy.profiles,
         },
       }),
     ).toBe(true);
   });
 
-  it("stays unavailable and does not assess until settings finish loading", async () => {
+  it("stays unavailable until settings finish loading and enables without a preflight RPC", async () => {
     mocks.settingsData = null;
     await act(async () => {
       renderer = create(<Harness />);
     });
     expect(latest?.ready).toBe(false);
-    expect(mocks.scheduledDrafts).toHaveLength(0);
+    expect(mocks.start).not.toHaveBeenCalled();
 
     await act(async () => {
       await latest!.setOrchestration(true);
     });
     expect(latest?.orchestration).toBe(false);
-    expect(mocks.scheduledDrafts).toHaveLength(0);
+    expect(mocks.start).not.toHaveBeenCalled();
 
     mocks.settingsData = configuredSettings;
     await act(async () => {
@@ -293,9 +275,147 @@ describe("team routing readiness", () => {
     await act(async () => {
       await latest!.setOrchestration(true);
     });
-    await act(async () => {});
     expect(latest?.orchestration).toBe(true);
-    expect(mocks.scheduledDrafts).toHaveLength(1);
+    expect(latest?.automatic).toBe(true);
+    expect(latest?.flowMode).toBe("standard");
+    expect(latest?.summary).toBe(
+      "Standard uses your selected Lead and Worker models without hosted routing",
+    );
+    expect(mocks.start).not.toHaveBeenCalled();
+
+    await act(async () => {
+      await latest!.setOrchestration(false);
+    });
+    expect(latest?.automatic).toBe(false);
+    expect(mocks.start).not.toHaveBeenCalled();
+  });
+
+  it("shows setup only for a supported loaded draft that is not ready", async () => {
+    mocks.settingsData = {
+      ...configuredSettings,
+      policy: { ...configuredSettings.policy, enabled: false },
+    };
+    await act(async () => {
+      renderer = create(<ActionsHarness />);
+    });
+    const setup = renderer!.root
+      .findAllByType("button")
+      .find((button) => button.children.includes("Set up Flow"));
+    expect(setup).toBeDefined();
+    await act(async () => {
+      setup!.props.onClick();
+    });
+    expect(mocks.navigate).toHaveBeenCalledWith({ to: "/settings/orchestration" });
+
+    mocks.settingsData = null;
+    await act(async () => {
+      renderer!.update(<ActionsHarness />);
+    });
+    expect(renderer!.root.findAllByType("button")).toHaveLength(0);
+
+    mocks.settingsData = {
+      ...configuredSettings,
+      policy: { ...configuredSettings.policy, enabled: false },
+    };
+    mocks.teamRoutingCapable = false;
+    await act(async () => {
+      renderer!.update(<ActionsHarness />);
+    });
+    expect(renderer!.root.findAllByType("button")).toHaveLength(0);
+
+    mocks.teamRoutingCapable = true;
+    await act(async () => {
+      renderer!.update(<ActionsHarness projectId={null} />);
+    });
+    expect(renderer!.root.findAllByType("button")).toHaveLength(0);
+
+    await act(async () => {
+      renderer!.update(<ActionsHarness allowRouting={false} />);
+    });
+    expect(renderer!.root.findAllByType("button")).toHaveLength(0);
+
+    mocks.settingsData = configuredSettings;
+    await act(async () => {
+      renderer!.update(<ActionsHarness />);
+    });
+    expect(renderer!.root.findAll((node) => node.props.role === "switch")).toHaveLength(1);
+    expect(
+      renderer!.root
+        .findAllByType("button")
+        .some((button) => button.children.includes("Set up Flow")),
+    ).toBe(false);
+  });
+
+  it("keeps Auto selected and runs through Standard when Smart Routing is unavailable", async () => {
+    mocks.settingsData = {
+      ...configuredSettings,
+      policy: { ...configuredSettings.policy, flowMode: "auto" },
+    };
+    await mountAndEnable();
+
+    expect(latest?.flowMode).toBe("auto");
+    expect(latest?.smartRouting).toBe(false);
+    expect(latest?.orchestration).toBe(true);
+    expect(latest?.fallbackNotice).toContain("Running this task with Standard instead");
+    expect(latest?.summary).toContain("use Standard");
+  });
+
+  it("keeps Worker-only Auto selectable but reports when fallback cannot start", async () => {
+    mocks.settingsData = {
+      ...configuredSettings,
+      policy: {
+        ...configuredSettings.policy,
+        flowMode: "auto",
+        profiles: configuredSettings.policy.profiles.map((profile) => ({
+          ...profile,
+          lead: false,
+          worker: true,
+        })),
+      },
+    };
+    await mountAndEnable();
+
+    expect(latest?.ready).toBe(true);
+    expect(latest?.autoFallbackNeedsLead).toBe(true);
+    expect(latest?.fallbackNotice).toContain("Standard fallback cannot start");
+    expect(latest?.summary).toContain("fallback needs a selected Lead");
+  });
+
+  it("uses Smart Routing only when Auto is selected and the hosted capability is available", async () => {
+    mocks.settingsData = {
+      ...configuredSettings,
+      smartRouting: { available: true, reason: null },
+      policy: { ...configuredSettings.policy, flowMode: "auto" },
+    };
+    await mountAndEnable();
+
+    expect(latest?.flowMode).toBe("auto");
+    expect(latest?.smartRouting).toBe(true);
+    expect(latest?.modeLabel).toBe("Flow · Auto");
+    expect(latest?.fallbackNotice).toBeNull();
+  });
+
+  it("reports managed-team Lead coverage without blocking Worker-only direct Auto", async () => {
+    mocks.settingsData = {
+      ...configuredSettings,
+      smartRouting: { available: true, reason: null },
+      policy: {
+        ...configuredSettings.policy,
+        flowMode: "auto",
+        profiles: configuredSettings.policy.profiles.map((profile) => ({
+          ...profile,
+          lead: false,
+          worker: true,
+        })),
+      },
+    };
+    await mountAndEnable();
+
+    expect(latest?.ready).toBe(true);
+    expect(latest?.smartRouting).toBe(true);
+    expect(latest?.autoManagedNeedsLead).toBe(true);
+    expect(latest?.autoLeadNotice).toContain("Worker-only Auto can run direct work");
+    expect(latest?.summary).toContain("managed-team decisions require a selected Lead");
   });
 });
 
@@ -305,27 +425,30 @@ afterEach(async () => {
 });
 
 describe("team routing attachments", () => {
-  it("assesses and starts an attachment-only draft with the bootstrap prompt", async () => {
+  it("starts an attachment-only draft directly with the bootstrap prompt", async () => {
+    const returnedLeadThreadId = ThreadId.make("returned-team-lead");
     mocks.start.mockResolvedValue({
       _tag: "Success",
-      value: { execution: { leadThreadId: ThreadId.make("team-lead") } },
+      value: { lead: { threadId: returnedLeadThreadId } },
     });
     await mountAndEnable({ prompt: "", hasAttachments: true, attachments: [attachment] });
 
-    expect(mocks.scheduledDrafts.at(-1)).toMatchObject({
-      prompt: ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
-      hasAttachments: true,
-    });
     const started = await submitRouting();
     expect(started).toBe(true);
     expect(mocks.startAttachmentUpload).toHaveBeenCalledWith(
       expect.objectContaining({ environmentId, image: attachment }),
     );
     expect(mocks.start.mock.calls[0]?.[0].input).toMatchObject({
-      draft: { prompt: ATTACHMENT_ONLY_BOOTSTRAP_PROMPT, hasAttachments: true },
+      projectId,
+      runtimeMode: "approval-required",
+      prompt: ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
       attachments: [uploadedAttachment],
     });
     expect(mocks.forgetDraftAttachmentUploads).toHaveBeenCalledWith([attachment]);
+    expect(mocks.navigate).toHaveBeenCalledWith({
+      to: "/$environmentId/$threadId",
+      params: { environmentId, threadId: returnedLeadThreadId },
+    });
   });
 
   it("blocks terminal, preview, or review context without starting a team", async () => {
@@ -351,7 +474,7 @@ describe("team routing attachments", () => {
 
     mocks.start.mockResolvedValueOnce({
       _tag: "Success",
-      value: { execution: { leadThreadId: ThreadId.make("team-lead") } },
+      value: { lead: { threadId: ThreadId.make("team-lead") } },
     });
     expect(await submitRouting()).toBe(true);
     expect(mocks.forgetDraftAttachmentUploads).toHaveBeenCalledTimes(1);
@@ -360,7 +483,7 @@ describe("team routing attachments", () => {
   it("treats accepted TeamStart as started when readiness times out and reuses its command id", async () => {
     mocks.start.mockResolvedValue({
       _tag: "Success",
-      value: { execution: { leadThreadId: ThreadId.make("team-lead") } },
+      value: { lead: { threadId: ThreadId.make("team-lead") } },
     });
     mocks.waitForThreadShell.mockResolvedValue(false);
     await mountAndEnable({ hasAttachments: true, attachments: [attachment] });
@@ -385,6 +508,28 @@ describe("team routing attachments", () => {
     expect(mocks.start.mock.calls[2]?.[0].input.commandId).not.toBe(
       mocks.start.mock.calls[1]?.[0].input.commandId,
     );
+  });
+
+  it("forwards the composer runtime mode and gives a mode change a new command identity", async () => {
+    mocks.start.mockResolvedValue({
+      _tag: "Success",
+      value: { lead: { threadId: ThreadId.make("team-lead") } },
+    });
+    mocks.waitForThreadShell.mockResolvedValue(false);
+    await mountAndEnable({ runtimeMode: "approval-required" });
+
+    expect(await submitRouting()).toBe(true);
+    const supervised = mocks.start.mock.calls[0]?.[0].input;
+    expect(supervised.runtimeMode).toBe("approval-required");
+
+    await act(async () => {
+      renderer!.update(<Harness runtimeMode="full-access" />);
+    });
+    await act(async () => {});
+    expect(await submitRouting()).toBe(true);
+    const fullAccess = mocks.start.mock.calls[1]?.[0].input;
+    expect(fullAccess.runtimeMode).toBe("full-access");
+    expect(fullAccess.commandId).not.toBe(supervised.commandId);
   });
 });
 

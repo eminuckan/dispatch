@@ -26,9 +26,17 @@ const nightlyState: DesktopUpdateState = {
   canRetry: false,
 };
 
+const previewState: DesktopUpdateState = {
+  ...nightlyState,
+  channel: "preview",
+  availableVersion: "0.0.36-preview.3",
+  releaseNotes: [{ version: "0.0.36-preview.3", items: ["Newest change"], totalItems: 1 }],
+};
+
 describe("sidebar update release notes popover", () => {
-  it("uses the popover only for visible nightly release notes", () => {
+  it("uses the popover for visible Preview and legacy Nightly release notes", () => {
     expect(shouldUseSidebarUpdateReleaseNotesPopover(true, nightlyState)).toBe(true);
+    expect(shouldUseSidebarUpdateReleaseNotesPopover(true, previewState)).toBe(true);
     expect(shouldUseSidebarUpdateReleaseNotesPopover(false, nightlyState)).toBe(false);
     expect(
       shouldUseSidebarUpdateReleaseNotesPopover(true, {

@@ -2597,8 +2597,10 @@ export function resolveDesktopRuntimeDependencies(
   );
 }
 
+type DesktopArtifactUpdateChannel = "latest" | "nightly" | "preview";
+
 export const resolveGitHubPublishConfig = Effect.fn("resolveGitHubPublishConfig")(function* (
-  updateChannel: "latest" | "nightly",
+  updateChannel: DesktopArtifactUpdateChannel,
 ) {
   const env = yield* Config.all({
     updateRepository: Config.String("DISPATCH_DESKTOP_UPDATE_REPOSITORY").pipe(Config.option),
@@ -2620,32 +2622,31 @@ export const resolveGitHubPublishConfig = Effect.fn("resolveGitHubPublishConfig"
     provider: "github",
     owner,
     repo,
-    releaseType: updateChannel === "nightly" ? "prerelease" : "release",
-    ...(updateChannel === "nightly" ? { channel: "nightly" as const } : {}),
+    releaseType: updateChannel === "latest" ? "release" : "prerelease",
+    ...(updateChannel === "latest" ? {} : { channel: updateChannel }),
   };
 });
 
-export function resolveDesktopUpdateChannel(version: string): "latest" | "nightly" {
-  return /-nightly\.\d{8}\.\d+$/.test(version) ? "nightly" : "latest";
+export function resolveDesktopUpdateChannel(version: string): DesktopArtifactUpdateChannel {
+  if (/-nightly\.\d{8}\.\d+$/.test(version)) return "nightly";
+  if (/-preview\.\d{8}\.\d+$/.test(version)) return "preview";
+  return "latest";
 }
 
-// Pull request builds (`-pr.<n>.`) and the maintainers' preview train
-// (`-preview.<date>.<run>`) are downloaded by hand and never through an
-// updater. Building them without a publish config means electron-builder
-// emits no `latest*.yml`/`nightly*.yml` manifests or blockmaps for them and
-// the app ships without `app-update.yml`, so neither a stable nor a nightly
-// install can be pointed at one of these releases, and the build itself
-// reports that no update feed is configured instead of polling.
-export function isDesktopPreviewVersion(version: string): boolean {
-  return /-pr\./.test(version) || /-preview\.\d{8}\.\d+$/.test(version);
+// Pull-request artifacts are still download-only CI output. Release previews
+// use their own updater channel and therefore need the normal publish config.
+export function isDesktopPullRequestVersion(version: string): boolean {
+  return /-pr\./.test(version);
 }
 
 export function resolveDesktopWebAssetBrand(version: string): WebAssetBrand {
-  return resolveWebAssetBrandForChannel(resolveDesktopUpdateChannel(version));
+  return resolveWebAssetBrandForChannel(
+    resolveDesktopUpdateChannel(version) === "latest" ? "latest" : "nightly",
+  );
 }
 
 export function resolveDesktopBuildIconAssets(version: string): DesktopBuildIconAssets {
-  if (resolveDesktopUpdateChannel(version) === "nightly") {
+  if (resolveDesktopUpdateChannel(version) !== "latest") {
     return {
       macIconPng: BRAND_ASSET_PATHS.nightlyMacIconPng,
       linuxIconPng: BRAND_ASSET_PATHS.nightlyLinuxIconPng,
@@ -2678,9 +2679,12 @@ export function resolvePackageManagerUserAgent(packageManager: string): string {
 }
 
 export function resolveDesktopProductName(version: string): string {
-  return resolveDesktopUpdateChannel(version) === "nightly"
-    ? "Dispatch (Nightly)"
-    : (desktopPackageJson.productName ?? "Dispatch");
+  const channel = resolveDesktopUpdateChannel(version);
+  if (channel === "nightly") return "Dispatch (Nightly)";
+  // Preview is an in-place update track of the stable desktop application.
+  // Keep the packaged bundle/executable filename stable across Stable ↔ Preview;
+  // the running app still exposes its Preview stage through DesktopEnvironment.
+  return desktopPackageJson.productName ?? "Dispatch";
 }
 
 export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
@@ -2733,7 +2737,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     ],
   };
   const updateChannel = resolveDesktopUpdateChannel(version);
-  if (!isDesktopPreviewVersion(version)) {
+  if (!isDesktopPullRequestVersion(version)) {
     const publishConfig = yield* resolveGitHubPublishConfig(updateChannel);
     if (publishConfig) {
       buildConfig.publish = [publishConfig];
@@ -2774,12 +2778,13 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   }
 
   if (platform === "mac" && target === "dmg") {
+    const dmgBackgroundChannel = updateChannel === "latest" ? "latest" : "nightly";
     buildConfig.dmg = {
       // Give the themed installer its own Finder volume name. Finder caches
       // DMG window backgrounds by volume name, so reusing a generic name can
       // make a newly built background look unchanged during testing.
       title: `${resolveDesktopProductName(version)} ${version} Installer`,
-      background: `dmg/dmg-background-${updateChannel}.png`,
+      background: `dmg/dmg-background-${dmgBackgroundChannel}.png`,
       window: {
         width: 640,
         // The DMG backend derives bounds from the image, including Finder's
@@ -3599,7 +3604,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   if (options.platform === "mac" && options.target === "dmg") {
     yield* stageDesktopDmgBackground(
       stageResourcesDir,
-      resolveDesktopUpdateChannel(appVersion),
+      resolveDesktopUpdateChannel(appVersion) === "latest" ? "latest" : "nightly",
       options.verbose,
     );
   }

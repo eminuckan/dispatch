@@ -1,18 +1,23 @@
 import type { DesktopUpdateChannel } from "@dispatch/contracts";
+import { compareSemverVersions, parseSemver } from "@dispatch/shared/semver";
 
 const NIGHTLY_VERSION_PATTERN = /^[^-+]+-nightly\.\d{8}\.\d+$/;
-// Preview builds are the maintainers' test train, cut by hand from unreleased
-// branches to exercise the release flow. They share nightly's branding but
-// are packaged without an update feed (see
-// isDesktopPreviewVersion in scripts/build-desktop-artifact.ts), so the
-// channel a preview install reports is cosmetic: it never checks for updates
-// and no updater feed ever lists a preview release.
-const PRERELEASE_VERSION_PATTERN = /^[^-+]+-(?:nightly|preview)\.\d{8}\.\d+$/;
-
+const PREVIEW_VERSION_PATTERN = /^[^-+]+-preview\.\d{8}\.\d+$/;
 export function isNightlyDesktopVersion(version: string): boolean {
-  return PRERELEASE_VERSION_PATTERN.test(version);
+  return NIGHTLY_VERSION_PATTERN.test(version);
+}
+
+export function isPreviewDesktopVersion(version: string): boolean {
+  return PREVIEW_VERSION_PATTERN.test(version);
 }
 
 export function resolveDefaultDesktopUpdateChannel(appVersion: string): DesktopUpdateChannel {
-  return NIGHTLY_VERSION_PATTERN.test(appVersion) ? "nightly" : "latest";
+  if (NIGHTLY_VERSION_PATTERN.test(appVersion)) return "nightly";
+  if (PREVIEW_VERSION_PATTERN.test(appVersion)) return "preview";
+  return "latest";
+}
+
+export function isNewerDesktopVersion(candidateVersion: string, currentVersion: string): boolean {
+  if (!parseSemver(candidateVersion) || !parseSemver(currentVersion)) return false;
+  return compareSemverVersions(candidateVersion, currentVersion) > 0;
 }

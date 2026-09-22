@@ -1,13 +1,16 @@
 import {
   DesktopUpdateChannelSchema,
+  DesktopWhatsNewSchema,
   type DesktopRuntimeInfo,
   type DesktopUpdateActionResult,
   type DesktopUpdateChannel,
   type DesktopUpdateCheckResult,
   type DesktopUpdateState,
+  type DesktopWhatsNew,
 } from "@dispatch/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
+import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -31,8 +34,11 @@ import * as ElectronUpdater from "../electron/ElectronUpdater.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as IpcChannels from "../ipc/channels.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
-import { normalizeDesktopUpdateReleaseNotes } from "./releaseNotes.ts";
-import { resolveDefaultDesktopUpdateChannel } from "./updateChannels.ts";
+import {
+  extractDesktopWhatsNewMarkdown,
+  normalizeDesktopUpdateReleaseNotes,
+} from "./releaseNotes.ts";
+import { isNewerDesktopVersion, resolveDefaultDesktopUpdateChannel } from "./updateChannels.ts";
 import {
   createInitialDesktopUpdateState,
   reduceDesktopUpdateStateOnCheckFailure,
@@ -49,11 +55,76 @@ import {
 const AUTO_UPDATE_STARTUP_DELAY = "15 seconds";
 const AUTO_UPDATE_POLL_INTERVAL = "4 minutes";
 const PREPARED_INSTALL_CHECK_WAIT = Duration.seconds(90);
+const UPDATE_METADATA_FILE_NAME = "desktop-update-metadata.json";
+const MAX_STORED_WHATS_NEW_RELEASES = 12;
+const MAX_DISMISSED_WHATS_NEW_VERSIONS = 24;
 
 type UpdateAction = "check" | "download" | "install" | "install-recovery" | "channel";
 
 interface DesktopPreparedUpdateInstallResult extends DesktopUpdateActionResult {
   readonly failed: boolean;
+}
+
+interface DesktopUpdateMetadata {
+  readonly releases: ReadonlyArray<DesktopWhatsNew>;
+  readonly dismissedVersions: ReadonlyArray<string>;
+}
+
+const EMPTY_UPDATE_METADATA: DesktopUpdateMetadata = {
+  releases: [],
+  dismissedVersions: [],
+};
+
+const DesktopUpdateMetadataSchema = Schema.Struct({
+  releases: Schema.Array(DesktopWhatsNewSchema),
+  dismissedVersions: Schema.Array(Schema.String),
+});
+const DesktopUpdateMetadataJson = Schema.fromJsonString(DesktopUpdateMetadataSchema);
+const decodeDesktopUpdateMetadataJson = Schema.decodeUnknownOption(DesktopUpdateMetadataJson);
+const encodeDesktopUpdateMetadataJson = Schema.encodeEffect(DesktopUpdateMetadataJson);
+
+function decodeDesktopUpdateMetadata(raw: string): DesktopUpdateMetadata {
+  return Option.match(decodeDesktopUpdateMetadataJson(raw), {
+    onNone: () => EMPTY_UPDATE_METADATA,
+    onSome: (metadata) => ({
+      releases: metadata.releases.slice(0, MAX_STORED_WHATS_NEW_RELEASES),
+      dismissedVersions: metadata.dismissedVersions.slice(0, MAX_DISMISSED_WHATS_NEW_VERSIONS),
+    }),
+  });
+}
+
+export function resolveDesktopWhatsNew(
+  metadata: DesktopUpdateMetadata,
+  installedVersion: string,
+): DesktopWhatsNew | null {
+  if (metadata.dismissedVersions.includes(installedVersion)) return null;
+  return metadata.releases.find(({ version }) => version === installedVersion) ?? null;
+}
+
+function rememberDesktopWhatsNew(
+  metadata: DesktopUpdateMetadata,
+  release: DesktopWhatsNew,
+): DesktopUpdateMetadata {
+  return {
+    ...metadata,
+    releases: [
+      release,
+      ...metadata.releases.filter(({ version }) => version !== release.version),
+    ].slice(0, MAX_STORED_WHATS_NEW_RELEASES),
+  };
+}
+
+function dismissDesktopWhatsNew(
+  metadata: DesktopUpdateMetadata,
+  installedVersion: string,
+): DesktopUpdateMetadata {
+  return {
+    releases: metadata.releases.filter(({ version }) => version !== installedVersion),
+    dismissedVersions: [
+      installedVersion,
+      ...metadata.dismissedVersions.filter((version) => version !== installedVersion),
+    ].slice(0, MAX_DISMISSED_WHATS_NEW_VERSIONS),
+  };
 }
 
 const AppUpdateYmlConfig = Schema.Record(Schema.String, Schema.String);
@@ -186,6 +257,8 @@ export class DesktopUpdates extends Context.Service<
     readonly installPrepared: (
       expectedVersion: string,
     ) => Effect.Effect<DesktopPreparedUpdateInstallResult>;
+    readonly getWhatsNew: Effect.Effect<DesktopWhatsNew | null>;
+    readonly dismissWhatsNew: Effect.Effect<boolean>;
   }
 >()("@dispatch/desktop/updates/DesktopUpdates") {}
 
@@ -280,13 +353,21 @@ export const make = Effect.gen(function* () {
   const electronWindow = yield* ElectronWindow.ElectronWindow;
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const fileSystem = yield* FileSystem.FileSystem;
+  const crypto = yield* Crypto.Crypto;
   const desktopSettings = yield* DesktopAppSettings.DesktopAppSettings;
+
+  const updateMetadataPath = environment.path.join(environment.stateDir, UPDATE_METADATA_FILE_NAME);
+  const initialUpdateMetadata = yield* fileSystem.readFileString(updateMetadataPath, "utf-8").pipe(
+    Effect.map(decodeDesktopUpdateMetadata),
+    Effect.orElseSucceed(() => EMPTY_UPDATE_METADATA),
+  );
 
   const appUpdateYmlConfigRef = yield* Ref.make<Option.Option<AppUpdateYmlConfig>>(Option.none());
   const activeUpdateActionRef = yield* Ref.make<Option.Option<UpdateAction>>(Option.none());
   const finishedUpdateActions = yield* PubSub.unbounded<UpdateAction>();
   const updaterConfiguredRef = yield* Ref.make(false);
   const lastLoggedDownloadMilestoneRef = yield* Ref.make(-1);
+  const updateMetadataRef = yield* Ref.make<DesktopUpdateMetadata>(initialUpdateMetadata);
   const updateStateRef = yield* Ref.make<DesktopUpdateState>(
     createInitialDesktopUpdateState(
       environment.appVersion,
@@ -299,6 +380,41 @@ export const make = Effect.gen(function* () {
   // Makes ref writes + publishes atomic against subscribe, so a snapshot
   // never overlaps with the first change a subscriber receives.
   const stateMutex = yield* Semaphore.make(1);
+  const updateMetadataMutex = yield* Semaphore.make(1);
+
+  const writeUpdateMetadata = Effect.fn("desktop.updates.writeMetadata")(function* (
+    metadata: DesktopUpdateMetadata,
+  ) {
+    const suffix = (yield* crypto.randomUUIDv4).replaceAll("-", "");
+    const tempPath = `${updateMetadataPath}.${process.pid}.${suffix}.tmp`;
+    const encoded = yield* encodeDesktopUpdateMetadataJson(metadata);
+    yield* fileSystem.makeDirectory(environment.path.dirname(updateMetadataPath), {
+      recursive: true,
+    });
+    yield* Effect.gen(function* () {
+      yield* fileSystem.writeFileString(tempPath, `${encoded}\n`);
+      yield* fileSystem.rename(tempPath, updateMetadataPath);
+    }).pipe(Effect.ensuring(fileSystem.remove(tempPath, { force: true }).pipe(Effect.ignore)));
+  });
+
+  const updatePersistedMetadata = (
+    update: (metadata: DesktopUpdateMetadata) => DesktopUpdateMetadata,
+  ): Effect.Effect<boolean> =>
+    updateMetadataMutex.withPermits(1)(
+      Effect.gen(function* () {
+        const current = yield* Ref.get(updateMetadataRef);
+        const next = update(current);
+        return yield* writeUpdateMetadata(next).pipe(
+          Effect.andThen(Ref.set(updateMetadataRef, next)),
+          Effect.as(true),
+          Effect.catchCause((cause) =>
+            logUpdaterWarning("could not persist desktop update metadata", { cause }).pipe(
+              Effect.as(false),
+            ),
+          ),
+        );
+      }),
+    );
 
   const emitState = Ref.get(updateStateRef).pipe(
     Effect.flatMap((state) => electronWindow.sendAll(IpcChannels.UPDATE_STATE_CHANNEL, state)),
@@ -376,15 +492,15 @@ export const make = Effect.gen(function* () {
     channel: DesktopUpdateChannel,
   ) {
     yield* Effect.annotateCurrentSpan({ channel });
-    const allowsPrerelease = channel === "nightly";
+    const allowsPrerelease = channel !== "latest";
     yield* electronUpdater.setChannel(channel);
     yield* electronUpdater.setAllowPrerelease(allowsPrerelease);
-    yield* electronUpdater.setAllowDowngrade(allowsPrerelease);
+    yield* electronUpdater.setAllowDowngrade(false);
     yield* electronUpdater.setFullChangelog(allowsPrerelease);
     yield* logUpdaterInfo("using update channel", {
       channel,
       allowPrerelease: allowsPrerelease,
-      allowDowngrade: allowsPrerelease,
+      allowDowngrade: false,
       fullChangelog: allowsPrerelease,
     });
   });
@@ -707,6 +823,21 @@ export const make = Effect.gen(function* () {
             return;
           }
 
+          if (!isNewerDesktopVersion(info.version, environment.appVersion)) {
+            yield* logUpdaterInfo(
+              "ignoring desktop update that is not newer than installed version",
+              {
+                version: info.version,
+                currentVersion: environment.appVersion,
+                channel: state.channel,
+              },
+            );
+            const checkedAt = yield* currentIsoTimestamp;
+            yield* setState(reduceDesktopUpdateStateOnNoUpdate(state, checkedAt));
+            yield* Ref.set(lastLoggedDownloadMilestoneRef, -1);
+            return;
+          }
+
           const checkedAt = yield* currentIsoTimestamp;
           const { releaseNotes, omittedReleaseCount } = normalizeDesktopUpdateReleaseNotes(
             info.releaseNotes,
@@ -721,6 +852,12 @@ export const make = Effect.gen(function* () {
               releaseNotes,
               omittedReleaseCount,
             ),
+          );
+          yield* updatePersistedMetadata((metadata) =>
+            rememberDesktopWhatsNew(metadata, {
+              version: info.version,
+              markdown: extractDesktopWhatsNewMarkdown(info.releaseNotes, info.version),
+            }),
           );
           yield* Ref.set(lastLoggedDownloadMilestoneRef, -1);
           yield* logUpdaterInfo("update available", {
@@ -848,6 +985,12 @@ export const make = Effect.gen(function* () {
 
   return DesktopUpdates.of({
     getState: Ref.get(updateStateRef),
+    getWhatsNew: Ref.get(updateMetadataRef).pipe(
+      Effect.map((metadata) => resolveDesktopWhatsNew(metadata, environment.appVersion)),
+    ),
+    dismissWhatsNew: updatePersistedMetadata((metadata) =>
+      dismissDesktopWhatsNew(metadata, environment.appVersion),
+    ),
     isActionActive: activeUpdateAction.pipe(Effect.map(Option.isSome)),
     isInstallActive: activeUpdateAction.pipe(
       Effect.map((action) => Option.isSome(action) && action.value === "install"),
@@ -957,11 +1100,7 @@ export const make = Effect.gen(function* () {
         }
 
         yield* applyAutoUpdaterChannel(nextChannel);
-        const allowDowngrade = yield* electronUpdater.allowDowngrade;
-        yield* electronUpdater.setAllowDowngrade(true);
-        yield* checkForUpdates("channel-change", "held").pipe(
-          Effect.ensuring(electronUpdater.setAllowDowngrade(allowDowngrade).pipe(Effect.ignore)),
-        );
+        yield* checkForUpdates("channel-change", "held");
         return yield* Ref.get(updateStateRef);
       }).pipe(Effect.ensuring(finishUpdateAction("channel")));
     }),

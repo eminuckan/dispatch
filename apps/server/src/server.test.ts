@@ -1,6 +1,8 @@
 import * as TeamRuntime from "./team/TeamRuntime.ts";
-import * as TeamRouter from "./team/TeamRouter.ts";
-import * as TeamStore from "./team/TeamStore.ts";
+import * as OrchestrationAdvisor from "./team/OrchestrationAdvisor.ts";
+import * as OrchestrationModelCatalog from "./team/OrchestrationModels.ts";
+import * as OrchestrationSettings from "./team/OrchestrationSettings.ts";
+import * as OrchestrationStore from "./team/OrchestrationStore.ts";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeSocket from "@effect/platform-node/NodeSocket";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -770,8 +772,10 @@ const buildAppUnderTest = (options?: {
     ).pipe(
       Layer.provide(
         TeamRuntime.layer.pipe(
-          Layer.provideMerge(TeamRouter.layer),
-          Layer.provideMerge(TeamStore.layer),
+          Layer.provideMerge(OrchestrationSettings.layer),
+          Layer.provideMerge(OrchestrationModelCatalog.layer),
+          Layer.provideMerge(OrchestrationAdvisor.layer),
+          Layer.provideMerge(OrchestrationStore.layer),
           Layer.provide(SqlitePersistenceMemory),
         ),
       ),
@@ -6046,6 +6050,38 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       );
       assert.equal(installStarts, 0);
       assert.equal(authCalls, 0);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("team RPCs let read-only clients read settings but reject mutations", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest();
+      const token = yield* exchangeAccessToken(defaultDesktopBootstrapToken, {
+        scope: "orchestration:read",
+      });
+      assert.equal(token.response.status, 200);
+      const ticketResponse = yield* HttpClient.post("/api/auth/websocket-ticket", {
+        headers: { authorization: `Bearer ${token.body.access_token ?? ""}` },
+      });
+      const { ticket } = yield* responseJsonEffect<{ readonly ticket: string }>(ticketResponse);
+      const wsUrl = `${yield* getWsServerUrl("/ws", { authenticated: false })}?wsTicket=${encodeURIComponent(ticket)}`;
+
+      yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          Effect.gen(function* () {
+            const settings = yield* client["team.settings"]({});
+            assert.equal(settings.policy.enabled, false);
+
+            const error = yield* client["team.saveSettings"]({ policy: settings.policy }).pipe(
+              Effect.flip,
+            );
+            assert.equal(error._tag, "EnvironmentAuthorizationError");
+            if (error._tag === "EnvironmentAuthorizationError") {
+              assert.equal(error.requiredScope, "orchestration:operate");
+            }
+          }),
+        ),
+      );
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

@@ -17,11 +17,11 @@ builds the self-contained CLI archives used by installers, updates, SSH runtimes
 
 The workflow has three channels:
 
-| Channel   | Trigger                               | Commit                                                                                                                     | GitHub Release behavior                                                                                    |
-| --------- | ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| `stable`  | `v*.*.*` tag push, or manual dispatch | A pushed tag builds that exact tagged commit. A manual stable release builds the commit from the latest published nightly. | Plain `X.Y.Z` is the repository latest release. A suffixed version such as `X.Y.Z-rc.1` is a prerelease.   |
-| `nightly` | schedule or manual dispatch           | Scheduled and manual nightlies use the selected default-branch commit.                                                     | GitHub prerelease with `vX.Y.Z-nightly.YYYYMMDD.<run>` tag.                                                |
-| `preview` | manual dispatch only                  | The selected commit, including a branch commit.                                                                            | Maintainer-test GitHub prerelease with `vX.Y.Z-preview.YYYYMMDD.<run>` tag and warning-only release notes. |
+| Channel   | Trigger                               | Commit                                                                                                                     | GitHub Release behavior                                                                                                                                  |
+| --------- | ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `stable`  | `v*.*.*` tag push, or manual dispatch | A pushed tag builds that exact tagged commit. A manual stable release builds the commit from the latest published nightly. | Plain `X.Y.Z` is the repository latest release. A suffixed version such as `X.Y.Z-rc.1` is a prerelease.                                                 |
+| `nightly` | schedule or manual dispatch           | Scheduled and manual nightlies use the selected default-branch commit.                                                     | GitHub prerelease with `vX.Y.Z-nightly.YYYYMMDD.<run>` tag.                                                                                              |
+| `preview` | manual dispatch only                  | The selected commit, including a branch commit.                                                                            | Opt-in GitHub prerelease with `vX.Y.Z-preview.YYYYMMDD.<run>` tag, a dedicated desktop updater feed, and a warning prepended to generated release notes. |
 
 Manual dispatch defaults to `preview`. Stable and nightly manual releases must be dispatched from
 the repository default branch; preview is the branch-build path.
@@ -84,10 +84,12 @@ The GitHub Release also contains `SHA256SUMS` generated from the final archive b
 embed the same-architecture Linux CLI archive as their WSL runtime, so the WSL payload is the same
 archive published for Linux.
 
-Stable and nightly releases include updater manifests and blockmaps. The release job merges the
-per-architecture macOS and Windows manifests back into the single channel manifest expected by
-`electron-updater`. Preview builds deliberately carry no updater manifest or blockmap; the release
-job fails if updater metadata appears on a preview.
+Stable, nightly, and preview desktop releases include updater manifests and any blockmaps produced by
+their targets. The release job merges the per-architecture macOS and Windows manifests back into the
+single channel manifest expected by `electron-updater`. Preview is isolated by channel name rather
+than by omitting metadata: macOS follows `preview-mac.yml`, Windows follows `preview.yml`, and Linux
+follows `preview-linux.yml` or the architecture-suffixed equivalent. The Preview release job requires
+Preview manifests and fails if `latest*` or `nightly*` manifests leak into that release.
 
 ## Safe-by-default external publishing gates
 
@@ -104,7 +106,21 @@ Any other value, including an unset variable, leaves the integration disabled.
 
 These gates are independent. For example, hosted web deployment can be enabled while T3 Connect is
 disabled; in that case the hosted build receives empty T3 Connect public configuration and remains
-cloud-disabled.
+disconnected from that upstream integration. Dispatch Connect is separate and is described below.
+
+### Dispatch Connect public origin
+
+Official release builds use `https://connect.opendispatch.dev` as the public Dispatch Connect origin.
+This value is public configuration, not a credential. Operators of a release fork can override it with
+the `DISPATCH_CONNECT_URL` repository variable. The release workflow passes the canonical name into
+the shared JS bundle, reusable desktop/CLI packaging jobs, and hosted-web Vercel build; the existing
+public-config loader expands it to `VITE_DISPATCH_CONNECT_URL` and
+`EXPO_PUBLIC_DISPATCH_CONNECT_URL` where those build systems consume the public alias.
+
+This release default does not change source/dev or self-hosted behavior. Outside the official release
+workflows, leaving `DISPATCH_CONNECT_URL` unset continues to mean that Dispatch Connect is optional and
+must be configured by the operator. `CONNECT_JEV_API_KEY`, environment credentials, account sessions,
+and every other Connect server secret remain server-side and are never added to release build env.
 
 ### Upstream T3 Connect
 
@@ -226,8 +242,26 @@ canonical repository. Direct/local builds may set it explicitly. The desktop art
 accepts `T3CODE_DESKTOP_UPDATE_REPOSITORY` as a migration fallback, then falls back to
 `GITHUB_REPOSITORY` when neither explicit name is set.
 
-Preview desktop builds omit publish configuration entirely, so stable and nightly installs cannot be
-offered a preview update.
+Desktop Stable and Preview are update tracks of the same packaged application identity. Preview builds
+ship a GitHub publish/update configuration with `channel: preview`; Stable uses the default `latest`
+channel. `electron-updater` maps that custom channel to the platform manifest names above and scans
+GitHub prereleases for the `preview` semver prerelease identifier. Stable installs keep
+`allowPrerelease=false`, so they do not discover Preview releases. Preview installs explicitly reset
+`allowDowngrade=false` after assigning the updater channel because `electron-updater` itself enables
+downgrades whenever `autoUpdater.channel` is assigned.
+
+The desktop layer also rejects any offered version that is not semver-newer than the installed build
+and rejects a candidate whose version belongs to a different selected track. As a result, switching
+from Preview back to Stable does not install an older Stable build or loop on it; the app waits until a
+newer Stable version exists. GitHubProvider can fall back to a `latest` manifest when a prerelease
+channel manifest is missing, so the track check is a deliberate second boundary rather than relying
+only on manifest naming.
+
+Preview used to be packaged without `app-update.yml`. Those older feedless binaries cannot discover
+the new Preview feed by themselves and need one manual replacement with a feed-capable build. Preview
+keeps the stable package/bundle filename so that bootstrap is an in-place application replacement;
+Dispatch state remains under the existing state directory. Runtime branding still labels the running
+build as Preview.
 
 ## Build-time Dispatch environment names
 
@@ -327,9 +361,9 @@ deployment was explicitly enabled, the announcement waits for it to succeed.
 There is no non-publishing release mode. Every accepted release run publishes a real GitHub
 Release when the core jobs succeed:
 
-- `preview` is the maintainer pipeline exercise: it is manual-only, produces no updater metadata,
-  and skips AUR, hosted web, and marketing. Legacy npm still publishes only if its gate is explicitly
-  enabled.
+- `preview` is manual-only, publishes a real prerelease plus its dedicated desktop updater metadata,
+  and skips AUR, hosted web, and marketing. Its warning body is prepended to generated GitHub release
+  notes. Legacy npm still publishes only if its gate is explicitly enabled.
 - `nightly` publishes a real prerelease and updater feed metadata. Scheduled nightlies apply the
   six-hour/change checks; manual nightlies do not.
 - `stable` publishes a real stable-channel release. A manual stable promotes the latest nightly
@@ -350,6 +384,29 @@ canonical command:
 dispatch --version
 dispatch update --channel nightly
 ```
+
+For desktop Preview validation, inspect the published release assets before installing anything:
+
+- macOS must contain the merged `preview-mac.yml` with both arm64 and x64 ZIP entries;
+- Windows must contain the merged `preview.yml` with both arm64 and x64 installer entries;
+- Linux must contain `preview-linux.yml` for x64 and `preview-linux-arm64.yml` for arm64;
+- the Preview release must not contain `latest*.yml` or `nightly*.yml` updater manifests.
+
+Then test from an older feed-capable packaged build: select Preview, check/download/install, verify the
+same Dispatch state is present after restart, verify What's New appears only for the version actually
+installed and stays dismissed after another restart, and finally switch to Stable while the available
+Stable version is older to confirm no downgrade is offered. The first migration from an old feedless
+Preview must be tested as a manual in-place application replacement instead.
+
+For an isolated macOS updater E2E test, do not rely on shell-only environment overrides. Squirrel
+relaunches the installed app through LaunchServices, so those overrides do not survive the restart.
+Prepare throwaway base and target app bundles with the same distinct test bundle identifier, embed the
+isolated state directory, Electron user-data directory, backend/feed ports, and mock-update settings in
+`LSEnvironment` in both bundles, and give both `app-update.yml` files a unique `updaterCacheDirName`.
+Re-sign both bundles after those fixture-only edits. Before downloading an update, launch the base app
+through LaunchServices without exported isolation variables and verify its process environment, helper
+`--user-data-dir`, backend port, and state path all resolve to the fixture. Keep live Dispatch state and
+profiles out of the fixture; this procedure is only for updater validation, not release packaging.
 
 If validating a mirror, set `DISPATCH_RELEASE_BASE_URL` for the test process rather than changing the
 repository identity.
@@ -375,5 +432,13 @@ repository identity.
 - **Desktop updates point at the wrong repository in a local build:** set
   `DISPATCH_DESKTOP_UPDATE_REPOSITORY=eminuckan/dispatch`. The release workflow already supplies the
   current GitHub repository automatically.
+- **Preview build reports no update feed:** if it is an older feedless Preview, manually replace the
+  application once with a current feed-capable build. For a current Preview, confirm `app-update.yml`
+  names the canonical GitHub repository and the release contains the correct platform-specific
+  `preview` manifest.
+- **Preview update resolves the wrong architecture:** inspect the merged manifest file entries first.
+  macOS `electron-updater` filters arm64 entries on Apple Silicon (including Rosetta) and excludes
+  arm64 entries on x64 Macs; Windows selects the `.exe` entry containing the running `process.arch`.
+  Keep architecture markers in artifact filenames when changing release naming.
 - **CLI downloads should use a mirror:** set `DISPATCH_RELEASE_BASE_URL`. Keep
   `T3CODE_RELEASE_BASE_URL` only for older installations that have not migrated yet.

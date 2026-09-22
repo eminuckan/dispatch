@@ -1,5 +1,5 @@
 import { teamAgentDisplayName } from "@dispatch/shared/teamAgentNames";
-import type { TeamThreadView } from "@dispatch/contracts";
+import type { TeamAttempt, TeamThreadView } from "@dispatch/contracts";
 import {
   isTeamProtocolRole,
   looksLikeTeamProtocol,
@@ -7,16 +7,33 @@ import {
 } from "@dispatch/shared/teamProtocolPresentation";
 import type { TimelineEntry } from "../../session-logic";
 
+export function teamProviderDecisionState(
+  run: Pick<TeamThreadView, "status" | "failovers" | "profiles">,
+) {
+  if (run.status !== "awaiting-provider-decision") return null;
+  const failover = run.failovers.findLast((candidate) => candidate.status === "pending");
+  if (!failover) return null;
+  const byId = new Map(run.profiles.map((profile) => [profile.id, profile]));
+  return {
+    failover,
+    currentProfile: byId.get(failover.fromProfileId) ?? null,
+    candidates: failover.candidateProfileIds.flatMap((id) => {
+      const profile = byId.get(id);
+      return profile ? [profile] : [];
+    }),
+  };
+}
+
 // Exact managed-thread membership lets us hide only scheduler prompts while
 // preserving the provider's real reasoning/tool/message stream in the normal
 // chat timeline. Structured scheduler replies are rendered as human text.
 export function teamConversationEntries(
   entries: ReadonlyArray<TimelineEntry>,
-  coordinationIds: ReadonlyArray<string>,
+  attempts: ReadonlyArray<Pick<TeamAttempt, "id" | "requestMessageId">>,
   turns: TeamThreadView["turns"] = [],
   initialMessage?: { id: string; objective: string },
 ): TimelineEntry[] {
-  const internal = new Set(coordinationIds);
+  const internal = new Set(attempts.map((attempt) => attempt.requestMessageId));
   const protocolTurns = turns.filter((turn) => isTeamProtocolRole(turn.role));
   const byTurn = new Map(
     protocolTurns.flatMap((turn) =>
@@ -28,8 +45,12 @@ export function teamConversationEntries(
       turn.resultMessageId ? [[turn.resultMessageId, turn] as const] : [],
     ),
   );
+  const turnById = new Map(protocolTurns.map((turn) => [turn.id, turn]));
   const byRequest = new Map<string, (typeof protocolTurns)[number]>(
-    protocolTurns.map((turn) => [`team-${turn.id}`, turn]),
+    attempts.flatMap((attempt) => {
+      const turn = turnById.get(attempt.id);
+      return turn ? [[attempt.requestMessageId, turn] as const] : [];
+    }),
   );
   let precedingRequest: (typeof protocolTurns)[number] | undefined;
   let unknownManagedRequest = false;
@@ -75,14 +96,23 @@ export function teamConversationEntries(
 }
 
 export function teamAgentName(
-  run: Pick<import("@dispatch/contracts").TeamThreadView, "id" | "leadThreadId" | "turns">,
+  run: Pick<import("@dispatch/contracts").TeamThreadView, "id" | "leadThreadId" | "tasks">,
   threadId: string,
 ): string {
+  const workerThreadIds = run.tasks.flatMap((task) =>
+    task.owner.threadId ? [task.owner.threadId] : [],
+  );
   return teamAgentDisplayName(
     run.id,
-    [run.leadThreadId, ...run.turns.filter((t) => t.role === "worker").map((t) => t.threadId)],
+    [...(run.leadThreadId ? [run.leadThreadId] : []), ...workerThreadIds],
     threadId,
   );
+}
+
+export function teamPrimaryRoleLabel(
+  run: Pick<import("@dispatch/contracts").TeamThreadView, "executionMode">,
+): "Direct" | "Lead" {
+  return run.executionMode === "direct" ? "Direct" : "Lead";
 }
 
 export function teamTurnLabel(
@@ -105,7 +135,7 @@ export function teamTurnLabel(
   if (turn.role === "review") return "review finished";
   const task = run.tasks.find((t) => t.id === turn.taskId);
   const latest = run.turns.findLast((t) => t.role === "worker" && t.taskId === turn.taskId);
-  return task?.status === "accepted" && latest?.id === turn.id
+  return task?.status === "settled" && latest?.id === turn.id
     ? "accepted by lead"
     : "reported result";
 }

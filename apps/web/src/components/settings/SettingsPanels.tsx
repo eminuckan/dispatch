@@ -7,7 +7,6 @@ import type { CSSProperties, ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   type BackgroundActivityProfile,
-  type DesktopUpdateChannel,
   ProviderDriverKind,
   type ProviderInstanceId,
   type ScopedThreadRef,
@@ -49,13 +48,6 @@ import * as Duration from "effect/Duration";
 import * as Equal from "effect/Equal";
 import * as Schema from "effect/Schema";
 import { APP_VERSION, HOSTED_APP_CHANNEL, HOSTED_APP_CHANNEL_LABEL } from "../../branding";
-import {
-  canCheckForUpdate,
-  getDesktopUpdateButtonTooltip,
-  getDesktopUpdateInstallConfirmationMessage,
-  isDesktopUpdateButtonDisabled,
-  resolveDesktopUpdateButtonAction,
-} from "../../components/desktopUpdate.logic";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { TraitsPicker } from "../chat/TraitsPicker";
 import {
@@ -81,7 +73,6 @@ import { useScopedModelDisabledReason } from "./useScopedModelAvailability";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { ProjectDefaultsSettings } from "./ProjectDefaultsSettings";
 import { useThreadActions } from "../../hooks/useThreadActions";
-import { useDesktopUpdateState } from "../../state/desktopUpdate";
 import {
   getCustomModelOptionsByInstance,
   resolveAppModelSelectionState,
@@ -171,6 +162,7 @@ import {
 import { searchableSetting } from "./settingsSearch";
 import { ProjectFavicon } from "../ProjectFavicon";
 import { PanelAnimationsPreview } from "./PanelAnimationsPreview";
+import { DesktopUpdateSettings } from "./DesktopUpdateSettings";
 
 const ENVIRONMENT_IDENTIFICATION_LABELS: Record<EnvironmentIdentificationMode, string> = {
   artwork: "Artwork",
@@ -270,205 +262,15 @@ function AboutVersionTitle() {
 }
 
 function AboutVersionSection() {
-  const updateState = useDesktopUpdateState();
-  const [isChangingUpdateChannel, setIsChangingUpdateChannel] = useState(false);
-  const [isUpdateActionPending, setIsUpdateActionPending] = useState(false);
-
-  const hasDesktopBridge = typeof window !== "undefined" && Boolean(window.desktopBridge);
-  const selectedUpdateChannel = updateState?.channel ?? "latest";
-  const selectedHostedAppChannel = hasDesktopBridge ? null : HOSTED_APP_CHANNEL;
-
-  const handleUpdateChannelChange = useCallback(
-    (channel: DesktopUpdateChannel) => {
-      const bridge = window.desktopBridge;
-      if (
-        !bridge ||
-        typeof bridge.setUpdateChannel !== "function" ||
-        channel === selectedUpdateChannel
-      ) {
-        return;
-      }
-
-      setIsChangingUpdateChannel(true);
-      void bridge
-        .setUpdateChannel(channel)
-        .catch((error: unknown) => {
-          toastManager.add(
-            stackedThreadToast({
-              type: "error",
-              title: "Could not change update track",
-              description: error instanceof Error ? error.message : "Update track change failed.",
-            }),
-          );
-        })
-        .finally(() => {
-          setIsChangingUpdateChannel(false);
-        });
-    },
-    [selectedUpdateChannel],
-  );
-
-  const handleButtonClick = useCallback(async () => {
-    const bridge = window.desktopBridge;
-    if (!bridge) return;
-
-    const action = updateState ? resolveDesktopUpdateButtonAction(updateState) : "none";
-
-    if (action === "download") {
-      void bridge.downloadUpdate().catch((error: unknown) => {
-        toastManager.add(
-          stackedThreadToast({
-            type: "error",
-            title: "Could not download update",
-            description: error instanceof Error ? error.message : "Download failed.",
-          }),
-        );
-      });
-      return;
-    }
-
-    if (action === "install") {
-      if (isUpdateActionPending) return;
-      setIsUpdateActionPending(true);
-      let confirmed = false;
-      try {
-        confirmed = await ensureLocalApi().dialogs.confirm(
-          getDesktopUpdateInstallConfirmationMessage(
-            updateState ?? { availableVersion: null, downloadedVersion: null },
-          ),
-        );
-      } catch (error) {
-        setIsUpdateActionPending(false);
-        toastManager.add(
-          stackedThreadToast({
-            type: "error",
-            title: "Could not confirm update",
-            description: error instanceof Error ? error.message : "Update confirmation failed.",
-          }),
-        );
-        return;
-      }
-      if (!confirmed) {
-        setIsUpdateActionPending(false);
-        return;
-      }
-      void bridge
-        .installUpdate()
-        .catch((error: unknown) => {
-          toastManager.add(
-            stackedThreadToast({
-              type: "error",
-              title: "Could not install update",
-              description: error instanceof Error ? error.message : "Install failed.",
-            }),
-          );
-        })
-        .finally(() => setIsUpdateActionPending(false));
-      return;
-    }
-
-    if (typeof bridge.checkForUpdate !== "function") return;
-    void bridge
-      .checkForUpdate()
-      .then((result) => {
-        if (!result.checked) {
-          toastManager.add(
-            stackedThreadToast({
-              type: "error",
-              title: "Could not check for updates",
-              description:
-                result.state.message ?? "Automatic updates are not available in this build.",
-            }),
-          );
-        }
-      })
-      .catch((error: unknown) => {
-        toastManager.add(
-          stackedThreadToast({
-            type: "error",
-            title: "Could not check for updates",
-            description: error instanceof Error ? error.message : "Update check failed.",
-          }),
-        );
-      });
-  }, [isUpdateActionPending, updateState]);
-
-  const action = updateState ? resolveDesktopUpdateButtonAction(updateState) : "none";
-  const buttonTooltip = updateState ? getDesktopUpdateButtonTooltip(updateState) : null;
-  const buttonDisabled =
-    action === "none"
-      ? !canCheckForUpdate(updateState)
-      : isDesktopUpdateButtonDisabled(updateState);
-
-  const actionLabel: Record<string, string> = { download: "Download", install: "Install" };
-  const statusLabel: Record<string, string> = {
-    checking: "Checking…",
-    downloading: "Downloading…",
-    "up-to-date": "Up to Date",
-  };
-  const buttonLabel =
-    actionLabel[action] ?? statusLabel[updateState?.status ?? ""] ?? "Check for Updates";
-  const description =
-    action === "download" || action === "install"
-      ? "Update available."
-      : "Current version of the application.";
+  const selectedHostedAppChannel = HOSTED_APP_CHANNEL;
 
   return (
     <>
       <SettingsRow
         title={<AboutVersionTitle />}
-        description={description}
-        control={
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  size="sm"
-                  variant="outline"
-                  disabled={buttonDisabled || isUpdateActionPending}
-                  onClick={handleButtonClick}
-                >
-                  {buttonLabel}
-                </Button>
-              }
-            />
-            {buttonTooltip ? <TooltipPopup>{buttonTooltip}</TooltipPopup> : null}
-          </Tooltip>
-        }
+        description="Current version of the application."
       />
-      {hasDesktopBridge ? (
-        <SettingsRow
-          title="Update track"
-          description="Use stable releases or nightly builds. Switch back anytime."
-          control={
-            <Select
-              value={selectedUpdateChannel}
-              onValueChange={(value) => {
-                handleUpdateChannelChange(value as DesktopUpdateChannel);
-              }}
-            >
-              <SelectTrigger
-                size="sm"
-                className="w-full sm:w-40"
-                aria-label="Update track"
-                disabled={isChangingUpdateChannel}
-              >
-                <SelectValue>
-                  {selectedUpdateChannel === "nightly" ? "Nightly" : "Stable"}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectPopup align="end" alignItemWithTrigger={false}>
-                <SelectItem hideIndicator value="latest">
-                  Stable
-                </SelectItem>
-                <SelectItem hideIndicator value="nightly">
-                  Nightly
-                </SelectItem>
-              </SelectPopup>
-            </Select>
-          }
-        />
-      ) : selectedHostedAppChannel ? (
+      {selectedHostedAppChannel ? (
         <SettingsRow
           title="Update track"
           description="Switches the hosted app release channel."
@@ -3188,8 +2990,10 @@ export function GeneralSettingsPanel() {
         />
       </SettingsSection>
 
-      <SettingsSection id="about" title="About">
-        {isElectron || HOSTED_APP_CHANNEL ? (
+      <SettingsSection {...searchableSetting("about")}>
+        {isElectron ? (
+          <DesktopUpdateSettings />
+        ) : HOSTED_APP_CHANNEL ? (
           <AboutVersionSection />
         ) : (
           <SettingsRow

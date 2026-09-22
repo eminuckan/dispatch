@@ -24,3 +24,15 @@ NodeTest.test("CORS origin matching does not reflect lookalike or unrelated orig
   NodeAssert.equal(isAllowedCorsOrigin("https://evil.test", allowed), false);
   NodeAssert.equal(isAllowedCorsOrigin("http://127.0.0.2:4317", allowed), false);
 });
+
+NodeTest.test("desktop CORS requires the renderer origin, not just its callback scheme", () => {
+  const callbackSchemes = ["dispatch://", "dispatch-dev://"];
+  const allowed = [...callbackSchemes, "dispatch://app", "dispatch-dev://app"];
+
+  NodeAssert.equal(isAllowedCorsOrigin("dispatch://app", callbackSchemes), false);
+  NodeAssert.equal(isAllowedCorsOrigin("dispatch://app", allowed), true);
+  NodeAssert.equal(isAllowedCorsOrigin("dispatch-dev://app", allowed), true);
+  for (const origin of ["null", "dispatch://evil", "dispatch://app.evil.test", "https://app"]) {
+    NodeAssert.equal(isAllowedCorsOrigin(origin, allowed), false);
+  }
+});

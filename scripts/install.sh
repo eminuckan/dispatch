@@ -182,9 +182,9 @@ case "$version" in
   *-preview.*)
     printf '%s\n' \
       "Dispatch ${version} is a preview build." \
-      "  Preview builds are cut by maintainers from unreleased branches to exercise the release" \
-      "  pipeline. They can be broken, receive no fixes, and are never offered as updates." \
-      "  Set DISPATCH_CHANNEL=stable (the default) for a supported build." >&2
+      "  Preview builds are opt-in prereleases and can include unfinished changes." \
+      "  Feed-capable desktop preview builds can receive in-app Preview updates." \
+      "  Set DISPATCH_CHANNEL=stable (the default) for regular releases." >&2
     if [ "$channel" != "preview" ] && [ -z "${DISPATCH_VERSION:-${T3CODE_VERSION:-}}" ]; then
       fail "refusing a preview build that was not explicitly requested"
     fi

@@ -52,6 +52,22 @@ describe("RPC authorization scopes", () => {
     );
   });
 
+  it("separates orchestration reads from operations", () => {
+    for (const method of ["team.forThread", "team.get", "team.list", "team.settings"]) {
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthOrchestrationReadScope);
+    }
+    for (const method of [
+      "team.start",
+      "team.control",
+      "team.saveSettings",
+      "team.setSmartRoutingSession",
+      "team.recommendModels",
+      "team.providerDecision",
+    ]) {
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthOrchestrationOperateScope);
+    }
+  });
+
   it("reads the reviewer menu under the same scope as the pull request it belongs to", () => {
     // The candidate list is a read like the detail beside it, and asking somebody for a review is
     // a write like every other pull request operation.

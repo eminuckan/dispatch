@@ -26,6 +26,7 @@ import {
 } from "../ui/sidebar";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { readPullRequestListPreferences } from "../pullRequest/pullRequestListPreferences";
+import { SidebarConnectAccount } from "./SidebarConnectAccount";
 import { SidebarProviderUpdatePill } from "./SidebarProviderUpdatePill";
 import { SidebarUpdateArchitectureWarning, SidebarUpdatePill } from "./SidebarUpdatePill";
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
@@ -184,37 +185,40 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
   }, [canGoBack, closeMobileSidebar, navigate]);
 
   return (
-    <SidebarMenu className="flex-row items-center">
-      {currentFooterPage ? (
-        <SidebarMenuItem className="min-w-0 flex-1">
-          <SidebarMenuButton onClick={handleBackClick}>
-            <ArrowLeftIcon />
-            <span>Back</span>
-          </SidebarMenuButton>
-        </SidebarMenuItem>
-      ) : (
-        <>
-          <SidebarUtilityItem
-            icon={<SettingsIcon />}
-            label="Settings"
-            onClick={handleSettingsClick}
-          />
-          {pullRequestsSupported ? (
+    <>
+      <SidebarConnectAccount />
+      <SidebarMenu className="flex-row items-center">
+        {currentFooterPage ? (
+          <SidebarMenuItem className="min-w-0 flex-1">
+            <SidebarMenuButton onClick={handleBackClick}>
+              <ArrowLeftIcon />
+              <span>Back</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+        ) : (
+          <>
             <SidebarUtilityItem
-              icon={<PullRequestGlyph.pullRequest />}
-              label="Pull Requests"
-              onClick={handlePullRequestsClick}
+              icon={<SettingsIcon />}
+              label="Settings"
+              onClick={handleSettingsClick}
             />
-          ) : null}
-          <SidebarUtilityItem
-            icon={<ChartNoAxesColumnIcon />}
-            label="Usage"
-            onClick={handleUsageClick}
-          />
-        </>
-      )}
-      <SidebarUpdatePill />
-    </SidebarMenu>
+            {pullRequestsSupported ? (
+              <SidebarUtilityItem
+                icon={<PullRequestGlyph.pullRequest />}
+                label="Pull Requests"
+                onClick={handlePullRequestsClick}
+              />
+            ) : null}
+            <SidebarUtilityItem
+              icon={<ChartNoAxesColumnIcon />}
+              label="Usage"
+              onClick={handleUsageClick}
+            />
+          </>
+        )}
+        <SidebarUpdatePill />
+      </SidebarMenu>
+    </>
   );
 });
 

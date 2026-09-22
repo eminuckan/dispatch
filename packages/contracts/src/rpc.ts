@@ -1,20 +1,15 @@
-import { ModelSelection } from "./orchestration.ts";
 import {
-  TeamPoolSuggestion,
+  TeamModelRecommendations,
+  TeamProviderDecision,
   TeamThreadInput,
   TeamThreadView,
   TeamStart,
   TeamControl,
   TeamRun,
   TeamRunId,
-  TeamRecoveryInput,
-  TeamRecoveryAdvice,
-  TeamResolve,
+  TeamSmartRoutingSessionUpdate,
   TeamSettings,
   TeamSettingsUpdate,
-  TeamSecretUpdate,
-  TeamDraft,
-  TeamAssessment,
   TeamError,
 } from "./team.ts";
 import * as Schema from "effect/Schema";
@@ -1415,21 +1410,6 @@ export const WsRpcGroup = RpcGroup.make(
     success: Schema.Array(TeamRun),
     error: TeamRpcError,
   }),
-  Rpc.make("team.recover", {
-    payload: TeamRecoveryInput,
-    success: TeamRecoveryAdvice,
-    error: TeamRpcError,
-  }),
-  Rpc.make("team.resolve", {
-    payload: TeamResolve,
-    success: Schema.NullOr(ModelSelection),
-    error: TeamRpcError,
-  }),
-  Rpc.make("team.suggestPool", {
-    payload: Schema.Struct({}),
-    success: TeamPoolSuggestion,
-    error: TeamRpcError,
-  }),
   Rpc.make("team.settings", {
     payload: Schema.Struct({}),
     success: TeamSettings,
@@ -1440,12 +1420,21 @@ export const WsRpcGroup = RpcGroup.make(
     success: TeamSettings,
     error: TeamRpcError,
   }),
-  Rpc.make("team.setSecret", {
-    payload: TeamSecretUpdate,
+  Rpc.make("team.setSmartRoutingSession", {
+    payload: TeamSmartRoutingSessionUpdate,
     success: TeamSettings,
     error: TeamRpcError,
   }),
-  Rpc.make("team.assess", { payload: TeamDraft, success: TeamAssessment, error: TeamRpcError }),
+  Rpc.make("team.recommendModels", {
+    payload: Schema.Struct({}),
+    success: TeamModelRecommendations,
+    error: TeamRpcError,
+  }),
+  Rpc.make("team.providerDecision", {
+    payload: TeamProviderDecision,
+    success: TeamRun,
+    error: TeamRpcError,
+  }),
   WsServerProbeRpc,
   WsServerGetConfigRpc,
   WsServerRefreshProvidersRpc,

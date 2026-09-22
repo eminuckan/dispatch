@@ -98,6 +98,21 @@ describe("SidebarUpdateReleaseNotes", () => {
     ]);
   });
 
+  it("renders Preview channel notes", () => {
+    const previewState = {
+      ...baseState,
+      channel: "preview" as const,
+      availableVersion: "0.0.36-preview.3",
+      releaseNotes: [{ version: "0.0.36-preview.3", items: ["Preview change"], totalItems: 1 }],
+    };
+    const anchors = collectAnchors(renderNotes(previewState));
+
+    expect(anchors[0]?.props.href).toBe(
+      "https://github.com/eminuckan/dispatch/releases/tag/v0.0.36-preview.3",
+    );
+    expect(textContent(renderNotes(previewState))).toContain("Preview change");
+  });
+
   it("links omitted releases to release history", () => {
     const anchors = collectAnchors(
       renderNotes({

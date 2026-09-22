@@ -252,7 +252,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
                   : isRunning
                     ? "Queue message"
                     : orchestration
-                      ? (routingBlocked ?? "Start orchestrated task")
+                      ? (routingBlocked ?? "Start Flow task")
                       : "Send message"
       }
     >

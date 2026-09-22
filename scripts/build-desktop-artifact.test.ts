@@ -248,14 +248,16 @@ const makeWindowsPayloadFixture = Effect.fn("test.makeWindowsPayloadFixture")(fu
 });
 
 it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
-  it("resolves the dedicated nightly updater channel from nightly versions", () => {
+  it("resolves dedicated updater channels from release versions", () => {
     assert.equal(resolveDesktopUpdateChannel("0.0.17-nightly.20260413.42"), "nightly");
+    assert.equal(resolveDesktopUpdateChannel("0.0.17-preview.20260922.42"), "preview");
     assert.equal(resolveDesktopUpdateChannel("0.0.17"), "latest");
   });
 
-  it("switches desktop packaging product names to nightly for nightly builds", () => {
+  it("keeps Preview on the stable package identity while Nightly remains separate", () => {
     assert.equal(resolveDesktopProductName("0.0.17"), "Dispatch");
     assert.equal(resolveDesktopProductName("0.0.17-nightly.20260413.42"), "Dispatch (Nightly)");
+    assert.equal(resolveDesktopProductName("0.0.17-preview.20260922.42"), "Dispatch");
   });
 
   it("switches desktop packaging icons to the nightly artwork for nightly versions", () => {
@@ -270,11 +272,17 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       linuxIconPng: BRAND_ASSET_PATHS.nightlyLinuxIconPng,
       windowsIconIco: BRAND_ASSET_PATHS.nightlyWindowsIconIco,
     });
+    assert.deepStrictEqual(resolveDesktopBuildIconAssets("0.0.17-preview.20260922.42"), {
+      macIconPng: BRAND_ASSET_PATHS.nightlyMacIconPng,
+      linuxIconPng: BRAND_ASSET_PATHS.nightlyLinuxIconPng,
+      windowsIconIco: BRAND_ASSET_PATHS.nightlyWindowsIconIco,
+    });
   });
 
   it("switches the bundled splash and favicon branding for nightly versions", () => {
     assert.equal(resolveDesktopWebAssetBrand("0.0.17"), "production");
     assert.equal(resolveDesktopWebAssetBrand("0.0.17-nightly.20260413.42"), "nightly");
+    assert.equal(resolveDesktopWebAssetBrand("0.0.17-preview.20260922.42"), "nightly");
   });
 
   it.effect("resolves GitHub desktop publish config from Effect config", () =>
@@ -314,6 +322,17 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
           ),
         ),
       );
+      const previewConfig = yield* resolveGitHubPublishConfig("preview").pipe(
+        Effect.provide(
+          ConfigProvider.layer(
+            ConfigProvider.fromEnv({
+              env: {
+                GITHUB_REPOSITORY: "github-owner/github-repo",
+              },
+            }),
+          ),
+        ),
+      );
 
       assert.deepStrictEqual(latestConfig, {
         provider: "github",
@@ -333,6 +352,13 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         repo: "github-repo",
         releaseType: "prerelease",
         channel: "nightly",
+      });
+      assert.deepStrictEqual(previewConfig, {
+        provider: "github",
+        owner: "github-owner",
+        repo: "github-repo",
+        releaseType: "prerelease",
+        channel: "preview",
       });
     }),
   );
@@ -369,7 +395,15 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       );
 
       assert.notProperty(preview, "publish");
-      assert.notProperty(previewChannel, "publish");
+      assert.deepStrictEqual(previewChannel.publish, [
+        {
+          provider: "github",
+          owner: "pingdotgg",
+          repo: "t3code",
+          releaseType: "prerelease",
+          channel: "preview",
+        },
+      ]);
       assert.deepStrictEqual(release.publish, [
         {
           provider: "github",
@@ -1915,9 +1949,9 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     }).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })))),
   );
 
-  it.effect("uses the nightly DMG background for nightly macOS builds", () =>
+  it.effect("uses the nightly DMG background for nightly and preview macOS builds", () =>
     Effect.gen(function* () {
-      const config = yield* createBuildConfig(
+      const nightly = yield* createBuildConfig(
         "mac",
         "dmg",
         "1.2.3-nightly.20260815.1",
@@ -1926,9 +1960,22 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         undefined,
         undefined,
       );
+      const preview = yield* createBuildConfig(
+        "mac",
+        "dmg",
+        "1.2.3-preview.20260922.1",
+        false,
+        false,
+        undefined,
+        undefined,
+      );
 
       assert.equal(
-        (config.dmg as Record<string, unknown>).background,
+        (nightly.dmg as Record<string, unknown>).background,
+        "dmg/dmg-background-nightly.png",
+      );
+      assert.equal(
+        (preview.dmg as Record<string, unknown>).background,
         "dmg/dmg-background-nightly.png",
       );
     }).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })))),

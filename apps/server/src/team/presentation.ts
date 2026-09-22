@@ -1,42 +1,113 @@
-import type { TeamRun, TeamThreadView } from "@dispatch/contracts";
+import type {
+  TeamAttempt,
+  TeamRun,
+  TeamThreadTurnView,
+  TeamThreadView,
+  ThreadId,
+} from "@dispatch/contracts";
 import { isTeamProtocolRole, teamProtocolSummary } from "@dispatch/shared/teamProtocolPresentation";
 
+export const SMART_ROUTING_STANDARD_FALLBACK_NOTICE =
+  "Smart Routing was unavailable or uncertain. Flow continued with Standard using your saved model order.";
+
+function threadScope(run: TeamRun): ThreadId | null {
+  if (run.lead.threadId) return run.lead.threadId;
+  for (const attempt of run.attempts) if (attempt.owner.threadId) return attempt.owner.threadId;
+  for (const task of run.tasks) if (task.owner.threadId) return task.owner.threadId;
+  for (const message of run.messages) {
+    if (message.from.threadId) return message.from.threadId;
+    if (message.to.threadId) return message.to.threadId;
+  }
+  for (const settlement of run.settlements)
+    if (settlement.owner.threadId) return settlement.owner.threadId;
+  return null;
+}
+
+function phase(run: TeamRun): TeamThreadView["phase"] {
+  if (["completed", "cancelled", "failed"].includes(run.status)) return "done";
+  if (run.status === "planning") return "plan";
+  if (run.status === "review" || run.status === "settling") return "integrate";
+
+  const integratingSettlement = run.settlements.some(
+    (settlement) => !["applied", "rejected"].includes(settlement.status),
+  );
+  if (
+    integratingSettlement ||
+    (run.tasks.length > 0 && run.tasks.every((task) => task.status === "settled"))
+  )
+    return "integrate";
+  if (run.tasks.length === 0 && run.settlements.length === 0 && run.status === "paused")
+    return "plan";
+  return "workers";
+}
+
+function turnStatus(status: TeamAttempt["status"]): TeamThreadTurnView["status"] {
+  switch (status) {
+    case "reserved":
+      return "reserved";
+    case "dispatching":
+      return "dispatching";
+    case "running":
+      return "dispatched";
+    case "succeeded":
+    case "failed":
+    case "cancelled":
+      return "settled";
+  }
+}
+
+function turnSummary(attempt: TeamAttempt): string | null {
+  if (attempt.result === null) return null;
+  if (isTeamProtocolRole(attempt.role)) return teamProtocolSummary(attempt.role, attempt.result);
+  return attempt.result;
+}
+
+function notice(run: TeamRun): string | null {
+  if (run.statusReason) return run.statusReason;
+  return run.policy.flowMode === "standard" &&
+    run.decisions.includes(SMART_ROUTING_STANDARD_FALLBACK_NOTICE)
+    ? SMART_ROUTING_STANDARD_FALLBACK_NOTICE
+    : null;
+}
+
 export function teamThreadView(run: TeamRun | null): TeamThreadView | null {
-  if (!run?.execution) return null;
-  const execution = run.execution;
+  if (!run) return null;
+  const lead = run.policy.profiles.find((profile) => profile.id === run.lead.profileId);
+  const threadId = threadScope(run);
+  if (!lead || !threadId) return null;
+
   return {
     id: run.id,
-    coordinationMessageIds: execution.turns.map((turn) => turn.command.message.messageId),
+    threadId,
     revision: run.revision,
-    objective: run.objective,
+    executionMode: run.executionMode,
+    objective: run.prompt,
+    prompt: run.prompt,
     status: run.status,
-    lead: run.lead,
-    leadThreadId: execution.leadThreadId,
-    phase: execution.phase,
-    notice: execution.notice,
-    maxTurns: execution.maxTurns,
-    tasks: run.tasks.map(
-      ({ context: _context, recoveryHistory: _history, result: _result, ...task }) => task,
-    ),
-    turns: execution.turns.map((turn) => ({
-      id: turn.id,
-      role: turn.role,
-      taskId: turn.taskId,
-      threadId: turn.command.threadId,
-      model: turn.command.modelSelection?.model ?? "Unknown model",
-      effort: (() => {
-        const value = turn.command.modelSelection?.options?.find((option) =>
-          ["reasoningEffort", "effort", "reasoning", "variant"].includes(option.id),
-        )?.value;
-        return typeof value === "string" ? value : null;
-      })(),
-      ...(turn.providerTurnId ? { providerTurnId: turn.providerTurnId } : {}),
-      ...(turn.resultMessageId ? { resultMessageId: turn.resultMessageId } : {}),
-      status: turn.status,
-      succeeded: turn.succeeded,
-      summary: isTeamProtocolRole(turn.role)
-        ? teamProtocolSummary(turn.role, turn.result ?? "")
-        : turn.result,
+    statusReason: run.statusReason,
+    profiles: run.policy.profiles,
+    lead,
+    leadOwner: run.lead,
+    leadThreadId: run.lead.threadId,
+    phase: phase(run),
+    notice: notice(run),
+    workspace: run.workspace,
+    tasks: run.tasks,
+    attempts: run.attempts,
+    turns: run.attempts.map((attempt) => ({
+      id: attempt.id,
+      role: attempt.role === "work" ? "worker" : attempt.role,
+      taskId: attempt.taskId,
+      threadId: attempt.owner.threadId,
+      model: attempt.selection.model,
+      status: turnStatus(attempt.status),
+      succeeded: attempt.status === "succeeded",
+      summary: turnSummary(attempt),
+      providerTurnId: attempt.providerTurnId,
+      resultMessageId: attempt.resultMessageId,
     })),
+    messages: run.messages,
+    settlements: run.settlements,
+    failovers: run.failovers,
   };
 }

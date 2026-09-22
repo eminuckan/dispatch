@@ -304,6 +304,7 @@ validationLayer("CodexAdapterLive validation", (it) => {
   it.effect("returns validation error for non-codex provider on startSession", () =>
     Effect.gen(function* () {
       const adapter = yield* CodexAdapter;
+      NodeAssert.equal(adapter.capabilities.managedTeamNativeDelegation, "blocked");
       const result = yield* adapter
         .startSession({
           provider: ProviderDriverKind.make("claudeAgent"),

@@ -797,6 +797,133 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
     }),
   );
 
+  it.effect(
+    "derives managed worker membership from v2 tasks and historical worker attempts while preserving legacy runs",
+    () =>
+      Effect.gen(function* () {
+        const snapshotQuery = yield* ProjectionSnapshotQuery;
+        const sql = yield* SqlClient.SqlClient;
+
+        yield* sql`
+        INSERT INTO projection_projects (
+          project_id,
+          title,
+          workspace_root,
+          default_model_selection_json,
+          scripts_json,
+          created_at,
+          updated_at,
+          deleted_at
+        )
+        VALUES (
+          'project-managed-membership',
+          'Managed membership',
+          '/tmp/project-managed-membership',
+          '{"provider":"codex","model":"gpt-5-codex"}',
+          '[]',
+          '2026-09-21T00:00:00.000Z',
+          '2026-09-21T00:00:00.000Z',
+          NULL
+        )
+      `;
+        yield* sql`
+        INSERT INTO projection_threads (
+          thread_id,
+          project_id,
+          title,
+          model_selection_json,
+          runtime_mode,
+          interaction_mode,
+          created_at,
+          updated_at
+        )
+        VALUES
+          ('thread-v2-worker', 'project-managed-membership', 'Current worker', '{"provider":"codex","model":"gpt-5-codex"}', 'full-access', 'default', '2026-09-21T00:00:01.000Z', '2026-09-21T00:00:01.000Z'),
+          ('thread-v2-historical-worker', 'project-managed-membership', 'Historical worker', '{"provider":"codex","model":"gpt-5-codex"}', 'full-access', 'default', '2026-09-21T00:00:02.000Z', '2026-09-21T00:00:02.000Z'),
+          ('thread-v2-lead', 'project-managed-membership', 'Lead', '{"provider":"codex","model":"gpt-5-codex"}', 'full-access', 'default', '2026-09-21T00:00:03.000Z', '2026-09-21T00:00:03.000Z'),
+          ('thread-v2-lead-attempt', 'project-managed-membership', 'Lead attempt', '{"provider":"codex","model":"gpt-5-codex"}', 'full-access', 'default', '2026-09-21T00:00:04.000Z', '2026-09-21T00:00:04.000Z'),
+          ('thread-ordinary', 'project-managed-membership', 'Ordinary', '{"provider":"codex","model":"gpt-5-codex"}', 'full-access', 'default', '2026-09-21T00:00:05.000Z', '2026-09-21T00:00:05.000Z'),
+          ('thread-legacy-worker', 'project-managed-membership', 'Legacy worker', '{"provider":"codex","model":"gpt-5-codex"}', 'full-access', 'default', '2026-09-21T00:00:06.000Z', '2026-09-21T00:00:06.000Z')
+      `;
+
+        const v2Payload = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))({
+          lead: { role: "lead", threadId: "thread-v2-lead" },
+          tasks: [
+            {
+              id: "task-1",
+              owner: { role: "worker", threadId: "thread-v2-worker" },
+            },
+          ],
+          attempts: [
+            {
+              id: "attempt-old-worker",
+              taskId: "task-1",
+              owner: { role: "worker", threadId: "thread-v2-historical-worker" },
+            },
+            {
+              id: "attempt-lead",
+              taskId: "task-1",
+              owner: { role: "lead", threadId: "thread-v2-lead-attempt" },
+            },
+          ],
+        });
+        yield* sql`
+        INSERT INTO orchestration_v2_runs (id, command_id, revision, payload)
+        VALUES ('v2-membership', 'v2-membership-command', 0, ${v2Payload})
+      `;
+
+        const legacyPayload = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))({
+          execution: {
+            turns: [
+              { role: "worker", command: { threadId: "thread-legacy-worker" } },
+              { role: "plan", command: { threadId: "thread-v2-lead" } },
+            ],
+          },
+        });
+        yield* sql`
+        INSERT INTO team_runs (id, command_id, revision, payload)
+        VALUES ('legacy-membership', 'legacy-membership-command', 0, ${legacyPayload})
+      `;
+
+        const shell = yield* snapshotQuery.getShellSnapshot();
+        const byId = new Map(shell.threads.map((thread) => [thread.id, thread] as const));
+        assert.equal(byId.get(ThreadId.make("thread-v2-worker"))?.managedTeamWorker, true);
+        assert.equal(
+          byId.get(ThreadId.make("thread-v2-historical-worker"))?.managedTeamWorker,
+          true,
+        );
+        assert.equal(byId.get(ThreadId.make("thread-v2-lead"))?.managedTeamWorker, undefined);
+        assert.equal(
+          byId.get(ThreadId.make("thread-v2-lead-attempt"))?.managedTeamWorker,
+          undefined,
+        );
+        assert.equal(byId.get(ThreadId.make("thread-ordinary"))?.managedTeamWorker, undefined);
+        assert.equal(byId.get(ThreadId.make("thread-legacy-worker"))?.managedTeamWorker, true);
+
+        const historicalWorker = yield* snapshotQuery.getThreadShellById(
+          ThreadId.make("thread-v2-historical-worker"),
+        );
+        assert.equal(
+          Option.isSome(historicalWorker) && historicalWorker.value.managedTeamWorker,
+          true,
+        );
+        const lead = yield* snapshotQuery.getThreadShellById(ThreadId.make("thread-v2-lead"));
+        assert.equal(Option.isSome(lead) && lead.value.managedTeamWorker === true, false);
+
+        yield* sql`
+        UPDATE projection_threads
+        SET archived_at = '2026-09-21T00:01:00.000Z'
+        WHERE thread_id = 'thread-v2-worker'
+      `;
+        const archived = yield* snapshotQuery.getArchivedShellSnapshot();
+        assert.equal(
+          archived.threads.find((thread) => thread.id === ThreadId.make("thread-v2-worker"))
+            ?.managedTeamWorker,
+          true,
+        );
+      }),
+  );
+
   it.effect("reads one turn-start message without decoding unrelated history", () =>
     Effect.gen(function* () {
       const query = yield* ProjectionSnapshotQuery;

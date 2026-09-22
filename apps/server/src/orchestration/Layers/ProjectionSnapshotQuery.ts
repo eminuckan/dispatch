@@ -613,6 +613,16 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             SELECT json_extract(member.value, '$.command.threadId')
             FROM team_runs, json_each(team_runs.payload, '$.execution.turns') AS member
             WHERE json_extract(member.value, '$.role') = 'worker'
+            UNION
+            SELECT json_extract(task.value, '$.owner.threadId')
+            FROM orchestration_v2_runs, json_each(orchestration_v2_runs.payload, '$.tasks') AS task
+            WHERE json_extract(task.value, '$.owner.role') = 'worker'
+              AND json_extract(task.value, '$.owner.threadId') IS NOT NULL
+            UNION
+            SELECT json_extract(attempt.value, '$.owner.threadId')
+            FROM orchestration_v2_runs, json_each(orchestration_v2_runs.payload, '$.attempts') AS attempt
+            WHERE json_extract(attempt.value, '$.owner.role') = 'worker'
+              AND json_extract(attempt.value, '$.owner.threadId') IS NOT NULL
           ) AS "managedTeamWorker",
           deleted_at AS "deletedAt"
         FROM projection_threads
@@ -659,6 +669,16 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             SELECT json_extract(member.value, '$.command.threadId')
             FROM team_runs, json_each(team_runs.payload, '$.execution.turns') AS member
             WHERE json_extract(member.value, '$.role') = 'worker'
+            UNION
+            SELECT json_extract(task.value, '$.owner.threadId')
+            FROM orchestration_v2_runs, json_each(orchestration_v2_runs.payload, '$.tasks') AS task
+            WHERE json_extract(task.value, '$.owner.role') = 'worker'
+              AND json_extract(task.value, '$.owner.threadId') IS NOT NULL
+            UNION
+            SELECT json_extract(attempt.value, '$.owner.threadId')
+            FROM orchestration_v2_runs, json_each(orchestration_v2_runs.payload, '$.attempts') AS attempt
+            WHERE json_extract(attempt.value, '$.owner.role') = 'worker'
+              AND json_extract(attempt.value, '$.owner.threadId') IS NOT NULL
           ) AS "managedTeamWorker",
           deleted_at AS "deletedAt"
         FROM projection_threads
@@ -737,6 +757,16 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             SELECT json_extract(member.value, '$.command.threadId')
             FROM team_runs, json_each(team_runs.payload, '$.execution.turns') AS member
             WHERE json_extract(member.value, '$.role') = 'worker'
+            UNION
+            SELECT json_extract(task.value, '$.owner.threadId')
+            FROM orchestration_v2_runs, json_each(orchestration_v2_runs.payload, '$.tasks') AS task
+            WHERE json_extract(task.value, '$.owner.role') = 'worker'
+              AND json_extract(task.value, '$.owner.threadId') IS NOT NULL
+            UNION
+            SELECT json_extract(attempt.value, '$.owner.threadId')
+            FROM orchestration_v2_runs, json_each(orchestration_v2_runs.payload, '$.attempts') AS attempt
+            WHERE json_extract(attempt.value, '$.owner.role') = 'worker'
+              AND json_extract(attempt.value, '$.owner.threadId') IS NOT NULL
           ) AS "managedTeamWorker",
           deleted_at AS "deletedAt"
         FROM projection_threads
@@ -1307,6 +1337,16 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             SELECT json_extract(member.value, '$.command.threadId')
             FROM team_runs, json_each(team_runs.payload, '$.execution.turns') AS member
             WHERE json_extract(member.value, '$.role') = 'worker'
+            UNION
+            SELECT json_extract(task.value, '$.owner.threadId')
+            FROM orchestration_v2_runs, json_each(orchestration_v2_runs.payload, '$.tasks') AS task
+            WHERE json_extract(task.value, '$.owner.role') = 'worker'
+              AND json_extract(task.value, '$.owner.threadId') IS NOT NULL
+            UNION
+            SELECT json_extract(attempt.value, '$.owner.threadId')
+            FROM orchestration_v2_runs, json_each(orchestration_v2_runs.payload, '$.attempts') AS attempt
+            WHERE json_extract(attempt.value, '$.owner.role') = 'worker'
+              AND json_extract(attempt.value, '$.owner.threadId') IS NOT NULL
           ) AS "managedTeamWorker",
           deleted_at AS "deletedAt"
         FROM projection_threads

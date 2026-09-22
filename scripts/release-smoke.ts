@@ -188,6 +188,30 @@ function assertMissing(path: string, message: string): void {
 const tempRoot = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "dispatch-release-smoke-"));
 
 try {
+  const releaseWorkflow = NodeFS.readFileSync(
+    NodePath.resolve(repoRoot, ".github/workflows/release.yml"),
+    "utf8",
+  );
+  const desktopReleaseWorkflow = NodeFS.readFileSync(
+    NodePath.resolve(repoRoot, ".github/workflows/release-desktop.yml"),
+    "utf8",
+  );
+  assertContains(
+    releaseWorkflow,
+    "DISPATCH_CONNECT_URL: ${{ vars.DISPATCH_CONNECT_URL || 'https://connect.opendispatch.dev' }}",
+    "Official release builds must provide the Dispatch Connect public origin with an operator override.",
+  );
+  assertContains(
+    releaseWorkflow,
+    '--build-env "DISPATCH_CONNECT_URL=$DISPATCH_CONNECT_URL"',
+    "Hosted web release builds must forward the Dispatch Connect public origin to Vercel.",
+  );
+  assertContains(
+    desktopReleaseWorkflow,
+    "DISPATCH_CONNECT_URL: ${{ inputs.connect_url }}",
+    "Reusable desktop/CLI builds must receive the Dispatch Connect public origin.",
+  );
+
   NodeChildProcess.execFileSync(
     process.execPath,
     ["--test", NodePath.resolve(repoRoot, ".github/scripts/relay-state-output.test.cjs")],

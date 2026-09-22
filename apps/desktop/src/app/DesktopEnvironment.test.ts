@@ -40,6 +40,20 @@ const makeEnvironment = (
   DesktopEnvironment.DesktopEnvironment.pipe(Effect.provide(makeEnvironmentLayer(overrides, env)));
 
 describe("DesktopEnvironment", () => {
+  it("labels packaged preview builds as Preview instead of Nightly", () => {
+    assert.deepEqual(
+      DesktopEnvironment.resolveDesktopAppBranding({
+        isDevelopment: false,
+        appVersion: "0.0.41-preview.20260922.42",
+      }),
+      {
+        baseName: "Dispatch",
+        stageLabel: "Preview",
+        displayName: "Dispatch (Preview)",
+      },
+    );
+  });
+
   it.effect("derives state paths and development identity inside Effect", () =>
     Effect.gen(function* () {
       const environment = yield* makeEnvironment(

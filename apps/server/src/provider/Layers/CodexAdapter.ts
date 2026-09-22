@@ -2745,6 +2745,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
     capabilities: {
       sessionModelSwitch: "in-session",
       promptlessTurnContinuation: true,
+      managedTeamNativeDelegation: "blocked",
     },
     startSession,
     sendTurn,

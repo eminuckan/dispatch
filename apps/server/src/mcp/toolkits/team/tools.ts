@@ -1,4 +1,4 @@
-import { TeamError, TeamPeerMessage, ThreadId, TrimmedNonEmptyString } from "@dispatch/contracts";
+import { TeamError, TeamMessage, ThreadId, TrimmedNonEmptyString } from "@dispatch/contracts";
 import * as Schema from "effect/Schema";
 import * as Tool from "effect/unstable/ai/Tool";
 import * as Toolkit from "effect/unstable/ai/Toolkit";
@@ -18,7 +18,7 @@ const SendMessage = Tool.make("team_send_message", {
     replyRequested: Schema.Boolean,
     inReplyTo: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(128))),
   }),
-  success: TeamPeerMessage,
+  success: TeamMessage,
   failure: TeamError,
   dependencies,
 })
@@ -35,7 +35,7 @@ const ReadMessages = Tool.make("team_read_messages", {
   success: Schema.Struct({
     runId: Schema.String,
     status: Schema.String,
-    leadThreadId: ThreadId,
+    leadThreadId: Schema.NullOr(ThreadId),
     members: Schema.Array(
       Schema.Struct({
         threadId: ThreadId,
@@ -46,7 +46,7 @@ const ReadMessages = Tool.make("team_read_messages", {
         summary: Schema.String,
       }),
     ),
-    messages: Schema.Array(TeamPeerMessage),
+    messages: Schema.Array(TeamMessage),
   }),
   failure: TeamError,
   dependencies,

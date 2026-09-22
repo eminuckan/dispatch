@@ -33,6 +33,8 @@ import * as ServerSecretStore from "./ServerSecretStore.ts";
 export const DISPATCH_CONNECT_ENVIRONMENT_CONFIG_SECRET = "dispatch-connect-environment-config";
 export const DISPATCH_CONNECT_ENVIRONMENT_CREDENTIAL_SECRET =
   "dispatch-connect-environment-credential";
+export const DISPATCH_CONNECT_SMART_ROUTING_SESSION_SECRET =
+  "dispatch-connect-smart-routing-session";
 export const DISPATCH_CONNECT_MANAGED_ENDPOINT_CONFIG_SECRET =
   "dispatch-connect-managed-endpoint-runtime-config";
 
@@ -150,6 +152,33 @@ function managedEndpointStatus(
   }
 }
 
+/** Server-only credential access shared by Connect transport and hosted Smart Routing. */
+export const readDispatchConnectEnvironmentConnection = Effect.fnUntraced(function* (
+  secrets: ServerSecretStore.ServerSecretStore["Service"],
+) {
+  const bytes = yield* secrets
+    .get(DISPATCH_CONNECT_ENVIRONMENT_CONFIG_SECRET)
+    .pipe(Effect.mapError((cause) => asError("read-config", cause)));
+  if (Option.isNone(bytes))
+    return Option.none<{
+      readonly connection: DispatchConnectEnvironmentConnection;
+      readonly credential: string;
+    }>();
+  const config = yield* decodeEnvironmentConfig(bytesToString(bytes.value)).pipe(
+    Effect.mapError((cause) => asError("read-config", cause)),
+  );
+  const credential = yield* secrets
+    .get(DISPATCH_CONNECT_ENVIRONMENT_CREDENTIAL_SECRET)
+    .pipe(Effect.mapError((cause) => asError("read-credential", cause)));
+  if (Option.isNone(credential) || credential.value.byteLength === 0) {
+    return yield* asError("read-credential", new Error("Dispatch Connect credential missing."));
+  }
+  return Option.some({
+    connection: { baseUrl: config.baseUrl, environmentId: config.environmentId },
+    credential: bytesToString(credential.value),
+  });
+});
+
 export class DispatchConnectEnvironment extends Context.Service<
   DispatchConnectEnvironment,
   {
@@ -197,45 +226,7 @@ export const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const mutationSemaphore = yield* Semaphore.make(1);
 
-  const readEnvironmentConfig = Effect.fn("DispatchConnectEnvironment.readConfig")(function* () {
-    const bytes = yield* secrets
-      .get(DISPATCH_CONNECT_ENVIRONMENT_CONFIG_SECRET)
-      .pipe(Effect.mapError((cause) => asError("read-config", cause)));
-    if (Option.isNone(bytes)) return Option.none<PersistedDispatchConnectEnvironmentConfig>();
-    const decoded = yield* decodeEnvironmentConfig(bytesToString(bytes.value)).pipe(
-      Effect.mapError((cause) => asError("read-config", cause)),
-    );
-    return Option.some(decoded);
-  });
-
-  const readCredential = Effect.fn("DispatchConnectEnvironment.readCredential")(function* () {
-    const bytes = yield* secrets
-      .get(DISPATCH_CONNECT_ENVIRONMENT_CREDENTIAL_SECRET)
-      .pipe(Effect.mapError((cause) => asError("read-credential", cause)));
-    return Option.map(bytes, bytesToString);
-  });
-
-  const readConfiguredConnection = Effect.fn("DispatchConnectEnvironment.readConfiguredConnection")(
-    function* () {
-      const config = yield* readEnvironmentConfig();
-      if (Option.isNone(config))
-        return Option.none<{
-          readonly connection: DispatchConnectEnvironmentConnection;
-          readonly credential: string;
-        }>();
-      const credential = yield* readCredential();
-      if (Option.isNone(credential) || credential.value.length === 0) {
-        return yield* asError("read-credential", new Error("Dispatch Connect credential missing."));
-      }
-      return Option.some({
-        connection: {
-          baseUrl: config.value.baseUrl,
-          environmentId: config.value.environmentId,
-        },
-        credential: credential.value,
-      });
-    },
-  );
+  const readConfiguredConnection = () => readDispatchConnectEnvironmentConnection(secrets);
 
   const readManagedEndpointConfig = Effect.fn(
     "DispatchConnectEnvironment.readManagedEndpointConfig",
@@ -278,6 +269,16 @@ export const make = Effect.gen(function* () {
   const configure: DispatchConnectEnvironment["Service"]["configure"] = (input) =>
     mutationSemaphore.withPermits(1)(
       Effect.gen(function* () {
+        const previousConfigBytes = yield* secrets
+          .get(DISPATCH_CONNECT_ENVIRONMENT_CONFIG_SECRET)
+          .pipe(Effect.mapError((cause) => asError("read-config", cause)));
+        const previousConfig = Option.isSome(previousConfigBytes)
+          ? Option.some(
+              yield* decodeEnvironmentConfig(bytesToString(previousConfigBytes.value)).pipe(
+                Effect.mapError((cause) => asError("read-config", cause)),
+              ),
+            )
+          : Option.none<PersistedDispatchConnectEnvironmentConfig>();
         const previousCredential = yield* secrets
           .get(DISPATCH_CONNECT_ENVIRONMENT_CREDENTIAL_SECRET)
           .pipe(Effect.mapError((cause) => asError("read-credential", cause)));
@@ -315,6 +316,16 @@ export const make = Effect.gen(function* () {
               );
             }),
           );
+        const connectionChanged = Option.match(previousConfig, {
+          onNone: () => true,
+          onSome: (previous) =>
+            previous.baseUrl !== connection.baseUrl ||
+            previous.environmentId !== connection.environmentId,
+        });
+        if (connectionChanged)
+          yield* secrets
+            .remove(DISPATCH_CONNECT_SMART_ROUTING_SESSION_SECRET)
+            .pipe(Effect.mapError((cause) => asError("remove-credential", cause)));
         return {
           configured: true,
           connection,
@@ -340,6 +351,9 @@ export const make = Effect.gen(function* () {
           .pipe(Effect.mapError((cause) => asError("remove-config", cause)));
         yield* secrets
           .remove(DISPATCH_CONNECT_ENVIRONMENT_CREDENTIAL_SECRET)
+          .pipe(Effect.mapError((cause) => asError("remove-credential", cause)));
+        yield* secrets
+          .remove(DISPATCH_CONNECT_SMART_ROUTING_SESSION_SECRET)
           .pipe(Effect.mapError((cause) => asError("remove-credential", cause)));
         return { configured: false } satisfies DispatchConnectEnvironmentStatus;
       }),

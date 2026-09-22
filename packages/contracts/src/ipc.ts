@@ -85,8 +85,8 @@ export type DesktopUpdateStatus =
 
 export type DesktopRuntimeArch = "arm64" | "x64" | "other";
 export type DesktopTheme = "light" | "dark" | "system";
-export type DesktopUpdateChannel = "latest" | "nightly";
-export type DesktopAppStageLabel = "Alpha" | "Dev" | "Nightly";
+export type DesktopUpdateChannel = "latest" | "nightly" | "preview";
+export type DesktopAppStageLabel = "Alpha" | "Dev" | "Nightly" | "Preview";
 
 export const DesktopUpdateStatusSchema = Schema.Literals([
   "disabled",
@@ -100,8 +100,8 @@ export const DesktopUpdateStatusSchema = Schema.Literals([
 ]);
 export const DesktopRuntimeArchSchema = Schema.Literals(["arm64", "x64", "other"]);
 export const DesktopThemeSchema = Schema.Literals(["light", "dark", "system"]);
-export const DesktopUpdateChannelSchema = Schema.Literals(["latest", "nightly"]);
-export const DesktopAppStageLabelSchema = Schema.Literals(["Alpha", "Dev", "Nightly"]);
+export const DesktopUpdateChannelSchema = Schema.Literals(["latest", "nightly", "preview"]);
+export const DesktopAppStageLabelSchema = Schema.Literals(["Alpha", "Dev", "Nightly", "Preview"]);
 
 export interface DesktopAppBranding {
   baseName: string;
@@ -297,10 +297,20 @@ export interface DesktopUpdateReleaseNote {
   totalItems: number;
 }
 
+export interface DesktopWhatsNew {
+  version: string;
+  markdown: string | null;
+}
+
 export const DesktopUpdateReleaseNoteSchema = Schema.Struct({
   version: Schema.String,
   items: Schema.Array(Schema.String),
   totalItems: Schema.Number,
+});
+
+export const DesktopWhatsNewSchema = Schema.Struct({
+  version: Schema.String,
+  markdown: Schema.NullOr(Schema.String),
 });
 
 export const DesktopUpdateStateSchema = Schema.Struct({
@@ -1212,6 +1222,10 @@ export interface DesktopBridge {
   checkForUpdate: () => Promise<DesktopUpdateCheckResult>;
   downloadUpdate: () => Promise<DesktopUpdateActionResult>;
   installUpdate: () => Promise<DesktopUpdateActionResult>;
+  /** Optional while desktop shells predating What's New can host a newer renderer. */
+  getWhatsNew?: () => Promise<DesktopWhatsNew | null>;
+  /** Optional while desktop shells predating What's New can host a newer renderer. */
+  dismissWhatsNew?: () => Promise<boolean>;
   onUpdateState: (listener: (state: DesktopUpdateState) => void) => () => void;
   /** Present when the desktop shell accepts `t3 app` activation requests. */
   appActivation?: {

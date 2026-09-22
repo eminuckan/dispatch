@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { normalizeDesktopUpdateReleaseNotes } from "./releaseNotes.ts";
+import {
+  extractDesktopWhatsNewMarkdown,
+  normalizeDesktopUpdateReleaseNotes,
+} from "./releaseNotes.ts";
 
 describe("normalizeDesktopUpdateReleaseNotes", () => {
   it("shows the newest changes and counts all real changes", () => {
@@ -210,5 +213,38 @@ describe("normalizeDesktopUpdateReleaseNotes", () => {
       releaseNotes: [{ version: "1.0.0", items: ["Broken entity &#9999999999;"], totalItems: 1 }],
       omittedReleaseCount: 0,
     });
+  });
+});
+
+describe("extractDesktopWhatsNewMarkdown", () => {
+  it("uses only the exact target release body from a full changelog payload", () => {
+    expect(
+      extractDesktopWhatsNewMarkdown(
+        [
+          { version: "1.2.5-preview.20260922.2", note: "# Newer preview" },
+          { version: "1.2.5-preview.20260922.1", note: "# Installed preview\n\n- Fixed updates" },
+        ],
+        "1.2.5-preview.20260922.1",
+      ),
+    ).toBe("# Installed preview\n\n- Fixed updates");
+  });
+
+  it("accepts a single release body and rejects missing content", () => {
+    expect(extractDesktopWhatsNewMarkdown("  ## Changes\n- Fix  ", "1.2.5")).toBe(
+      "## Changes\n- Fix",
+    );
+    expect(extractDesktopWhatsNewMarkdown([], "1.2.5")).toBeNull();
+    expect(
+      extractDesktopWhatsNewMarkdown([{ version: "1.2.4", note: "- Old" }], "1.2.5"),
+    ).toBeNull();
+  });
+
+  it("converts GitHub Atom HTML release content into renderable safe Markdown text", () => {
+    expect(
+      extractDesktopWhatsNewMarkdown(
+        `<h2>What's Changed</h2><ul><li>Fix updater <a href="https://example.com/123">#123</a></li><li>Keep state &amp; settings</li></ul>`,
+        "1.2.5-preview.20260922.1",
+      ),
+    ).toBe("## What's Changed\n\n- Fix updater #123\n\n- Keep state & settings");
   });
 });

@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off globalDate:off globalConsole:off - This package intentionally uses the Node HTTP runtime directly.
+// @effect-diagnostics nodeBuiltinImport:off globalDate:off globalConsole:off globalTimers:off - This package intentionally uses the Node HTTP runtime directly.
 import * as NodeHttp from "node:http";
 
 import { createConnectAuth } from "./auth.ts";
@@ -18,6 +18,10 @@ import {
 } from "./managedTunnel.ts";
 import { pairingApiErrorCode, type PairingValidationError } from "./pairing.ts";
 import { FixedWindowRateLimiter } from "./rateLimit.ts";
+import { ConnectClientIp } from "./clientIp.ts";
+import { SmartRoutingStore } from "./smartRoutingStore.ts";
+import { SmartRoutingService } from "./smartRoutingService.ts";
+import { createSmartRoutingHttpHandler } from "./smartRoutingHttp.ts";
 
 class HttpError extends Error {
   readonly status: number;
@@ -136,11 +140,44 @@ const managedTunnelService = config.managedTunnel
   : null;
 const pairingRedeemDeviceLimiter = new FixedWindowRateLimiter(30, 60_000);
 const pairingRedeemAccountLimiter = new FixedWindowRateLimiter(120, 60_000);
+const clientIp = new ConnectClientIp(config.trustedProxyCidrs);
+const routingStore = new SmartRoutingStore(database.pool, config.credentialSecret);
+const routingService = config.smartRouting
+  ? new SmartRoutingService({
+      store: routingStore,
+      config: config.smartRouting,
+      digestSecret: config.credentialSecret,
+    })
+  : null;
+const handleSmartRouting = createSmartRoutingHttpHandler({
+  store: routingStore,
+  service: routingService,
+  clientIp,
+  credentialSecret: config.credentialSecret,
+  getSession: async (token) => {
+    const session = await connectAuth.getSession({ authorization: `Bearer ${token}` });
+    return session ? { accountId: session.user.id, sessionId: session.session.id } : null;
+  },
+});
 
 await connectAuth.migrate();
 await database.migrate();
+await routingStore.migrate();
+await routingStore.cleanup();
+const routingCleanup = setInterval(
+  () => {
+    void routingStore
+      .cleanup()
+      .catch(() => console.error("[dispatch-connect] routing retention cleanup failed"));
+  },
+  60 * 60 * 1000,
+);
+routingCleanup.unref();
 
 const server = NodeHttp.createServer(async (request, response) => {
+  const ip = clientIp.resolve(request);
+  // Never allow a client-supplied header to bypass Better Auth's persistent signup limits.
+  request.headers["x-dispatch-client-ip"] = ip;
   applyCors(request, response, config.allowedOrigins);
   if (request.method === "OPTIONS") {
     response.statusCode = 204;
@@ -195,6 +232,8 @@ const server = NodeHttp.createServer(async (request, response) => {
       if (!session) throw new HttpError(401, "authentication_required");
       return session.user;
     };
+
+    if (await handleSmartRouting(request, response, url.pathname, ip)) return;
 
     if (url.pathname === "/v1/devices" && request.method === "POST") {
       const user = await sessionUser();
@@ -455,6 +494,8 @@ const server = NodeHttp.createServer(async (request, response) => {
     writeJson(response, 500, { error: "internal_error" });
   }
 });
+server.requestTimeout = 10_000;
+server.headersTimeout = 10_000;
 
 server.listen(config.port, config.host, () => {
   console.log(`[dispatch-connect] listening on http://${config.host}:${config.port}`);
@@ -464,6 +505,7 @@ let shuttingDown = false;
 const shutdown = async () => {
   if (shuttingDown) return;
   shuttingDown = true;
+  clearInterval(routingCleanup);
   server.close();
   await database.close();
 };

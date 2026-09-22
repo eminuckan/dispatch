@@ -9,7 +9,15 @@ export const TeamToolkitHandlersLive = TeamToolkit.toLayer(
     const runtime = yield* TeamRuntime;
     return TeamToolkit.of({
       team_send_message: (input) =>
-        Effect.flatMap(McpInvocationContext, (scope) => runtime.sendMessage(scope.threadId, input)),
+        Effect.flatMap(McpInvocationContext, (scope) =>
+          runtime.sendMessage(scope.threadId, {
+            id: input.id,
+            toThreadId: input.toThreadId,
+            text: input.text,
+            replyRequested: input.replyRequested,
+            ...(input.inReplyTo === undefined ? {} : { inReplyTo: input.inReplyTo }),
+          }),
+        ),
       team_read_messages: (input) =>
         Effect.flatMap(McpInvocationContext, (scope) =>
           runtime.readMessages(scope.threadId, input.includeRead ?? false),

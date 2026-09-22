@@ -2,10 +2,10 @@ import { useState } from "react";
 import { DispatchConnectControlPlaneEnvironmentId } from "@dispatch/contracts";
 
 import {
-  getDispatchConnectAuthClient,
-  type DispatchConnectAuthClient,
-} from "../../connect/authClient";
-import { clearDispatchConnectAccountToken } from "../../connect/accountToken";
+  DispatchConnectAccountAccess,
+  DispatchConnectAuthActions,
+  type DispatchConnectAccountView,
+} from "../../connect/DispatchConnectAccountAccess";
 import {
   createDispatchConnectEnvironment,
   listDispatchConnectEnvironments,
@@ -31,7 +31,6 @@ import {
   DialogPopup,
   DialogTitle,
 } from "../ui/dialog";
-import { Input } from "../ui/input";
 import { QRCodeSvg } from "../ui/qr-code";
 import { Spinner } from "../ui/spinner";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
@@ -41,118 +40,35 @@ export function DispatchConnectAccountSettings({
 }: {
   readonly tailscaleEndpoint?: DispatchConnectEndpoint | null;
 }) {
-  const client = getDispatchConnectAuthClient();
-  if (!client) return null;
   return (
-    <ConfiguredDispatchConnectAccountSettings
-      client={client}
-      tailscaleEndpoint={tailscaleEndpoint ?? null}
-    />
+    <DispatchConnectAccountAccess>
+      {(account) =>
+        account.configured ? (
+          <ConfiguredDispatchConnectAccountSettings
+            account={account}
+            tailscaleEndpoint={tailscaleEndpoint ?? null}
+          />
+        ) : null
+      }
+    </DispatchConnectAccountAccess>
   );
 }
 
 function ConfiguredDispatchConnectAccountSettings({
-  client,
+  account,
   tailscaleEndpoint,
 }: {
-  readonly client: DispatchConnectAuthClient;
+  readonly account: DispatchConnectAccountView;
   readonly tailscaleEndpoint: DispatchConnectEndpoint | null;
 }) {
   const baseUrl = resolveDispatchConnectUrl();
-  const { data: session, isPending, error, refetch } = client.useSession();
-  const [dialogOpen, setDialogOpen] = useState(false);
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
   const [actionError, setActionError] = useState<string | null>(null);
   const [isActing, setIsActing] = useState(false);
-  const [authMode, setAuthMode] = useState<"sign-in" | "sign-up">("sign-in");
   const [pairingOpen, setPairingOpen] = useState(false);
   const [pairingChallenge, setPairingChallenge] = useState<Awaited<
     ReturnType<typeof createDispatchConnectPairingChallenge>
   > | null>(null);
   const [remoteAccessStatus, setRemoteAccessStatus] = useState<string | null>(null);
-
-  const signIn = async () => {
-    const normalizedEmail = email.trim();
-    if (!normalizedEmail || !password) {
-      setActionError("Enter your email and password.");
-      return;
-    }
-    setActionError(null);
-    setIsActing(true);
-    try {
-      const result = await client.signIn.email({ email: normalizedEmail, password });
-      if (result.error) {
-        setActionError(result.error.message ?? "Could not sign in to Dispatch Connect.");
-        return;
-      }
-      await refetch();
-      setPassword("");
-      setDialogOpen(false);
-    } catch (cause) {
-      setActionError(
-        cause instanceof Error ? cause.message : "Could not sign in to Dispatch Connect.",
-      );
-    } finally {
-      setIsActing(false);
-    }
-  };
-
-  const signUp = async () => {
-    const normalizedEmail = email.trim();
-    if (!normalizedEmail || !password) {
-      setActionError("Enter your email and password.");
-      return;
-    }
-    setActionError(null);
-    setIsActing(true);
-    try {
-      const result = await client.signUp.email({
-        email: normalizedEmail,
-        password,
-        name: normalizedEmail,
-      });
-      if (result.error) {
-        setActionError(result.error.message ?? "Could not create the Dispatch Connect account.");
-        return;
-      }
-      await refetch();
-      setPassword("");
-      setDialogOpen(false);
-    } catch (cause) {
-      setActionError(
-        cause instanceof Error ? cause.message : "Could not create the Dispatch Connect account.",
-      );
-    } finally {
-      setIsActing(false);
-    }
-  };
-
-  const openAuthDialog = (mode: "sign-in" | "sign-up") => {
-    setAuthMode(mode);
-    setActionError(null);
-    setDialogOpen(true);
-  };
-
-  const signOut = async () => {
-    setActionError(null);
-    setIsActing(true);
-    try {
-      const result = await client.signOut();
-      if (result.error) {
-        setActionError(result.error.message ?? "Could not sign out of Dispatch Connect.");
-        return;
-      }
-      if (baseUrl) clearDispatchConnectAccountToken(baseUrl);
-      await refetch();
-    } catch (cause) {
-      setActionError(
-        cause instanceof Error ? cause.message : "Could not sign out of Dispatch Connect.",
-      );
-    } finally {
-      setIsActing(false);
-    }
-  };
 
   const pairDevice = async () => {
     if (!baseUrl) return;
@@ -236,9 +152,8 @@ function ConfiguredDispatchConnectAccountSettings({
     }
   };
 
-  const sessionError = error?.message ?? null;
-  const accountDescription = session?.user.email
-    ? session.user.email
+  const accountDescription = account.user?.email
+    ? account.user.email
     : "Optional account for discovering and pairing your environments. Direct pairing works without an account.";
 
   return (
@@ -246,90 +161,32 @@ function ConfiguredDispatchConnectAccountSettings({
       <SettingsRow
         title="Account"
         description={accountDescription}
-        status={actionError ?? sessionError}
+        status={actionError ?? account.error}
         control={
-          isPending ? (
+          account.pending ? (
             <span className="inline-flex h-7 items-center gap-2 text-xs text-muted-foreground">
               <Spinner className="size-3.5" />
               Checking…
             </span>
-          ) : session ? (
-            <Button size="sm" variant="outline" disabled={isActing} onClick={() => void signOut()}>
-              {isActing ? "Signing out…" : "Sign out"}
+          ) : account.signedIn ? (
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={isActing || account.signOutPending}
+              onClick={() => void account.signOut()}
+            >
+              {account.signOutPending ? "Signing out…" : "Sign out"}
+            </Button>
+          ) : account.error ? (
+            <Button size="sm" variant="outline" disabled={isActing} onClick={account.refresh}>
+              Retry
             </Button>
           ) : (
-            <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-              <div className="flex items-center gap-2">
-                <Button size="sm" variant="outline" onClick={() => openAuthDialog("sign-in")}>
-                  Sign in
-                </Button>
-                <Button size="sm" variant="outline" onClick={() => openAuthDialog("sign-up")}>
-                  Create account
-                </Button>
-              </div>
-              <DialogPopup className="sm:max-w-md">
-                <DialogHeader>
-                  <DialogTitle>
-                    {authMode === "sign-in"
-                      ? "Sign in to Dispatch Connect"
-                      : "Create Dispatch Connect account"}
-                  </DialogTitle>
-                  <DialogDescription>
-                    Connect is optional. An account lets this client discover environments linked to
-                    you.
-                  </DialogDescription>
-                </DialogHeader>
-                <DialogPanel className="space-y-3">
-                  <label className="block space-y-1.5">
-                    <span className="text-xs font-medium text-foreground">Email</span>
-                    <Input
-                      type="email"
-                      autoComplete="email"
-                      value={email}
-                      disabled={isActing}
-                      onChange={(event) => setEmail(event.target.value)}
-                    />
-                  </label>
-                  <label className="block space-y-1.5">
-                    <span className="text-xs font-medium text-foreground">Password</span>
-                    <Input
-                      type="password"
-                      autoComplete="current-password"
-                      value={password}
-                      disabled={isActing}
-                      onChange={(event) => setPassword(event.target.value)}
-                      onKeyDown={(event) => {
-                        if (event.key === "Enter") {
-                          void (authMode === "sign-in" ? signIn() : signUp());
-                        }
-                      }}
-                    />
-                  </label>
-                  {actionError ? <p className="text-xs text-destructive">{actionError}</p> : null}
-                </DialogPanel>
-                <DialogFooter>
-                  <DialogClose render={<Button variant="outline" disabled={isActing} />}>
-                    Cancel
-                  </DialogClose>
-                  <Button
-                    disabled={isActing}
-                    onClick={() => void (authMode === "sign-in" ? signIn() : signUp())}
-                  >
-                    {isActing
-                      ? authMode === "sign-in"
-                        ? "Signing in…"
-                        : "Creating…"
-                      : authMode === "sign-in"
-                        ? "Sign in"
-                        : "Create account"}
-                  </Button>
-                </DialogFooter>
-              </DialogPopup>
-            </Dialog>
+            <DispatchConnectAuthActions disabled={isActing} onAuthenticated={account.refresh} />
           )
         }
       />
-      {session ? (
+      {account.signedIn ? (
         <SettingsRow
           title="Remote access"
           description={
