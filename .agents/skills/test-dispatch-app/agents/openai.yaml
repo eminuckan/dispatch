@@ -1,0 +1,4 @@
+interface:
+  display_name: "Test Dispatch App"
+  short_description: "Test web and desktop in Dispatch's Browser panel"
+  default_prompt: "Use $test-dispatch-app to verify the affected web or desktop flow through Dispatch's Browser panel."

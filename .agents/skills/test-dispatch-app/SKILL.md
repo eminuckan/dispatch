@@ -1,6 +1,6 @@
 ---
-name: test-t3-app
-description: Test Dispatch's web and desktop UI through its built-in Browser panel against isolated development state. Use for browser verification, browser pairing recovery, and test fixtures. Use test-t3-mobile for native mobile verification.
+name: test-dispatch-app
+description: Test Dispatch's web and desktop UI through its built-in Browser panel against isolated development state. Use for browser verification, browser pairing recovery, and test fixtures. Use test-dispatch-mobile for native mobile verification.
 ---
 
 # Test Dispatch web and desktop
@@ -10,7 +10,7 @@ panel runtime are available. If the tools are absent or `preview_status`
 reports the panel unavailable, use the existing browser automation tools
 already connected to the session instead. Do not install a new automation
 system just for verification. For native mobile testing, use
-[test-t3-mobile](../test-t3-mobile/SKILL.md).
+[test-dispatch-mobile](../test-dispatch-mobile/SKILL.md).
 
 ## Start the app
 
