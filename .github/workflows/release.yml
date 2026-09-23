@@ -225,7 +225,9 @@ jobs:
     needs: [preflight]
     if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' }}
     runs-on: ${{ github.event_name == 'workflow_dispatch' && inputs.channel == 'preview' && 'ubuntu-24.04' || 'blacksmith-8vcpu-ubuntu-2404' }}
-    timeout-minutes: 10
+    # GitHub-hosted Preview runners need longer for the full server and client
+    # suite than the Blacksmith runners used by the other channels.
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@v6
