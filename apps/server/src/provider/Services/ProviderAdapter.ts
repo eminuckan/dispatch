@@ -21,12 +21,30 @@ import type {
   ThreadId,
   ProviderTurnStartResult,
   TurnId,
+  MessageId,
 } from "@dispatch/contracts";
 import type * as Effect from "effect/Effect";
 import type * as Stream from "effect/Stream";
 
 export type ProviderSessionModelSwitchMode = "in-session" | "unsupported";
 export type ProviderManagedTeamNativeDelegation = "blocked" | "uncontrolled";
+export type ProviderLiveTurnSteering = "same-turn";
+
+export interface ProviderSteerTurnInput {
+  readonly threadId: ThreadId;
+  readonly expectedTurnId: TurnId;
+  readonly messageId: MessageId;
+  readonly input: string;
+}
+
+export type ProviderSteerTurnMessageIdResult =
+  | { readonly status: "ready"; readonly messageId: MessageId }
+  | { readonly status: "unsupported" };
+
+export type ProviderSteerTurnResult =
+  | { readonly status: "accepted"; readonly turnId: TurnId; readonly messageId: MessageId }
+  | { readonly status: "stale"; readonly activeTurnId: TurnId | null }
+  | { readonly status: "unsupported" };
 
 /**
  * How ProviderService runs manual context compaction for an adapter.
@@ -48,6 +66,8 @@ export interface ProviderAdapterCapabilities {
    * Declares whether changing the model on an existing session is supported.
    */
   readonly sessionModelSwitch: ProviderSessionModelSwitchMode;
+  /** Accepts one message into the currently running turn without creating a new turn. */
+  readonly liveTurnSteering?: ProviderLiveTurnSteering;
   /** Starts a resumed turn with no synthetic user prompt. Omitted means the
       adapter needs an explicit continuation instruction. */
   readonly promptlessTurnContinuation?: boolean;
@@ -92,6 +112,16 @@ export interface ProviderAdapterShape<TError> {
   readonly sendTurn: (
     input: ProviderSendTurnInput,
   ) => Effect.Effect<ProviderTurnStartResult, TError>;
+
+  /** Steer only the specified active turn; must never start, replace, or interrupt a turn. */
+  readonly steerTurn?: (
+    input: ProviderSteerTurnInput,
+  ) => Effect.Effect<ProviderSteerTurnResult, TError>;
+
+  /** Reserve a provider-native message ID before durable orchestration intent is written. */
+  readonly prepareSteerTurnMessageId?: (
+    threadId: ThreadId,
+  ) => Effect.Effect<ProviderSteerTurnMessageIdResult, TError>;
 
   /** Omitted when this adapter does not support manual context compaction. */
   readonly compaction?: ProviderCompaction<TError>;

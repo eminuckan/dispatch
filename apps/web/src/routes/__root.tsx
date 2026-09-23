@@ -370,7 +370,7 @@ function HostedStaticEnvironmentBootstrap() {
   return null;
 }
 
-function RootRouteErrorView({ error }: ErrorComponentProps) {
+function RootRouteErrorView({ error, reset }: ErrorComponentProps) {
   const router = useRouter();
   const message = errorMessage(error);
   // Router pathname rather than window.location: desktop uses hash history, where the window path is always "/".
@@ -386,7 +386,13 @@ function RootRouteErrorView({ error }: ErrorComponentProps) {
       />
 
       <div className="mt-5 flex flex-wrap gap-2">
-        <Button size="sm" onClick={() => void router.invalidate()}>
+        <Button
+          size="sm"
+          onClick={() => {
+            reset();
+            void router.invalidate();
+          }}
+        >
           Try again
         </Button>
         <Button size="sm" variant="outline" onClick={() => window.location.reload()}>

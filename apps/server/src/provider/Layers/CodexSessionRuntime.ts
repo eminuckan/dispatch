@@ -1,6 +1,7 @@
 import { isManagedTeamThread, managedCodexConfig } from "../../team/nativeDelegation.ts";
 import {
   ApprovalRequestId,
+  MessageId,
   DEFAULT_MODEL,
   EventId,
   ProviderDriverKind,
@@ -36,6 +37,7 @@ import * as CodexClient from "effect-codex-app-server/client";
 import * as CodexErrors from "effect-codex-app-server/errors";
 import * as CodexRpc from "effect-codex-app-server/rpc";
 import * as EffectCodexSchema from "effect-codex-app-server/schema";
+import type { ProviderSteerTurnResult } from "../Services/ProviderAdapter.ts";
 
 import { buildCodexInitializeParams } from "./CodexProvider.ts";
 import { codexSessionAppServerArgs } from "./codexLaunchArgs.ts";
@@ -45,6 +47,7 @@ import {
   type DispatchToolAvailability,
 } from "../CodexDeveloperInstructions.ts";
 const decodeV2TurnStartResponse = Schema.decodeUnknownEffect(EffectCodexSchema.V2TurnStartResponse);
+const decodeV2TurnSteerResponse = Schema.decodeUnknownEffect(EffectCodexSchema.V2TurnSteerResponse);
 
 const PROVIDER = ProviderDriverKind.make("codex");
 
@@ -212,6 +215,11 @@ export interface CodexSessionRuntimeShape {
   readonly sendTurn: (
     input: CodexSessionRuntimeSendTurnInput,
   ) => Effect.Effect<ProviderTurnStartResult, CodexSessionRuntimeError>;
+  readonly steerTurn: (input: {
+    readonly expectedTurnId: TurnId;
+    readonly messageId: MessageId;
+    readonly input: string;
+  }) => Effect.Effect<ProviderSteerTurnResult, CodexSessionRuntimeError>;
   readonly compactThread: Effect.Effect<void, CodexSessionRuntimeError>;
   readonly interruptTurn: (turnId?: TurnId) => Effect.Effect<void, CodexSessionRuntimeError>;
   readonly readThread: Effect.Effect<CodexThreadSnapshot, CodexSessionRuntimeError>;
@@ -2562,6 +2570,68 @@ export const makeCodexSessionRuntime = (
               ? { resumeCursor: { threadId: resumedProviderThreadId } }
               : {}),
           } satisfies ProviderTurnStartResult;
+        }),
+      steerTurn: (input) =>
+        Effect.gen(function* (): Effect.fn.Return<
+          ProviderSteerTurnResult,
+          CodexSessionRuntimeError
+        > {
+          const session = yield* Ref.get(sessionRef);
+          if (session.status !== "running" || session.activeTurnId !== input.expectedTurnId) {
+            return {
+              status: "stale",
+              activeTurnId: session.activeTurnId ?? null,
+            } as const;
+          }
+
+          const providerThreadId = yield* readProviderThreadId;
+          const requestResult = yield* client.raw
+            .request("turn/steer", {
+              clientUserMessageId: String(input.messageId),
+              expectedTurnId: String(input.expectedTurnId),
+              input: [{ type: "text", text: input.input }],
+              threadId: providerThreadId,
+            })
+            .pipe(Effect.result);
+          if (requestResult._tag === "Failure") {
+            const error = requestResult.failure;
+            if (error._tag === "CodexAppServerRequestError" && error.method === "turn/steer") {
+              if (error.code === -32601) {
+                return { status: "unsupported" };
+              }
+              if (error.code === -32602) {
+                const latest = yield* Ref.get(sessionRef);
+                if (latest.activeTurnId !== input.expectedTurnId || latest.status !== "running") {
+                  return { status: "stale", activeTurnId: latest.activeTurnId ?? null };
+                }
+                return { status: "unsupported" };
+              }
+            }
+            return yield* error;
+          }
+
+          const response = yield* decodeV2TurnSteerResponse(requestResult.success).pipe(
+            Effect.mapError((error) =>
+              CodexErrors.CodexAppServerProtocolParseError.fromSchemaError(
+                "decode-response-payload",
+                error,
+                { method: "turn/steer" },
+              ),
+            ),
+          );
+          const turnId = TurnId.make(response.turnId);
+          if (turnId !== input.expectedTurnId) {
+            return yield* CodexErrors.CodexAppServerRequestError.internalError(
+              "Codex accepted turn/steer for a different turn.",
+              { expectedTurnId: input.expectedTurnId, acceptedTurnId: turnId },
+              { method: "turn/steer" },
+            );
+          }
+          return {
+            status: "accepted",
+            turnId,
+            messageId: input.messageId,
+          } as const;
         }),
       interruptTurn: (turnId) =>
         Effect.gen(function* () {

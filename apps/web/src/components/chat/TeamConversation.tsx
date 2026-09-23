@@ -4,20 +4,34 @@ import { useRightPanelStore } from "../../rightPanelStore";
 import { Link } from "@tanstack/react-router";
 import type { TimelineEntry } from "../../session-logic";
 import {
+  teamActivityAgents,
+  teamConversationMessages,
   teamConversationEntries,
   teamAgentName,
+  teamMailboxEntries,
   teamPrimaryRoleLabel,
   teamProviderDecisionState,
   teamTurnLabel,
+  teamThreadRoleForRun,
 } from "./teamConversation.logic";
-import { useEffect, useState, type ReactNode } from "react";
+import type { TeamConversationMessage } from "./teamConversation.logic";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { ChevronRightIcon, RefreshCwIcon } from "lucide-react";
 import type { EnvironmentId, TeamThreadView, ThreadId } from "@dispatch/contracts";
+import { scopeThreadRef } from "@dispatch/client-runtime/environment";
 import { teamEnvironment } from "../../state/team";
 import { useEnvironmentQuery } from "../../state/query";
+import { useThread } from "../../state/entities";
 import { Button } from "../ui/button";
 import { ScrollArea } from "../ui/scroll-area";
 import ChatMarkdown from "../ChatMarkdown";
+
+function managedThreadRoleFromId(threadId: string): "lead" | "worker" | undefined {
+  if (!threadId.startsWith("team-")) return undefined;
+  if (threadId.endsWith("-lead")) return "lead";
+  if (threadId.includes("-worker-")) return "worker";
+  return undefined;
+}
 
 /** Exact persisted membership owns presentation; never classify arbitrary assistant JSON. */
 export function TeamConversation({
@@ -29,7 +43,10 @@ export function TeamConversation({
   environmentId: EnvironmentId;
   threadId: ThreadId;
   entries: TimelineEntry[];
-  children: (entries: TimelineEntry[]) => ReactNode;
+  children: (
+    entries: TimelineEntry[],
+    messages: ReadonlyArray<TeamConversationMessage>,
+  ) => ReactNode;
 }) {
   const query = useEnvironmentQuery(
     teamEnvironment.forThread({ environmentId, input: { threadId } }),
@@ -57,7 +74,13 @@ export function TeamConversation({
   }, [refresh]);
 
   if (!run) {
-    if (query.isSuccess || !threadId.startsWith("team-")) return children(entries);
+    if (query.isSuccess || !threadId.startsWith("team-")) {
+      const threadRole = managedThreadRoleFromId(threadId);
+      const visibleEntries = threadRole
+        ? teamConversationEntries(entries, [], [], undefined, threadRole)
+        : entries;
+      return children(visibleEntries, []);
+    }
     return (
       <div className="p-6 text-sm text-muted-foreground" role="status">
         {query.error ? "Team activity could not be loaded." : "Loading team activity…"}
@@ -77,12 +100,15 @@ export function TeamConversation({
     threadId === run.leadThreadId
       ? run.objective
       : (run.tasks.find((task) => task.owner.threadId === threadId)?.objective ?? run.objective);
+  const threadRole = teamThreadRoleForRun(run, threadId);
   const visibleEntries = teamConversationEntries(
     entries,
     run.attempts,
     run.turns,
     initialAttempt ? { id: initialAttempt.requestMessageId, objective } : undefined,
+    threadRole ?? undefined,
   );
+  const messages = teamConversationMessages(run, threadId);
   return (
     <>
       {run.notice ? (
@@ -93,7 +119,7 @@ export function TeamConversation({
           {run.notice}
         </p>
       ) : null}
-      {children(visibleEntries)}
+      {children(visibleEntries, messages)}
     </>
   );
 }
@@ -131,50 +157,24 @@ function TeamActivity({
     }
     refresh();
   }
-  const leadAttempt = run.attempts.findLast((attempt) => attempt.owner.role === "lead");
-  const leadStatus = ["completed", "failed", "cancelled", "paused"].includes(run.status)
-    ? run.status
-    : leadAttempt && !["succeeded", "failed", "cancelled"].includes(leadAttempt.status)
-      ? leadAttempt.status === "reserved"
-        ? "queued"
-        : "running"
-      : run.status === "planning"
-        ? "planning"
-        : "waiting";
-  const leadEffort = leadAttempt?.selection.options?.find((option) =>
-    ["reasoningEffort", "effort", "reasoning", "variant"].includes(option.id),
-  )?.value;
+  const leadThreadRef = useMemo(
+    () => (run.leadThreadId === null ? null : scopeThreadRef(environmentId, run.leadThreadId)),
+    [environmentId, run.leadThreadId],
+  );
+  const leadThread = useThread(leadThreadRef);
+  const leadRunningTurnId =
+    (leadThread?.session?.status === "running" ? leadThread.session.activeTurnId : null) ??
+    (leadThread?.latestTurn?.state === "running" ? leadThread.latestTurn.turnId : null);
+  const activeThreadActivity = useMemo(
+    () =>
+      run.leadThreadId === null
+        ? null
+        : { threadId: run.leadThreadId, runningTurnId: leadRunningTurnId },
+    [leadRunningTurnId, run.leadThreadId],
+  );
+  const agents = teamActivityAgents(run, activeThreadActivity);
+  const mailbox = teamMailboxEntries(run);
   const primaryRole = teamPrimaryRoleLabel(run);
-  const agents = [
-    {
-      id: run.leadThreadId,
-      role: primaryRole,
-      name: run.leadThreadId ? teamAgentName(run, run.leadThreadId) : primaryRole,
-      objective: run.objective,
-      model: run.lead.label,
-      effort: typeof leadEffort === "string" ? leadEffort : undefined,
-      status: leadStatus,
-      attempts: run.attempts.filter((attempt) => attempt.owner.role === "lead").length,
-    },
-    ...run.tasks.map((task, index) => {
-      const attempt = run.attempts.findLast(
-        (candidate) => candidate.role === "work" && candidate.taskId === task.id,
-      );
-      const effort = attempt?.selection.options?.find((option) =>
-        ["reasoningEffort", "effort", "reasoning", "variant"].includes(option.id),
-      )?.value;
-      return {
-        id: task.owner.threadId,
-        role: "Worker",
-        name: task.owner.threadId ? teamAgentName(run, task.owner.threadId) : `Worker ${index + 1}`,
-        objective: task.objective,
-        model: attempt?.selection.model ?? "Waiting for assignment",
-        effort: typeof effort === "string" ? effort : undefined,
-        status: task.status,
-        attempts: task.attemptIds.length,
-      };
-    }),
-  ];
   const working = new Set(
     run.attempts
       .filter((attempt) => ["dispatching", "running"].includes(attempt.status))
@@ -198,14 +198,23 @@ function TeamActivity({
       </div>
       <ScrollArea className="min-h-0 flex-1">
         <div className="space-y-1 px-2 pb-3">
-          {agents.map((agent, index) => {
+          {agents.map((agent) => {
             const successful = ["settled", "completed"].includes(agent.status);
-            const active = ["planning", "running", "review", "settling"].includes(agent.status);
+            const attention = ["failed", "needs attention"].includes(agent.status);
+            const active = [
+              "planning",
+              "starting",
+              "running",
+              "reviewing",
+              "supervising",
+              "verifying",
+              "settling",
+            ].includes(agent.status);
             const body = (
               <>
                 <span
                   aria-hidden
-                  className={`col-start-1 row-start-1 size-1.5 rounded-full ${successful ? "bg-success" : agent.status === "failed" ? "bg-destructive" : active ? "bg-info" : "bg-muted-foreground/50"}`}
+                  className={`col-start-1 row-start-1 size-1.5 rounded-full ${successful ? "bg-success" : attention ? "bg-destructive" : active ? "bg-info" : "bg-muted-foreground/50"}`}
                 />
                 <span className="col-start-2 row-start-1 flex min-w-0 items-baseline gap-2">
                   <span className="truncate text-sm font-medium">{agent.name}</span>
@@ -232,9 +241,8 @@ function TeamActivity({
             );
             const rowClass =
               "grid h-[3.875rem] grid-cols-[0.375rem_minmax(0,1fr)_auto] grid-rows-[1.25rem_1.125rem_1rem] items-center gap-x-2 rounded-md px-1.5 py-1";
-            return agent.id ? (
+            const row = agent.id ? (
               <Link
-                key={agent.id}
                 to="/$environmentId/$threadId"
                 params={{ environmentId, threadId: agent.id }}
                 onClick={() => {
@@ -249,8 +257,43 @@ function TeamActivity({
                 {body}
               </Link>
             ) : (
-              <div key={run.tasks[index - 1]?.id ?? "unassigned"} className={rowClass}>
-                {body}
+              <div className={rowClass}>{body}</div>
+            );
+            return (
+              <div key={agent.id ?? agent.name}>
+                {row}
+                {agent.context || agent.acceptance.length > 0 || agent.dependencies.length > 0 ? (
+                  <details className="ml-6 px-1.5 text-xs text-muted-foreground">
+                    <summary className="cursor-pointer py-1 hover:text-foreground">
+                      {agent.role === "Worker" ? "Task context and acceptance" : "Acceptance"}
+                    </summary>
+                    <div className="space-y-2 pb-2 pl-1 leading-relaxed">
+                      {agent.context ? (
+                        <p className="whitespace-pre-wrap break-words">{agent.context}</p>
+                      ) : null}
+                      {agent.dependencies.length > 0 ? (
+                        <div>
+                          <p className="font-medium text-foreground/80">Depends on</p>
+                          <ul className="list-disc pl-4">
+                            {agent.dependencies.map((dependency) => (
+                              <li key={dependency}>{dependency}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      ) : null}
+                      {agent.acceptance.length > 0 ? (
+                        <div>
+                          <p className="font-medium text-foreground/80">Completion checks</p>
+                          <ul className="list-disc pl-4">
+                            {agent.acceptance.map((criterion) => (
+                              <li key={criterion}>{criterion}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      ) : null}
+                    </div>
+                  </details>
+                ) : null}
               </div>
             );
           })}
@@ -270,6 +313,27 @@ function TeamActivity({
             currentThreadId={threadId}
             refresh={refresh}
           />
+          {mailbox.length > 0 ? (
+            <details className="px-1.5 pt-3 text-xs text-muted-foreground">
+              <summary className="cursor-pointer py-1 hover:text-foreground">
+                Team messages ({mailbox.length})
+              </summary>
+              <div className="mt-2 space-y-3">
+                {mailbox.slice(-20).map(({ message, from, to }) => (
+                  <article key={message.id} className="space-y-1 border-l border-border/60 pl-2">
+                    <p className="font-medium text-foreground/85">
+                      {from} → {to}
+                    </p>
+                    <p className="whitespace-pre-wrap break-words">{message.text}</p>
+                    <p className="text-[.65rem]">
+                      {message.readAt ? "Read" : "Unread"} · {message.createdAt}
+                    </p>
+                  </article>
+                ))}
+                {mailbox.length > 20 ? <p>Showing the latest 20 messages.</p> : null}
+              </div>
+            </details>
+          ) : null}
           <details className="px-1.5 pt-3 text-xs text-muted-foreground">
             <summary className="cursor-pointer py-1 hover:text-foreground">
               Activity history

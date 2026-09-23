@@ -5,7 +5,12 @@ import type {
   TeamThreadView,
   ThreadId,
 } from "@dispatch/contracts";
-import { isTeamProtocolRole, teamProtocolSummary } from "@dispatch/shared/teamProtocolPresentation";
+import {
+  isTeamProtocolRole,
+  looksLikeTeamProtocol,
+  TEAM_SUPERVISION_PROMPT_MARKER,
+  teamProtocolSummary,
+} from "@dispatch/shared/teamProtocolPresentation";
 
 export const SMART_ROUTING_STANDARD_FALLBACK_NOTICE =
   "Smart Routing was unavailable or uncertain. Flow continued with Standard using your saved model order.";
@@ -58,7 +63,19 @@ function turnStatus(status: TeamAttempt["status"]): TeamThreadTurnView["status"]
 
 function turnSummary(attempt: TeamAttempt): string | null {
   if (attempt.result === null) return null;
-  if (isTeamProtocolRole(attempt.role)) return teamProtocolSummary(attempt.role, attempt.result);
+  if (
+    attempt.role === "review" &&
+    attempt.taskId === null &&
+    attempt.prompt.startsWith(TEAM_SUPERVISION_PROMPT_MARKER)
+  ) {
+    return attempt.result;
+  }
+  const role = attempt.role === "work" ? "worker" : attempt.role;
+  if (isTeamProtocolRole(role)) {
+    const summary = teamProtocolSummary(role, attempt.result);
+    if (summary) return summary;
+    if (role !== "worker" || looksLikeTeamProtocol(attempt.result)) return null;
+  }
   return attempt.result;
 }
 

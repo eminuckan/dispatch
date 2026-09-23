@@ -5,15 +5,129 @@ import {
   ThreadId,
   TurnId,
   type TeamAttempt,
+  type TeamMessage,
+  type TeamTask,
   type TeamThreadView,
 } from "@dispatch/contracts";
 import type { TimelineEntry } from "../../session-logic";
 import {
+  teamActivityAgents,
+  teamAgentName,
+  teamConversationMessages,
   teamConversationEntries,
+  teamMailboxEntries,
+  teamMessageDeliveryLabel,
+  teamThreadComposerAccess,
   teamPrimaryRoleLabel,
   teamProviderDecisionState,
+  teamThreadRoleForRun,
   teamTurnLabel,
 } from "./teamConversation.logic";
+
+const statusInstanceId = ProviderInstanceId.make("codex");
+const statusLeadThreadId = ThreadId.make("lead");
+const statusWorkerThreadId = ThreadId.make("worker");
+const statusProfile = {
+  id: "profile",
+  label: "Luna",
+  selection: { instanceId: statusInstanceId, model: "luna" },
+  lead: true,
+  worker: true,
+};
+
+function statusRun(overrides: Partial<TeamThreadView> = {}): TeamThreadView {
+  return {
+    id: "run",
+    threadId: statusLeadThreadId,
+    revision: 1,
+    executionMode: "orchestrated",
+    objective: "Build the feature",
+    prompt: "Build the feature",
+    status: "running",
+    statusReason: null,
+    profiles: [statusProfile],
+    lead: statusProfile,
+    leadOwner: {
+      role: "lead",
+      profileId: statusProfile.id,
+      threadId: statusLeadThreadId,
+      taskId: null,
+    },
+    leadThreadId: statusLeadThreadId,
+    phase: "workers",
+    notice: null,
+    workspace: null,
+    tasks: [],
+    attempts: [],
+    turns: [],
+    messages: [],
+    settlements: [],
+    failovers: [],
+    ...overrides,
+  };
+}
+
+function statusTask(
+  id: string,
+  status: TeamTask["status"] = "running",
+  overrides: Partial<TeamTask> = {},
+): TeamTask {
+  return {
+    id,
+    objective: id === "prepare" ? "Prepare shared types" : "Update Flow statuses",
+    context: "Keep the existing panel structure.",
+    acceptance: ["Active attempts show their current role."],
+    dependencies: [],
+    owner: {
+      role: "worker",
+      profileId: statusProfile.id,
+      threadId: statusWorkerThreadId,
+      taskId: id,
+    },
+    branch: null,
+    worktreePath: null,
+    status,
+    attemptIds: [`work-${id}`],
+    settlementId: null,
+    result: null,
+    ...overrides,
+  };
+}
+
+function statusAttempt(
+  role: TeamAttempt["role"],
+  status: TeamAttempt["status"],
+  taskId: string | null,
+): TeamAttempt {
+  const id = `${role}-${taskId ?? "lead"}`;
+  return {
+    id,
+    commandId: `command-${id}`,
+    requestMessageId: MessageId.make(`team-${id}`),
+    taskId,
+    role,
+    sequence: 0,
+    owner: {
+      role: role === "work" ? "worker" : "lead",
+      profileId: statusProfile.id,
+      threadId: taskId ? statusWorkerThreadId : statusLeadThreadId,
+      taskId,
+    },
+    selection: statusProfile.selection,
+    prompt:
+      role === "review" && taskId === null
+        ? "DISPATCH_FLOW_SUPERVISION_V1\ninternal prompt"
+        : "internal prompt",
+    attachments: [],
+    status,
+    providerTurnId: null,
+    resultMessageId: null,
+    result: null,
+    failure: null,
+    createdAt: "now",
+    updatedAt: "now",
+  };
+}
 
 type MessageTimelineEntry = Extract<TimelineEntry, { kind: "message" }>;
 
@@ -150,7 +264,7 @@ it("renders managed review protocol JSON as a normal assistant message", () => {
       "review-result",
       "assistant",
       "review-turn",
-      '{"action":"accept","summary":"Altı ölçüt karşılandı.","checks":[{"criterionIndex":0}]}',
+      '{"action":"accept","summary":"Altı ölçüt karşılandı.","checks":[{"criterionIndex":0,"command":"vp","args":["test","run"]}]}',
     ),
   ];
   const visible = teamConversationEntries(
@@ -167,35 +281,258 @@ it("renders managed review protocol JSON as a normal assistant message", () => {
 it("renders managed planning JSON without exposing the protocol object", () => {
   const entries = [
     message(
-      "plan-result",
+      "plan-progress",
       "assistant",
       "plan-turn",
-      '{"acceptance":["Works"],"tasks":[{"objective":"Runtimeı güncelle"},{"objective":"UIyi doğrula"}],"rationale":"İki bağımsız iş yeterli."}',
+      "I found two independent work items; the acceptance checks are below.",
+    ),
+    message(
+      "plan-intermediate",
+      "assistant",
+      "plan-turn",
+      '{"acceptance":["Works"],"tasks":[{"id":"runtime","objective":"Runtimeı güncelle","acceptance":["Checks pass"],"dependencies":[],"context":"private worker notes"},{"id":"ui","objective":"UIyi doğrula","acceptance":["The UI is clear"],"dependencies":[],"context":"Only useful UI work"}],"rationale":"İki bağımsız iş yeterli."}',
     ),
   ];
-  const visible = teamConversationEntries(
-    entries,
-    [],
-    [
-      {
-        ...protocolTurn,
-        id: "plan",
-        role: "plan",
-        providerTurnId: TurnId.make("plan-turn"),
-        resultMessageId: MessageId.make("plan-result"),
-      },
-    ],
+  const planTurn = {
+    ...protocolTurn,
+    id: "plan",
+    role: "plan" as const,
+    providerTurnId: TurnId.make("plan-turn"),
+    resultMessageId: MessageId.make("plan-result"),
+  };
+  const visible = teamConversationEntries(entries, [], [planTurn]);
+  expect(visible).toHaveLength(2);
+  expect(visible[0]).toBe(entries[0]);
+  expect(visible[1]?.kind).toBe("message");
+  if (visible[1]?.kind !== "message") throw new Error("Expected message");
+  expect(visible[1].message.text).toContain("İki bağımsız iş yeterli.");
+  expect(visible[1].message.text).toContain("Planned work:\n- Runtimeı güncelle");
+  expect(visible[1].message.text).toContain("Completion checks:\n- Works");
+  expect(visible[1].message.text).not.toContain('"acceptance"');
+  expect(visible[1].message.text).not.toContain("private worker notes");
+});
+
+it("normalizes an exact managed worker result and preserves ordinary commentary", () => {
+  const result = message(
+    "worker-result",
+    "assistant",
+    "worker-turn",
+    JSON.stringify({
+      commit: "abc1234",
+      summary: "Updated the Flow activity statuses.",
+      changedFiles: ["TeamConversation.tsx"],
+      checks: [],
+      limitations: ["Browser verification remains pending."],
+    }),
   );
-  expect(visible).toHaveLength(1);
-  if (visible[0]?.kind !== "message") throw new Error("Expected message");
-  expect(visible[0].message.text).toContain("İki bağımsız iş yeterli.");
-  expect(visible[0].message.text).toContain("- Runtimeı güncelle");
-  expect(visible[0].message.text).not.toContain('"acceptance"');
+  const commentary = message(
+    "worker-commentary",
+    "assistant",
+    "worker-turn",
+    "The worker is checking the settlement now.",
+  );
+  const turn: TeamThreadView["turns"][number] = {
+    ...protocolTurn,
+    id: "work-attempt",
+    role: "worker",
+    taskId: "task",
+    threadId: ThreadId.make("worker"),
+    providerTurnId: TurnId.make("worker-turn"),
+    resultMessageId: MessageId.make("worker-result"),
+  };
+  const visible = teamConversationEntries(
+    [commentary, result],
+    [managedRequest("work-attempt", "team-work-attempt")],
+    [turn],
+  );
+  expect(visible[0]).toBe(commentary);
+  expect(visible[1]?.kind === "message" && visible[1].message.text).toContain(
+    "Updated the Flow activity statuses.",
+  );
+  expect(visible[1]?.kind === "message" && visible[1].message.text).not.toContain("abc1234");
+});
+
+it("derives lead and worker states from current attempts before stale run and task status", () => {
+  const task = statusTask("work");
+  const pausedWithLiveAttempts = statusRun({
+    status: "paused",
+    tasks: [task],
+    attempts: [statusAttempt("review", "running", null), statusAttempt("work", "running", task.id)],
+  });
+  expect(teamActivityAgents(pausedWithLiveAttempts).map(({ status }) => status)).toEqual([
+    "supervising",
+    "running",
+  ]);
+  expect(
+    teamActivityAgents(
+      statusRun({ status: "paused", attempts: [statusAttempt("review", "reserved", null)] }),
+    )[0]?.status,
+  ).toBe("supervising");
+
+  expect(
+    teamActivityAgents(
+      statusRun({
+        status: "running",
+        tasks: [task],
+        attempts: [
+          statusAttempt("review", "succeeded", null),
+          statusAttempt("work", "running", task.id),
+        ],
+      }),
+    )[0]?.status,
+  ).toBe("supervising");
+  expect(
+    teamActivityAgents(
+      statusRun({ status: "paused", attempts: [statusAttempt("review", "failed", null)] }),
+    )[0]?.status,
+  ).toBe("paused");
+  expect(
+    teamActivityAgents(
+      statusRun({
+        status: "paused",
+        attempts: [{ ...statusAttempt("review", "running", null), prompt: "old unmarked review" }],
+      }),
+    )[0]?.status,
+  ).toBe("reviewing");
+
+  const pausedAfterWorkerCompletion = statusRun({
+    status: "paused",
+    tasks: [task],
+    attempts: [statusAttempt("work", "succeeded", task.id)],
+  });
+  expect(teamActivityAgents(pausedAfterWorkerCompletion)[1]?.status).toBe("needs attention");
+
+  const failedWorker = statusRun({
+    status: "paused",
+    tasks: [statusTask("work", "failed")],
+    attempts: [statusAttempt("work", "failed", "work")],
+  });
+  expect(teamActivityAgents(failedWorker)[1]?.status).toBe("failed");
+
+  const activeRetry = statusRun({
+    status: "paused",
+    tasks: [statusTask("work", "failed")],
+    attempts: [statusAttempt("work", "running", "work")],
+  });
+  expect(teamActivityAgents(activeRetry)[1]?.status).toBe("running");
+
+  expect(teamActivityAgents(statusRun())[0]?.status).toBe("supervising");
+  expect(teamActivityAgents(statusRun({ status: "paused" }))[0]?.status).toBe("paused");
+});
+
+it("prefers a selected native lead turn over paused run status until that turn settles", () => {
+  const paused = statusRun({ status: "paused" });
+  expect(
+    teamActivityAgents(paused, {
+      threadId: statusLeadThreadId,
+      runningTurnId: "manual-provider-turn",
+    })[0]?.status,
+  ).toBe("running");
+  expect(
+    teamActivityAgents(paused, {
+      threadId: statusWorkerThreadId,
+      runningTurnId: "worker-provider-turn",
+    })[0]?.status,
+  ).toBe("paused");
+  expect(
+    teamActivityAgents(paused, { threadId: statusLeadThreadId, runningTurnId: null })[0]?.status,
+  ).toBe("paused");
+});
+
+it("exposes task contract details and names mailbox participants", () => {
+  const prep = statusTask("prepare", "settled", {
+    owner: { ...statusTask("prepare").owner, threadId: null },
+    acceptance: ["Shared types compile."],
+  });
+  const work = statusTask("work", "pending", {
+    dependencies: ["prepare"],
+    context: "The shared type has landed.",
+    acceptance: ["The worker reports only useful progress."],
+  });
+  const message: TeamMessage = {
+    id: "mail-1",
+    from: {
+      role: "lead",
+      profileId: statusProfile.id,
+      threadId: statusLeadThreadId,
+      taskId: null,
+    },
+    to: work.owner,
+    text: "Please include the result summary.",
+    replyRequested: true,
+    createdAt: "2026-09-23T00:00:00.000Z",
+    readAt: null,
+  };
+  const run = statusRun({ tasks: [prep, work], messages: [message] });
+  const agents = teamActivityAgents(run);
+  expect(agents[2]).toMatchObject({
+    context: "The shared type has landed.",
+    acceptance: ["The worker reports only useful progress."],
+    dependencies: ["Prepare shared types"],
+    status: "queued",
+  });
+  expect(teamMailboxEntries(run)).toEqual([
+    {
+      message,
+      from: teamAgentName(run, statusLeadThreadId),
+      to: teamAgentName(run, statusWorkerThreadId),
+    },
+  ]);
+  expect(teamConversationMessages(run, statusLeadThreadId)).toEqual([
+    {
+      id: message.id,
+      createdAt: message.createdAt,
+      text: message.text,
+      from: teamAgentName(run, statusLeadThreadId),
+      to: teamAgentName(run, statusWorkerThreadId),
+      deliveryStatus: null,
+      providerMessageId: null,
+    },
+  ]);
+  expect(teamConversationMessages(run, statusWorkerThreadId)).toHaveLength(1);
+  expect(teamConversationMessages(run, "unrelated-thread")).toEqual([]);
+  expect(teamThreadRoleForRun(run, statusLeadThreadId)).toBe("lead");
+  expect(teamThreadRoleForRun(run, statusWorkerThreadId)).toBe("worker");
+  expect(teamThreadRoleForRun(run, "unrelated-thread")).toBeNull();
+});
+
+it("fails closed while managed-thread ownership loads, then trusts exact run membership", () => {
+  const leadThreadId = ThreadId.make("team-lead");
+  const workerThreadId = ThreadId.make("team-worker");
+  const run = statusRun({
+    leadThreadId,
+    tasks: [
+      statusTask("worker-task", "running", {
+        owner: {
+          role: "worker",
+          profileId: statusProfile.id,
+          threadId: workerThreadId,
+          taskId: "worker-task",
+        },
+      }),
+    ],
+  });
+
+  expect(teamThreadComposerAccess("team-worker", null, false)).toBe("checking");
+  expect(teamThreadComposerAccess(workerThreadId, run, true)).toBe("worker");
+  expect(teamThreadComposerAccess(leadThreadId, run, true)).toBe("lead");
+  expect(teamThreadComposerAccess("team-unrelated", run, true)).toBeNull();
+  expect(teamThreadComposerAccess("ordinary-thread", null, false)).toBeNull();
+});
+
+it("maps persisted delivery receipts without treating read state as delivery", () => {
+  expect(teamMessageDeliveryLabel(null)).toBeNull();
+  expect(teamMessageDeliveryLabel("pending")).toBe("Waiting for dispatch");
+  expect(teamMessageDeliveryLabel("queued")).toBe("Waiting for a safe handoff");
+  expect(teamMessageDeliveryLabel("steered")).toBe("Added to the active turn");
+  expect(teamMessageDeliveryLabel("sent")).toBe("Accepted by agent");
+  expect(teamMessageDeliveryLabel("failed")).toBe("Delivery failed");
+  expect(teamMessageDeliveryLabel("closed")).toBe("Flow ended before delivery");
 });
 
 it("rewrites only the exact managed final response and preserves commentary or manual JSON", () => {
   const json =
-    '{"action":"correct","summary":"Add the missing timeout check.","checks":[{"command":"PRIVATE_COMMAND"}]}';
+    '{"action":"correct","summary":"Add the missing timeout check.","checks":[{"criterionIndex":0,"command":"PRIVATE_COMMAND","args":[]}]}';
   const entries = [
     message("commentary", "assistant", "review-turn", json),
     message("review-result", "assistant", "review-turn", json),
@@ -208,6 +545,30 @@ it("rewrites only the exact managed final response and preserves commentary or m
     message: { ...entries[1]!.message, text: "Add the missing timeout check." },
   });
   expect(visible[2]).toBe(entries[2]);
+});
+
+it("keeps worker progress prose while formatting its trailing structured result", () => {
+  const prose =
+    "Sent the lead two reconciliation replies after checking both requested changes. Worktree is clean, nothing uncommitted.";
+  const result = {
+    summary: "The worker completed the reconciliation and confirmed a clean worktree.",
+    commit: "edc359be86d21d45eb48f9d3eb57600bd686a72b",
+    changedFiles: ["src/reconcile.ts"],
+    checks: [{ command: "vp", args: ["test", "run"], outcome: "passed" }],
+    limitations: ["The integrated browser pass is still pending."],
+  };
+  const raw = `${prose}\n\n\`\`\`json\n${JSON.stringify(result, null, 2)}\n\`\`\``;
+  const workerProgress = message("worker-progress-result", "assistant", null, raw);
+  const visible = teamConversationEntries([workerProgress], [], [], undefined, "worker");
+
+  expect(visible[0]).toEqual({
+    ...workerProgress,
+    message: {
+      ...workerProgress.message,
+      text: `${prose}\n\n${result.summary}\n\nLimitations:\n- The integrated browser pass is still pending.`,
+    },
+  });
+  expect(JSON.stringify(visible)).not.toContain('"changedFiles"');
 });
 
 it("suppresses only protocol-shaped streaming output for a known managed turn", () => {

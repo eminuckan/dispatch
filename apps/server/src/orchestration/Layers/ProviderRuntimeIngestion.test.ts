@@ -125,6 +125,8 @@ function createProviderServiceHarness() {
   const service: ProviderServiceShape = {
     startSession: () => unsupported(),
     sendTurn: () => unsupported(),
+    steerTurn: () => Effect.succeed({ status: "unsupported" }),
+    prepareSteerTurnMessageId: () => Effect.succeed({ status: "unsupported" }),
     compactThread: () => unsupported(),
     interruptTurn: () => unsupported(),
     respondToRequest: () => unsupported(),

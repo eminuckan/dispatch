@@ -31,6 +31,7 @@ import {
 } from "../../session-logic";
 import { type ChatMessage, type ProposedPlan, type TurnDiffSummary } from "../../types";
 import type { QueuedComposerMessage } from "../../queuedMessageStore";
+import type { TeamConversationMessage } from "./teamConversation.logic";
 import {
   type MessageId,
   type OrchestrationLatestTurn,
@@ -327,6 +328,12 @@ function isActivityEntry(entry: TimelineEntry): entry is ActivityEntry {
 }
 
 export type MessagesTimelineRow =
+  | {
+      kind: "team-message";
+      id: string;
+      createdAt: string;
+      message: TeamConversationMessage;
+    }
   | {
       kind: "activity-group";
       id: string;
@@ -938,8 +945,46 @@ function buildRevertTurnCountByUserMessageId(input: {
   return byUserMessageId;
 }
 
+type TeamMessageTimelineEntry = {
+  readonly id: string;
+  readonly kind: "team-message";
+  readonly createdAt: string;
+  readonly message: TeamConversationMessage;
+};
+
+function mergeTeamMessages(
+  entries: ReadonlyArray<TimelineEntry>,
+  messages: ReadonlyArray<TeamConversationMessage>,
+): Array<TimelineEntry | TeamMessageTimelineEntry> {
+  const seenMessageIds = new Set<string>();
+  const providerMessageIds = new Set(
+    entries.flatMap((entry) => (entry.kind === "message" ? [entry.message.id] : [])),
+  );
+  const teamEntries = messages.flatMap((message) => {
+    if (
+      seenMessageIds.has(message.id) ||
+      (message.providerMessageId !== null && providerMessageIds.has(message.providerMessageId))
+    ) {
+      return [];
+    }
+    seenMessageIds.add(message.id);
+    return [
+      {
+        id: `team-message:${message.id}`,
+        kind: "team-message" as const,
+        createdAt: message.createdAt,
+        message,
+      },
+    ];
+  });
+  return [...entries, ...teamEntries].sort((left, right) =>
+    left.createdAt.localeCompare(right.createdAt),
+  );
+}
+
 export function deriveMessagesTimelineRows(input: {
   timelineEntries: ReadonlyArray<TimelineEntry>;
+  teamMessages?: ReadonlyArray<TeamConversationMessage>;
   latestTurn?: TimelineLatestTurn | null;
   runningTurnId?: TurnId | null;
   expandedTurnIds?: ReadonlySet<TurnId>;
@@ -955,6 +1000,8 @@ export function deriveMessagesTimelineRows(input: {
   /** Messages sent during the running turn, rendered after the live rows. */
   queuedMessages?: ReadonlyArray<QueuedComposerMessage>;
 }): MessagesTimelineRow[] {
+  const timelineEntries = mergeTeamMessages(input.timelineEntries, input.teamMessages ?? []);
+  const sourceIndexById = new Map(input.timelineEntries.map((entry, index) => [entry.id, index]));
   const turnDiffSummaryByAssistantMessageId = new Map<MessageId, TurnDiffSummary>();
   for (const summary of input.turnDiffSummaries) {
     if (summary.assistantMessageId) {
@@ -1105,13 +1152,14 @@ export function deriveMessagesTimelineRows(input: {
   };
 
   let scannedActivityThrough = -1;
-  for (let index = 0; index < input.timelineEntries.length; index += 1) {
-    const timelineEntry = input.timelineEntries[index];
+  for (let index = 0; index < timelineEntries.length; index += 1) {
+    const timelineEntry = timelineEntries[index];
     if (!timelineEntry) {
       continue;
     }
+    const sourceIndex = sourceIndexById.get(timelineEntry.id) ?? -1;
 
-    if (input.isWorking && index === activeTurnHeaderIndex) {
+    if (input.isWorking && sourceIndex === activeTurnHeaderIndex) {
       appendWorkingRow();
     }
 
@@ -1135,13 +1183,29 @@ export function deriveMessagesTimelineRows(input: {
       continue;
     }
 
+    if (timelineEntry.kind === "team-message") {
+      nextRows.push({
+        kind: "team-message",
+        id: timelineEntry.id,
+        createdAt: timelineEntry.createdAt,
+        message: timelineEntry.message,
+      });
+      continue;
+    }
+
     const activityTurnId = timelineEntryTurnId(timelineEntry);
-    if (index > scannedActivityThrough && activityTurnId && isActivityEntry(timelineEntry)) {
+    if (
+      index > scannedActivityThrough &&
+      sourceIndex >= 0 &&
+      activityTurnId &&
+      isActivityEntry(timelineEntry)
+    ) {
       const entries = [timelineEntry];
       let cursor = index + 1;
-      while (cursor < input.timelineEntries.length) {
-        const next = input.timelineEntries[cursor]!;
+      while (cursor < timelineEntries.length) {
+        const next = timelineEntries[cursor]!;
         if (
+          next.kind === "team-message" ||
           !isActivityEntry(next) ||
           timelineEntryTurnId(next) !== activityTurnId ||
           collapsedEntryIds.has(next.id) ||
@@ -1156,7 +1220,7 @@ export function deriveMessagesTimelineRows(input: {
         const active =
           input.isWorking &&
           activityTurnId === unsettledTurnId &&
-          cursor === input.timelineEntries.length &&
+          cursor === timelineEntries.length &&
           !latestToolFailed &&
           (latestVisibleToolEntry === undefined || latestToolKeepsActivityLive);
         const groupId =
@@ -1203,7 +1267,7 @@ export function deriveMessagesTimelineRows(input: {
         timelineEntry.entry.tone === "error"
       ) {
         const spawn = timelineEntry.entry.agentSpawn;
-        if (spawn && entryBelongsToActiveTurn(timelineEntry, index)) {
+        if (spawn && entryBelongsToActiveTurn(timelineEntry, sourceIndex)) {
           hasActivityRow ||=
             (spawn.workflowId !== null && input.liveAgentTaskIds?.has(spawn.workflowId)) ||
             spawn.agentTaskIds.some((taskId) => input.liveAgentTaskIds?.has(taskId));
@@ -1219,10 +1283,11 @@ export function deriveMessagesTimelineRows(input: {
       }
       const groupedEntries = [timelineEntry.entry];
       let cursor = index + 1;
-      while (cursor < input.timelineEntries.length) {
-        const nextEntry = input.timelineEntries[cursor];
+      while (cursor < timelineEntries.length) {
+        const nextEntry = timelineEntries[cursor];
         if (
           !nextEntry ||
+          nextEntry.kind === "team-message" ||
           nextEntry.kind !== "work" ||
           nextEntry.entry.agentSpawn !== undefined ||
           nextEntry.entry.questionAnswer !== undefined ||
@@ -1578,6 +1643,17 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
   if (a.kind !== b.kind || a.id !== b.id) return false;
 
   switch (a.kind) {
+    case "team-message": {
+      const message = b as typeof a;
+      return (
+        a.createdAt === message.createdAt &&
+        a.message.id === message.message.id &&
+        a.message.text === message.message.text &&
+        a.message.from === message.message.from &&
+        a.message.to === message.message.to &&
+        a.message.deliveryStatus === message.message.deliveryStatus
+      );
+    }
     case "activity-group": {
       const group = b as typeof a;
       return (

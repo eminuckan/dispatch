@@ -61,6 +61,7 @@ import {
   type ProviderAdapterError,
 } from "../Errors.ts";
 import type { ProviderAdapterShape } from "../Services/ProviderAdapter.ts";
+import type { ProviderSteerTurnResult } from "../Services/ProviderAdapter.ts";
 import * as ProviderAdapterRegistry from "../Services/ProviderAdapterRegistry.ts";
 import * as ProviderService from "../Services/ProviderService.ts";
 import * as ProviderSessionDirectory from "../Services/ProviderSessionDirectory.ts";
@@ -186,6 +187,23 @@ function makeFakeCodexAdapter(
     },
   );
 
+  const steerTurn = vi.fn(
+    (input: {
+      readonly threadId: ThreadId;
+      readonly expectedTurnId: TurnId;
+      readonly messageId: MessageId;
+      readonly input: string;
+    }): Effect.Effect<ProviderSteerTurnResult, ProviderAdapterError> =>
+      Effect.succeed({
+        status: "accepted" as const,
+        turnId: input.expectedTurnId,
+        messageId: input.messageId,
+      }),
+  );
+  const prepareSteerTurnMessageId = vi.fn((_threadId: ThreadId) =>
+    Effect.succeed({ status: "ready" as const, messageId: MessageId.make("codex-native-id") }),
+  );
+
   const interruptTurn = vi.fn(
     (_threadId: ThreadId, _turnId?: TurnId): Effect.Effect<void, ProviderAdapterError> =>
       Effect.void,
@@ -274,11 +292,14 @@ function makeFakeCodexAdapter(
     provider,
     capabilities: {
       sessionModelSwitch: "in-session",
+      ...(provider === CODEX_DRIVER ? { liveTurnSteering: "same-turn" as const } : {}),
       ...(supportsConversationRollback !== undefined ? { supportsConversationRollback } : {}),
       ...(provider === CODEX_DRIVER ? { promptlessTurnContinuation: true } : {}),
     },
     startSession,
     sendTurn,
+    steerTurn,
+    ...(provider === CODEX_DRIVER ? { prepareSteerTurnMessageId } : {}),
     ...(provider === CODEX_DRIVER
       ? { compaction: { type: "native", start: compactThread } }
       : provider === CURSOR_DRIVER
@@ -322,6 +343,8 @@ function makeFakeCodexAdapter(
     updateSession,
     startSession,
     sendTurn,
+    steerTurn,
+    prepareSteerTurnMessageId,
     compactThread,
     interruptTurn,
     respondToRequest,
@@ -474,6 +497,108 @@ function makeProviderServiceLayer(
     layer,
   };
 }
+
+const steeringRouting = makeProviderServiceLayer();
+steeringRouting.layer("ProviderService.steerTurn", (it) => {
+  it.effect("prepares native message IDs only for active same-turn-capable sessions", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const codexThread = asThreadId("thread-prepare-steer-id");
+      yield* provider.startSession(codexThread, {
+        provider: CODEX_DRIVER,
+        providerInstanceId: codexInstanceId,
+        threadId: codexThread,
+        cwd: fixtureCwd("prepare-steer-id"),
+        runtimeMode: "full-access",
+      });
+      const prepared = yield* provider.prepareSteerTurnMessageId(codexThread);
+      assert.deepEqual(prepared, {
+        status: "ready",
+        messageId: MessageId.make("codex-native-id"),
+      });
+      assert.equal(steeringRouting.codex.prepareSteerTurnMessageId.mock.calls.length, 1);
+
+      const cursorThread = asThreadId("thread-prepare-steer-unsupported");
+      yield* provider.startSession(cursorThread, {
+        provider: ProviderDriverKind.make("cursor"),
+        providerInstanceId: ProviderInstanceId.make("cursor"),
+        threadId: cursorThread,
+        cwd: fixtureCwd("prepare-steer-unsupported"),
+        runtimeMode: "full-access",
+      });
+      const unsupported = yield* provider.prepareSteerTurnMessageId(cursorThread);
+      assert.deepEqual(unsupported, { status: "unsupported" });
+      assert.equal(steeringRouting.cursor.prepareSteerTurnMessageId.mock.calls.length, 0);
+    }),
+  );
+
+  it.effect("routes only a same-turn steer and preserves its message receipt id", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const threadId = asThreadId("thread-steer-service");
+      const expectedTurnId = asTurnId("turn-steer-service");
+      const messageId = MessageId.make("team-message-steer-service");
+      yield* provider.startSession(threadId, {
+        provider: CODEX_DRIVER,
+        providerInstanceId: codexInstanceId,
+        threadId,
+        cwd: fixtureCwd("steer-service"),
+        runtimeMode: "full-access",
+      });
+
+      const accepted = yield* provider.steerTurn({
+        threadId,
+        expectedTurnId,
+        messageId,
+        input: "Please check the failing assertion before changing the API.",
+      });
+
+      assert.deepEqual(accepted, { status: "accepted", turnId: expectedTurnId, messageId });
+      assert.equal(steeringRouting.codex.steerTurn.mock.calls.length, 1);
+      assert.equal(steeringRouting.codex.sendTurn.mock.calls.length, 0);
+
+      steeringRouting.codex.steerTurn.mockReturnValueOnce(
+        Effect.succeed({ status: "stale", activeTurnId: null }),
+      );
+      const stale = yield* provider.steerTurn({
+        threadId,
+        expectedTurnId,
+        messageId: MessageId.make("team-message-steer-stale"),
+        input: "This should not start a new turn.",
+      });
+      assert.deepEqual(stale, { status: "stale", activeTurnId: null });
+      assert.equal(steeringRouting.codex.sendTurn.mock.calls.length, 0);
+    }),
+  );
+
+  it.effect(
+    "returns unsupported without calling sendTurn for providers without same-turn steering",
+    () =>
+      Effect.gen(function* () {
+        const provider = yield* ProviderService.ProviderService;
+        const threadId = asThreadId("thread-steer-unsupported");
+        const messageId = MessageId.make("team-message-steer-unsupported");
+        yield* provider.startSession(threadId, {
+          provider: ProviderDriverKind.make("cursor"),
+          providerInstanceId: ProviderInstanceId.make("cursor"),
+          threadId,
+          cwd: fixtureCwd("steer-unsupported"),
+          runtimeMode: "full-access",
+        });
+
+        const result = yield* provider.steerTurn({
+          threadId,
+          expectedTurnId: asTurnId("turn-steer-unsupported"),
+          messageId,
+          input: "Keep this queued until a safe continuation is available.",
+        });
+
+        assert.deepEqual(result, { status: "unsupported" });
+        assert.equal(steeringRouting.cursor.steerTurn.mock.calls.length, 0);
+        assert.equal(steeringRouting.cursor.sendTurn.mock.calls.length, 0);
+      }),
+  );
+});
 
 for (const [enabled, completed] of [
   [false, false],

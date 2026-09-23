@@ -49,6 +49,7 @@ import {
 const EMPTY_AGENT_PANEL_MODEL = emptyAgentPanelModel();
 const NOOP_OPEN_AGENTS = () => {};
 const EMPTY_QUEUED_MESSAGES: ReadonlyArray<QueuedComposerMessage> = [];
+const EMPTY_TEAM_MESSAGES: ReadonlyArray<TeamConversationMessage> = [];
 const NOOP_QUEUED_MESSAGE_ACTION = (_id: string) => {};
 const NOOP_USE_ARTIFACT_TEMPLATE = () => {};
 const NOOP_OPEN_ATTACHMENT = (_attachment: ChatFileAttachment) => {};
@@ -209,6 +210,7 @@ import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Spinner } from "../ui/spinner";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { WorktreeSetupCard } from "./WorktreeSetupCard";
+import { teamMessageDeliveryLabel, type TeamConversationMessage } from "./teamConversation.logic";
 import {
   ContextChipPopover as UserMessageContextPopover,
   ContextChipShell,
@@ -418,6 +420,7 @@ interface MessagesTimelineProps {
   onOpenWorktreeSetupTerminal?: (terminalId: string) => void;
   listRef: React.RefObject<LegendListRef | null>;
   timelineEntries: ReturnType<typeof deriveTimelineEntries>;
+  teamMessages?: ReadonlyArray<TeamConversationMessage>;
   latestTurn: TimelineLatestTurn | null;
   runningTurnId: TurnId | null;
   turnDiffSummaries: ReadonlyArray<TurnDiffSummary>;
@@ -492,6 +495,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   onOpenAgents = NOOP_OPEN_AGENTS,
   listRef,
   timelineEntries,
+  teamMessages = EMPTY_TEAM_MESSAGES,
   latestTurn,
   runningTurnId,
   turnDiffSummaries,
@@ -776,6 +780,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     const projection = deriveMessagesTimelineRowsWithState(
       {
         timelineEntries,
+        teamMessages,
         latestTurn,
         runningTurnId,
         expandedTurnIds: paintedExpandedTurnIds,
@@ -799,6 +804,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     listIdentityKey,
     workspaceRoot,
     timelineEntries,
+    teamMessages,
     latestTurn,
     runningTurnId,
     paintedExpandedTurnIds,
@@ -1684,6 +1690,7 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
                   row.kind === "work-live" ||
                   row.kind === "work-toggle" ||
                   row.kind === "activity-group" ||
+                  row.kind === "team-message" ||
                   row.kind === "thinking" ||
                   row.kind === "worktree-setup"
                 ? "pb-2"
@@ -1721,6 +1728,7 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
         <ReasoningTimelineRow row={row} />
       ) : null}
       {row.kind === "assistant-meta" ? <AssistantMetaTimelineRow row={row} /> : null}
+      {row.kind === "team-message" ? <TeamMessageTimelineRow row={row} /> : null}
       {row.kind === "proposed-plan" ? <ProposedPlanTimelineRow row={row} /> : null}
       {row.kind === "working" ? <WorkingTimelineRow row={row} /> : null}
       {row.kind === "thinking" ? <ThinkingTimelineRow /> : null}
@@ -2329,6 +2337,36 @@ function TimelineRowTimestamp({
       </TooltipTrigger>
       <TooltipPopup>{formatChatTimestampTooltip(createdAt, timestampFormat)}</TooltipPopup>
     </Tooltip>
+  );
+}
+
+function TeamMessageTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "team-message" }> }) {
+  const ctx = use(TimelineRowCtx);
+  const deliveryLabel = teamMessageDeliveryLabel(row.message.deliveryStatus);
+  return (
+    <article
+      className="group/timeline-row relative border-s-2 border-border/70 py-1 ps-3 pe-1"
+      data-team-message-id={row.message.id}
+      role="note"
+    >
+      <div className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
+        <span className="shrink-0 font-medium">Flow message</span>
+        <span className="min-w-0 truncate">
+          {row.message.from} <span aria-hidden>→</span> {row.message.to}
+        </span>
+        <span className="ms-auto shrink-0">
+          <TimelineRowTimestamp
+            createdAt={row.createdAt}
+            timestampFormat={ctx.timestampFormat}
+            className="static pointer-events-auto opacity-100"
+          />
+        </span>
+      </div>
+      <p className="mt-1 whitespace-pre-wrap break-words text-sm text-foreground/90">
+        {row.message.text}
+      </p>
+      {deliveryLabel ? <p className="mt-1 text-xs text-muted-foreground">{deliveryLabel}</p> : null}
+    </article>
   );
 }
 

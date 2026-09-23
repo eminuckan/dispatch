@@ -15,6 +15,7 @@ import {
   ProviderDriverKind,
   type ProviderEvent,
   ProviderInstanceId,
+  MessageId,
   type ProviderRuntimeEvent,
   type ProviderRequestKind,
   type ThreadTokenUsageSnapshot,
@@ -68,7 +69,6 @@ import {
   makeCodexSessionRuntime,
   type CodexSessionRuntimeError,
   type CodexSessionRuntimeOptions,
-  type CodexSessionRuntimeSendTurnInput,
   type CodexSessionRuntimeShape,
 } from "./CodexSessionRuntime.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
@@ -2572,6 +2572,36 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
       .pipe(Effect.mapError((cause) => mapCodexRuntimeError(input.threadId, "turn/start", cause)));
   });
 
+  const steerTurn: CodexAdapterShape["steerTurn"] = Effect.fn("steerTurn")(function* (input) {
+    const session = yield* requireSession(input.threadId);
+    return yield* session.runtime
+      .steerTurn({
+        expectedTurnId: input.expectedTurnId,
+        messageId: input.messageId,
+        input: input.input,
+      })
+      .pipe(Effect.mapError((cause) => mapCodexRuntimeError(input.threadId, "turn/steer", cause)));
+  });
+
+  const prepareSteerTurnMessageId: NonNullable<CodexAdapterShape["prepareSteerTurnMessageId"]> =
+    Effect.fn("prepareSteerTurnMessageId")(function* () {
+      const uuid = yield* crypto.randomUUIDv4.pipe(
+        Effect.mapError(
+          (cause) =>
+            new ProviderAdapterRequestError({
+              provider: PROVIDER,
+              method: "crypto/randomUUIDv4",
+              detail: "Failed to generate Codex steer message identifier.",
+              cause,
+            }),
+        ),
+      );
+      return {
+        status: "ready",
+        messageId: MessageId.make(uuid),
+      } as const;
+    });
+
   const requireSession = Effect.fn("requireSession")(function* (threadId: ThreadId) {
     const session = sessions.get(threadId);
     if (!session || session.stopped) {
@@ -2744,11 +2774,14 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
     provider: PROVIDER,
     capabilities: {
       sessionModelSwitch: "in-session",
+      liveTurnSteering: "same-turn",
       promptlessTurnContinuation: true,
       managedTeamNativeDelegation: "blocked",
     },
     startSession,
     sendTurn,
+    steerTurn,
+    prepareSteerTurnMessageId,
     compaction: { type: "native", start: compactThread },
     interruptTurn,
     readThread,

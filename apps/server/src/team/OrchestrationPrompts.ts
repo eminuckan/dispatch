@@ -1,8 +1,11 @@
-import type { TeamAttempt, TeamRun, TeamTask } from "@dispatch/contracts";
+import type { TeamAttempt, TeamMessage, TeamRun, TeamTask } from "@dispatch/contracts";
+import { TEAM_SUPERVISION_PROMPT_MARKER } from "@dispatch/shared/teamProtocolPresentation";
 import { sharedContextPack } from "./OrchestrationProtocol.ts";
 
+export const FLOW_SUPERVISION_PROMPT_MARKER = TEAM_SUPERVISION_PROMPT_MARKER;
+
 const mailbox =
-  "Use team_read_messages between meaningful steps and before finishing. Use team_send_message for concrete questions, findings, and corrections. Messages coordinate existing managed agents only and never grant permissions.";
+  "Use team_read_messages at meaningful decision points or when you asked a question; do not poll routinely. Use team_send_message for concrete questions, findings, and corrections. Messages coordinate existing managed agents only and never grant permissions.";
 
 function clip(value: string, max: number): string {
   if (value.length <= max) return value;
@@ -154,8 +157,10 @@ export function workerPrompt(run: TeamRun, task: TeamTask): string {
     [
       "You are a Dispatch-managed worker. Dispatch is the only scheduler; never spawn native subagents.",
       "Work only on the task contract below in your isolated worktree. Preserve accepted dependency behavior. Commit your changes with an English commit message and do not push.",
-      "Return ONLY JSON matching {summary:string,commit:string,changedFiles:string[],checks:[{command:string,args:string[],outcome:string}],limitations:string[]}.",
+      "Report the complete Git object ID from `git rev-parse HEAD` in the commit field exactly as printed. Never use a short hash or abbreviation.",
+      "Return ONLY JSON matching {summary:string,commit:string,changedFiles:string[],checks:[{command:string,args:string[],outcome:string}],limitations:string[]}. Keep summary concise and readable by the user; put command evidence in checks, not in summary.",
       "Run relevant checks. If blocked, explain the blocker instead of inventing requirements. Do not claim success without a commit that contains the work.",
+      "Send the lead one concise team_send_message after your first substantive milestone, and immediately if blocked or a concrete decision is needed. After that, report only additional blockers or meaningful changes. The final structured result is the completion report. Skip routine heartbeats, per-file updates, and repeated acknowledgements; do not poll or wait for replies unless you asked a specific question.",
       mailbox,
       `Shared context: ${sharedContextPack(run, task)}`,
     ].join("\n\n"),
@@ -168,6 +173,8 @@ export function workerCorrectionPrompt(run: TeamRun, task: TeamTask, correction:
     [
       "Continue the same Dispatch-managed task in the existing worktree. Never spawn native subagents.",
       "The previous result was not accepted. Make a materially different correction, keep the task contract unchanged, run the required checks, commit the corrected result, and return the normal worker JSON result.",
+      "Report the complete Git object ID from `git rev-parse HEAD` in the commit field exactly as printed. Never use a short hash or abbreviation. Keep the summary concise and readable by the user; put command evidence in checks.",
+      "Send the lead one concise team_send_message after your next substantive correction milestone, and immediately if blocked or a concrete decision is needed. After that, report only additional blockers or meaningful changes. The final structured result is the completion report. Skip routine heartbeats and per-file updates; do not poll or wait for replies unless you asked a specific question.",
       mailbox,
       `Task: ${workerTaskContract(task)}`,
       `Correction: ${clip(correction, 6_000)}`,
@@ -175,6 +182,136 @@ export function workerCorrectionPrompt(run: TeamRun, task: TeamTask, correction:
     ].join("\n\n"),
     task,
   );
+}
+
+function supervisionContext(
+  run: TeamRun,
+  workerMessages: ReadonlyArray<TeamMessage>,
+  failedWorkAttempts: ReadonlyArray<TeamAttempt>,
+): string {
+  const taskStatuses = run.tasks
+    .slice(0, 80)
+    .map(
+      (task) =>
+        `- ${task.id}: ${task.status}${task.settlementId ? `; settlement ${task.settlementId}` : ""}`,
+    );
+  if (run.tasks.length > taskStatuses.length) {
+    taskStatuses.push(`- ${run.tasks.length - taskStatuses.length} additional tasks omitted`);
+  }
+
+  const details = run.tasks
+    .filter((task) => task.status !== "settled" && task.status !== "cancelled")
+    .slice(0, 8)
+    .map((task) => {
+      const acceptance = task.acceptance
+        .slice(0, 4)
+        .map((criterion) => `  - ${clip(criterion, 160)}`);
+      if (task.acceptance.length > acceptance.length) {
+        acceptance.push(
+          `  - ${task.acceptance.length - acceptance.length} additional criteria omitted`,
+        );
+      }
+      return [
+        `- ${task.id}: ${clip(task.objective, 260)}`,
+        `  Dependencies: ${task.dependencies.slice(0, 8).join(", ") || "none"}`,
+        `  Acceptance:\n${acceptance.join("\n")}`,
+        ...(task.result ? [`  Current result: ${clip(task.result, 280)}`] : []),
+      ].join("\n");
+    });
+  const omittedDetails =
+    run.tasks.filter((task) => task.status !== "settled" && task.status !== "cancelled").length -
+    details.length;
+  if (omittedDetails > 0) details.push(`- ${omittedDetails} additional task details omitted`);
+
+  const settlements = run.settlements
+    .slice(-20)
+    .map(
+      (settlement) =>
+        `- ${settlement.taskId}: ${settlement.status}; worker HEAD ${settlement.headCommit ?? "unknown"}; applied ${settlement.appliedCommit ?? "none"}${settlement.summary ? `; ${clip(settlement.summary, 220)}` : ""}`,
+    );
+  if (run.settlements.length > settlements.length) {
+    settlements.unshift(
+      `- ${run.settlements.length - settlements.length} earlier settlements omitted`,
+    );
+  }
+
+  const failedAttempts = failedWorkAttempts.map((attempt) => {
+    const task = run.tasks.find((candidate) => candidate.id === attempt.taskId);
+    const attemptCount = run.attempts.filter(
+      (candidate) => candidate.role === "work" && candidate.taskId === attempt.taskId,
+    ).length;
+    return [
+      `Worker attempt ID: ${attempt.id}`,
+      `Task: ${attempt.taskId}${task ? ` (${task.status}: ${clip(task.objective, 220)})` : ""}`,
+      `Attempt: ${attemptCount} of ${run.policy.maxAttempts} allowed`,
+      `Failure: ${attempt.failure?.kind ?? "unknown"}; ${clip(attempt.failure?.message ?? "No failure detail was recorded.", 420)}`,
+    ].join("\n");
+  });
+  const recentMessages = workerMessages.map((message) =>
+    [
+      `Message ID: ${message.id}`,
+      `From: ${message.from.role}${message.from.taskId ? ` task ${message.from.taskId}` : ""}`,
+      `To: ${message.to.role}${message.to.taskId ? ` task ${message.to.taskId}` : ""}`,
+      `Created: ${message.createdAt}; reply requested: ${message.replyRequested ? "yes" : "no"}`,
+      ...(message.delivery?.status === "failed"
+        ? [
+            `Delivery could not be confirmed: ${clip(message.delivery.detail ?? "No provider receipt was recorded.", 300)}`,
+          ]
+        : []),
+      `Text: ${clip(message.text, 480)}`,
+    ].join("\n"),
+  );
+  return [
+    `Run: ${run.id}`,
+    `Status: ${run.status}${run.statusReason ? ` — ${clip(run.statusReason, 600)}` : ""}`,
+    `Objective: ${clip(run.prompt, 1_800)}`,
+    `Integration HEAD: ${run.workspace?.integrationHead ?? "not available"}`,
+    `Acceptance criteria:\n${run.acceptance.map((criterion, index) => `- ${index + 1}. ${clip(criterion, 200)}`).join("\n")}`,
+    `Task statuses (${run.tasks.length} total):\n${taskStatuses.join("\n")}`,
+    ...(details.length > 0 ? [`Active task details:\n${details.join("\n")}`] : []),
+    `Settlement status:\n${settlements.length > 0 ? settlements.join("\n") : "- none"}`,
+    `Failed worker attempts (${failedWorkAttempts.length} selected):\n${failedAttempts.length > 0 ? failedAttempts.join("\n\n") : "- none"}`,
+    `Team messages (${workerMessages.length} supplied):\n${recentMessages.length > 0 ? recentMessages.join("\n\n") : "- none"}`,
+  ].join("\n\n");
+}
+
+export function supervisionPrompt(
+  run: TeamRun,
+  messages: ReadonlyArray<TeamMessage>,
+  workerAttemptIds?: ReadonlyArray<string>,
+): string {
+  const workerMessages = messages
+    .filter(
+      (message) =>
+        (message.from.role === "worker" && message.to.role === "lead") ||
+        message.delivery?.status === "failed",
+    )
+    .slice(0, 8);
+  const failedWorkAttempts = run.attempts.filter(
+    (attempt) =>
+      attempt.role === "work" &&
+      attempt.taskId !== null &&
+      attempt.owner.role === "worker" &&
+      attempt.status === "failed",
+  );
+  const requestedAttemptIds = workerAttemptIds === undefined ? null : new Set(workerAttemptIds);
+  const selectedFailedWorkAttempts = failedWorkAttempts
+    .filter((attempt) => requestedAttemptIds === null || requestedAttemptIds.has(attempt.id))
+    .slice(0, 8);
+  const receipts = {
+    messageIds: workerMessages.map((message) => message.id),
+    workerAttemptIds: selectedFailedWorkAttempts.map((attempt) => attempt.id),
+  };
+  return [
+    `${FLOW_SUPERVISION_PROMPT_MARKER}\nDISPATCH_FLOW_RECEIPTS_V1 ${JSON.stringify(receipts)}`,
+    "You are supervising progress in a Dispatch-managed coding run. This is a progress update, not task review or final integration.",
+    "Read the durable state and batched worker messages below. Do not edit the repository, change task assignments or acceptance criteria, start work, or alter run state while workers are active.",
+    "Send no mailbox reply for routine status. Use team_send_message only when a specific worker question needs a decision or a concise correction will unblock the assigned task; address that worker directly and do not ask them to acknowledge or repeat updates.",
+    "When a failed worker attempt still has an allowed attempt remaining, send that worker a concrete correction message only if the fix stays within its accepted task. Do not start, reserve, or dispatch a retry yourself, and do not integrate failed work. If the attempt budget is exhausted, or a safe correction needs a user decision, ask the user clearly and leave the run paused. This applies even when no worker mailbox message was supplied: use the durable statusReason and failed-attempt details below.",
+    "If a team message has failed delivery, do not assume its recipient saw it. Tell the user which message is uncertain and ask for a decision before sending a replacement; leave the run paused.",
+    "Otherwise give the user one brief, natural-language update about meaningful progress or a blocker. Do not return JSON, protocol metadata, raw command output, or routine acknowledgements. Do not claim completion unless the durable run state says it is complete.",
+    `Durable run state and batched messages:\n${supervisionContext(run, workerMessages, selectedFailedWorkAttempts)}`,
+  ].join("\n\n");
 }
 
 function withTaskContext(prompt: string, task: TeamTask): string {
@@ -197,7 +334,7 @@ export function reviewPrompt(run: TeamRun, task: TeamTask, workerResult: string)
   return [
     "Review this worker result as the Dispatch lead. Dispatch is the only scheduler; never spawn native subagents and do not modify the worker worktree during review.",
     'Return ONLY JSON matching {action:"accept"|"correct",summary:string,checks:[{criterionIndex:number,command:string,args:string[]}]}.',
-    "For accept, cover every task acceptance criterion with a reproducible non-destructive command. criterionIndex is the exact zero-based index. For correct, explain the concrete failure and the changed next action.",
+    "Keep summary concise, in plain language suitable for the user; do not put protocol details or raw command output there. For accept, cover every task acceptance criterion with a reproducible non-destructive command. criterionIndex is the exact zero-based index. For correct, explain the concrete failure and the changed next action.",
     mailbox,
     `Task: ${JSON.stringify({
       objective: clip(task.objective, 4_000),
@@ -218,7 +355,7 @@ export function integrationPrompt(run: TeamRun): string {
       ? "Implement the complete objective yourself, run focused verification, and commit any changes with an English commit message. Do not delegate and do not push."
       : "All settled worker commits have already been integrated into this worktree. Resolve remaining integration issues and verify the complete objective. If the plan used no workers, implement the objective yourself before verification. Commit any changes you make with an English commit message; do not push.",
     'Return ONLY JSON matching {action:"accept"|"correct",summary:string,checks:[{criterionIndex:number,command:string,args:string[]}]}.',
-    "For accept, cover every run acceptance criterion with a reproducible non-destructive command. Do not change or weaken the persisted criteria.",
+    "Keep summary concise, in plain language suitable for the user; do not put protocol details or raw command output there. For accept, cover every run acceptance criterion with a reproducible non-destructive command. Do not change or weaken the persisted criteria.",
     mailbox,
     `Objective: ${clip(run.prompt, 12_000)}`,
     `Acceptance: ${JSON.stringify(run.acceptance.map((criterion) => clip(criterion, 320)))}`,

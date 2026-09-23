@@ -7,6 +7,7 @@ import {
   ApprovalRequestId,
   CodexSettings,
   EventId,
+  MessageId,
   ProviderDriverKind,
   ProviderInstanceId,
   ProviderItemId,
@@ -84,6 +85,19 @@ class FakeCodexRuntime implements CodexSessionRuntimeShape {
       }),
   );
 
+  public readonly steerTurnImpl = vi.fn(
+    (input: {
+      readonly expectedTurnId: TurnId;
+      readonly messageId: MessageId;
+      readonly input: string;
+    }) =>
+      Promise.resolve({
+        status: "accepted" as const,
+        turnId: input.expectedTurnId,
+        messageId: input.messageId,
+      }),
+  );
+
   public readonly compactThread = Effect.void;
 
   public readonly interruptTurnImpl = vi.fn((_turnId?: TurnId): Promise<void> =>
@@ -134,6 +148,10 @@ class FakeCodexRuntime implements CodexSessionRuntimeShape {
 
   sendTurn(input: CodexSessionRuntimeSendTurnInput) {
     return Effect.promise(() => this.sendTurnImpl(input));
+  }
+
+  steerTurn(input: Parameters<CodexSessionRuntimeShape["steerTurn"]>[0]) {
+    return Effect.promise(() => this.steerTurnImpl(input));
   }
 
   interruptTurn(turnId?: TurnId) {
@@ -546,6 +564,48 @@ sessionErrorLayer("CodexAdapterLive session errors", (it) => {
         model: "gpt-5.3-codex",
         effort: "high",
         serviceTier: "priority",
+      });
+    }),
+  );
+
+  it.effect("steers the exact active Codex turn and preserves the team message id", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CodexAdapter;
+      const threadId = asThreadId("thread-live-steer");
+      const expectedTurnId = asTurnId("turn-live-steer");
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("codex"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+      const runtime = sessionRuntimeFactory.lastRuntime;
+      NodeAssert.ok(runtime);
+
+      NodeAssert.equal(adapter.capabilities.liveTurnSteering, "same-turn");
+      const prepared = yield* adapter.prepareSteerTurnMessageId!(threadId);
+      NodeAssert.equal(prepared.status, "ready");
+      if (prepared.status !== "ready") throw new Error("Codex steer IDs must be native.");
+      const messageId = prepared.messageId;
+      NodeAssert.match(
+        String(messageId),
+        /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+      );
+      const result = yield* adapter.steerTurn!({
+        threadId,
+        expectedTurnId,
+        messageId,
+        input: "Use the lead's suggestion and keep the current task running.",
+      });
+
+      NodeAssert.deepStrictEqual(runtime.steerTurnImpl.mock.calls[0]?.[0], {
+        expectedTurnId,
+        messageId,
+        input: "Use the lead's suggestion and keep the current task running.",
+      });
+      NodeAssert.deepStrictEqual(result, {
+        status: "accepted",
+        turnId: expectedTurnId,
+        messageId,
       });
     }),
   );

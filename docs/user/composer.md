@@ -100,6 +100,11 @@ Open **Agents** in the right panel to inspect the direct executor or managed Lea
 task state, attempts, messages, settlements, and blockers. **Pause** prevents new managed work
 from starting while current work settles; **Cancel** requests interruption.
 
+You can inspect worker conversations, but they are read-only; send instructions to the Lead.
+The Lead and Workers exchange progress messages automatically, visible in both relevant chats.
+Flow message status distinguishes a message waiting for a safe handoff from one accepted into an
+active or new agent turn.
+
 If a provider reaches a limit or becomes unavailable, Flow follows the saved provider-limit
 behavior: **Ask** before switching, **Continue with another selected provider** when Dispatch
 can make the allowed replacement safely, or **Pause** the run. Managed mode also blocks

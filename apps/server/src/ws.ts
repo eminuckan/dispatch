@@ -1892,8 +1892,17 @@ const makeWsRpcLayer = (
                     ),
                   )
                 : false;
-              const result = yield* dispatchNormalizedCommand(normalizedCommand).pipe(
+              const result = yield* Effect.andThen(
+                normalizedCommand.type === "thread.turn.start" ||
+                  normalizedCommand.type === "thread.message.user.append"
+                  ? teamRuntime.assertClientMessageAllowed(normalizedCommand.threadId)
+                  : Effect.void,
+                dispatchNormalizedCommand(normalizedCommand),
+              ).pipe(
                 Effect.tapError(() => cleanupFailedUploadedAttachments(command, normalizedCommand)),
+                Effect.mapError((cause) =>
+                  toDispatchCommandError(cause, "Failed to dispatch orchestration command"),
+                ),
               );
               yield* recordClientCommandAnalytics(normalizedCommand);
               yield* ProjectCloneTracker.discardCloneForDeletedProject(

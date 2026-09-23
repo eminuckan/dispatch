@@ -27,6 +27,7 @@ import {
   ProviderStopSessionInput,
   ProviderUploadFeedbackInput,
   ThreadId,
+  TrimmedNonEmptyString,
   TurnId,
   type ProjectId,
   type ProviderInstanceId,
@@ -333,6 +334,13 @@ type ProviderServiceMethod<Name extends keyof ProviderService.ProviderService["S
 const ProviderRollbackConversationInput = Schema.Struct({
   threadId: ThreadId,
   numTurns: NonNegativeInt,
+});
+
+const ProviderSteerTurnInputSchema = Schema.Struct({
+  threadId: ThreadId,
+  expectedTurnId: TurnId,
+  messageId: MessageId,
+  input: TrimmedNonEmptyString.check(Schema.isMaxLength(PROVIDER_SEND_TURN_MAX_INPUT_CHARS)),
 });
 
 function toValidationError(
@@ -1792,6 +1800,70 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     );
   });
 
+  const steerTurn: ProviderServiceMethod<"steerTurn"> = Effect.fn("steerTurn")(
+    function* (rawInput) {
+      const input = yield* decodeInputOrValidationError({
+        operation: "ProviderService.steerTurn",
+        schema: ProviderSteerTurnInputSchema,
+        payload: rawInput,
+      });
+      const routed = yield* resolveRoutableSession({
+        threadId: input.threadId,
+        operation: "ProviderService.steerTurn",
+        allowRecovery: false,
+      });
+      yield* Effect.annotateCurrentSpan({
+        "provider.operation": "steer-turn",
+        "provider.kind": routed.adapter.provider,
+        "provider.thread_id": input.threadId,
+        "provider.turn_id": input.expectedTurnId,
+      });
+      if (
+        routed.adapter.capabilities.liveTurnSteering !== "same-turn" ||
+        routed.adapter.steerTurn === undefined
+      ) {
+        return { status: "unsupported" } as const;
+      }
+      if (!routed.isActive) {
+        return { status: "stale", activeTurnId: null } as const;
+      }
+
+      const result = yield* routed.adapter.steerTurn({
+        ...input,
+        threadId: routed.threadId,
+      });
+      if (result.status === "accepted") {
+        if (result.turnId !== input.expectedTurnId || result.messageId !== input.messageId) {
+          return yield* toValidationError(
+            "ProviderService.steerTurn",
+            "Provider accepted a live steer for a different turn or message.",
+          );
+        }
+        yield* McpSessionRegistry.touchActiveMcpThread(input.threadId);
+      }
+      return result;
+    },
+  );
+
+  const prepareSteerTurnMessageId: ProviderServiceMethod<"prepareSteerTurnMessageId"> = Effect.fn(
+    "prepareSteerTurnMessageId",
+  )(function* (threadId) {
+    const routed = yield* resolveRoutableSession({
+      threadId,
+      operation: "ProviderService.prepareSteerTurnMessageId",
+      allowRecovery: false,
+    });
+    if (
+      !routed.isActive ||
+      routed.adapter.capabilities.liveTurnSteering !== "same-turn" ||
+      routed.adapter.prepareSteerTurnMessageId === undefined ||
+      routed.adapter.steerTurn === undefined
+    ) {
+      return { status: "unsupported" } as const;
+    }
+    return yield* routed.adapter.prepareSteerTurnMessageId(routed.threadId);
+  });
+
   const compactThread: ProviderServiceMethod<"compactThread"> = Effect.fn("compactThread")(
     function* (threadId, modelSelection, requestId) {
       const routed = yield* resolveRoutableSession({
@@ -2401,6 +2473,8 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
   return {
     startSession,
     sendTurn,
+    steerTurn,
+    prepareSteerTurnMessageId,
     compactThread,
     interruptTurn,
     respondToRequest,

@@ -67,7 +67,9 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useWorkspaceContentWidth } from "../layout/workspace-content-width";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { collectProviderUsageLimits } from "@dispatch/shared/usageLimits";
+import { AppText } from "../../components/AppText";
 import type { ComposerEditorHandle } from "../../components/ComposerEditor";
+import { MaterialButton } from "../../components/MaterialButton";
 import type { StatusTone } from "../../components/StatusPill";
 import type { DraftComposerAttachment } from "../../lib/composerImages";
 import { CHAT_CONTENT_MAX_WIDTH, type LayoutVariant } from "../../lib/layout";
@@ -108,6 +110,7 @@ import {
 } from "./ThreadComposer";
 import { ThreadFeed } from "./ThreadFeed";
 import type { ThreadContentPresentation } from "./threadContentPresentation";
+import type { TeamThreadComposerAccess } from "./teamThreadAccess";
 import { resolveThreadFeedSubmissionAnchor } from "./thread-feed-live-follow";
 
 export interface ThreadDetailScreenProps {
@@ -156,6 +159,10 @@ export interface ThreadDetailScreenProps {
   readonly usesAutomaticContentInsets?: boolean;
   readonly onHeaderMaterialVisibilityChange?: (visible: boolean) => void;
   readonly onOpenConnectionEditor: () => void;
+  readonly teamThreadComposerAccess?: TeamThreadComposerAccess;
+  readonly teamLeadThreadId?: ThreadId | null;
+  readonly onOpenTeamLead?: () => void;
+  readonly onRetryTeamThreadAccess?: () => void;
   readonly onChangeDraftMessage: (value: string) => void;
   readonly onPickDraftMedia: () => Promise<void>;
   readonly onPickDraftFiles: () => Promise<void>;
@@ -1047,47 +1054,87 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                 owns the slot instead. */}
               <View
                 style={
-                  activeUserInputRequestId !== null || props.creationState?.kind === "failed"
+                  (activeUserInputRequestId !== null || props.creationState?.kind === "failed") &&
+                  props.teamThreadComposerAccess == null
                     ? { display: "none" }
                     : undefined
                 }
               >
-                <ThreadComposer
-                  editorRef={composerEditorRef}
-                  draftMessage={props.draftMessage}
-                  draftAttachments={props.draftAttachments}
-                  placeholder="Ask the repo agent, or run a command…"
-                  contentMaxWidth={contentMaxWidth}
-                  connectionState={props.connectionStateLabel}
-                  environmentLabel={props.environmentLabel}
-                  selectedThread={props.selectedThread}
-                  hasCompactableConversation={hasCompactableConversation && !props.isCompacting}
-                  serverConfig={props.serverConfig}
-                  queueCount={props.selectedThreadQueueCount}
-                  environmentId={props.environmentId}
-                  projectCwd={props.threadCwd ?? props.projectWorkspaceRoot}
-                  // Follow-ups typed during setup wait in the draft: queueing
-                  // them against a thread id the server may still reject
-                  // would strand them in the outbox.
-                  sendBlockedReason={
-                    props.creationState?.kind === "preparing" ? "Starting the task…" : null
-                  }
-                  bottomInset={composerBottomInset}
-                  onChangeDraftMessage={props.onChangeDraftMessage}
-                  onPickDraftMedia={props.onPickDraftMedia}
-                  onPickDraftFiles={props.onPickDraftFiles}
-                  onNativePasteImages={props.onNativePasteImages}
-                  onNativePasteText={props.onNativePasteText}
-                  onRemoveDraftImage={props.onRemoveDraftImage}
-                  onStopThread={props.onStopThread}
-                  onSendMessage={handleSendMessage}
-                  onShowUsageLimits={showUsageLimits}
-                  onUpdateModelSelection={props.onUpdateThreadModelSelection}
-                  onUpdateRuntimeMode={props.onUpdateThreadRuntimeMode}
-                  onUpdateInteractionMode={props.onUpdateThreadInteractionMode}
-                  onExpandedChange={setComposerExpanded}
-                  onEditorFocusChange={handleComposerFocusChange}
-                />
+                {props.teamThreadComposerAccess != null ? (
+                  <View
+                    className="w-full flex-row items-center justify-between gap-3 px-4"
+                    style={{ paddingBottom: composerBottomInset }}
+                  >
+                    <View className="min-w-0 flex-1" accessibilityLiveRegion="polite">
+                      <AppText className="font-dispatch-medium text-sm">
+                        {props.teamThreadComposerAccess === "worker"
+                          ? "Worker chats are read-only."
+                          : props.teamThreadComposerAccess === "checking"
+                            ? "Checking worker access…"
+                            : "Could not verify this worker chat."}
+                      </AppText>
+                      {props.teamThreadComposerAccess === "worker" ? (
+                        <AppText className="mt-0.5 text-xs text-foreground-muted">
+                          Send instructions to the Flow lead.
+                        </AppText>
+                      ) : null}
+                    </View>
+                    {props.teamThreadComposerAccess === "worker" &&
+                    props.teamLeadThreadId != null &&
+                    props.onOpenTeamLead ? (
+                      <MaterialButton
+                        label="Open lead chat"
+                        onPress={props.onOpenTeamLead}
+                        tone="primary"
+                      />
+                    ) : null}
+                    {props.teamThreadComposerAccess === "unavailable" &&
+                    props.onRetryTeamThreadAccess ? (
+                      <MaterialButton
+                        label="Try again"
+                        onPress={props.onRetryTeamThreadAccess}
+                        tone="text"
+                      />
+                    ) : null}
+                  </View>
+                ) : (
+                  <ThreadComposer
+                    editorRef={composerEditorRef}
+                    draftMessage={props.draftMessage}
+                    draftAttachments={props.draftAttachments}
+                    placeholder="Ask the repo agent, or run a command…"
+                    contentMaxWidth={contentMaxWidth}
+                    connectionState={props.connectionStateLabel}
+                    environmentLabel={props.environmentLabel}
+                    selectedThread={props.selectedThread}
+                    hasCompactableConversation={hasCompactableConversation && !props.isCompacting}
+                    serverConfig={props.serverConfig}
+                    queueCount={props.selectedThreadQueueCount}
+                    environmentId={props.environmentId}
+                    projectCwd={props.threadCwd ?? props.projectWorkspaceRoot}
+                    // Follow-ups typed during setup wait in the draft: queueing
+                    // them against a thread id the server may still reject
+                    // would strand them in the outbox.
+                    sendBlockedReason={
+                      props.creationState?.kind === "preparing" ? "Starting the task…" : null
+                    }
+                    bottomInset={composerBottomInset}
+                    onChangeDraftMessage={props.onChangeDraftMessage}
+                    onPickDraftMedia={props.onPickDraftMedia}
+                    onPickDraftFiles={props.onPickDraftFiles}
+                    onNativePasteImages={props.onNativePasteImages}
+                    onNativePasteText={props.onNativePasteText}
+                    onRemoveDraftImage={props.onRemoveDraftImage}
+                    onStopThread={props.onStopThread}
+                    onSendMessage={handleSendMessage}
+                    onShowUsageLimits={showUsageLimits}
+                    onUpdateModelSelection={props.onUpdateThreadModelSelection}
+                    onUpdateRuntimeMode={props.onUpdateThreadRuntimeMode}
+                    onUpdateInteractionMode={props.onUpdateThreadInteractionMode}
+                    onExpandedChange={setComposerExpanded}
+                    onEditorFocusChange={handleComposerFocusChange}
+                  />
+                )}
               </View>
             </View>
           </Animated.View>

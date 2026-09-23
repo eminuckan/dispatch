@@ -7,12 +7,15 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeSqliteClient from "@dispatch/shared/nodeSqliteClient";
 import {
   GitCommandError,
+  MessageId,
   ProjectId,
   ProviderInstanceId,
   TeamRun,
   ThreadId,
+  TurnId,
   type ChatAttachment,
   type OrchestrationCommand,
+  type OrchestrationMessage,
   type OrchestrationThreadActivity,
   type TeamAttempt,
   type TeamModelProfile,
@@ -33,7 +36,13 @@ import { pendingAttachmentLeaseHasOwner } from "../attachmentStore.ts";
 import { OrchestrationEngineService } from "../orchestration/Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { ProjectionTurnRepository } from "../persistence/Services/ProjectionTurns.ts";
+import { ProviderService } from "../provider/Services/ProviderService.ts";
+import type {
+  ProviderSteerTurnInput,
+  ProviderSteerTurnResult,
+} from "../provider/Services/ProviderAdapter.ts";
 import migrateOrchestrationV2 from "../persistence/Migrations/056_OrchestrationV2.ts";
+import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import {
   ProcessRunner,
   make as makeProcessRunner,
@@ -43,6 +52,7 @@ import { OrchestrationAdvisor } from "./OrchestrationAdvisor.ts";
 import { OrchestrationModelCatalog } from "./OrchestrationModels.ts";
 import { OrchestrationSettings } from "./OrchestrationSettings.ts";
 import { OrchestrationStore, make as makeStore } from "./OrchestrationStore.ts";
+import { FLOW_SUPERVISION_PROMPT_MARKER } from "./OrchestrationPrompts.ts";
 import { make } from "./TeamRuntime.ts";
 import { teamThreadView } from "./presentation.ts";
 
@@ -176,7 +186,15 @@ function fixture(
     readonly settingsPolicy?: TeamSettings["policy"];
     readonly existingThreads?: ReadonlyArray<ThreadId>;
     readonly threadActivities?: ReadonlyArray<OrchestrationThreadActivity>;
+    readonly threadMessages?: ReadonlyArray<OrchestrationMessage>;
+    readonly projectedTurns?: ReadonlyArray<
+      Effect.Success<ReturnType<ProjectionTurnRepository["Service"]["listByThreadId"]>>[number]
+    >;
+    readonly steerResult?: ProviderSteerTurnResult;
     readonly removeWorktreeFails?: boolean;
+    readonly resolveCommit?: (
+      input: Parameters<GitVcsDriver.GitVcsDriver["Service"]["resolveCommit"]>[0],
+    ) => string | null;
     readonly process?: (input: ProcessRunInput) =>
       | {
           readonly stdout?: string;
@@ -189,6 +207,9 @@ function fixture(
   let current = seed;
   const commands: OrchestrationCommand[] = [];
   const processCalls: ProcessRunInput[] = [];
+  const gitCommitResolutions: Parameters<
+    GitVcsDriver.GitVcsDriver["Service"]["resolveCommit"]
+  >[0][] = [];
   const removedWorktrees: string[] = [];
   const createdWorktrees: Array<Parameters<GitWorkflowService["Service"]["createWorktree"]>[0]> =
     [];
@@ -204,6 +225,7 @@ function fixture(
     readonly persistedAttachments: ReadonlyArray<ChatAttachment>;
     readonly dispatchedAttachments: ReadonlyArray<ChatAttachment>;
   }> = [];
+  const steerCalls: ProviderSteerTurnInput[] = [];
 
   const store = Layer.mock(OrchestrationStore)({
     getSettings: Effect.succeed(null),
@@ -385,7 +407,7 @@ function fixture(
               pinnedAt: null,
               pinOrderKey: null,
               deletedAt: null,
-              messages: [],
+              messages: [...(options.threadMessages ?? [])],
               proposedPlans: [],
               activities: [...(options.threadActivities ?? [])],
               checkpoints: [],
@@ -397,7 +419,21 @@ function fixture(
 
   const turns = Layer.mock(ProjectionTurnRepository)({
     getPendingTurnStartByThreadId: () => Effect.succeed(Option.none()),
-    listByThreadId: () => Effect.succeed([]),
+    listByThreadId: () => Effect.succeed(options.projectedTurns ?? []),
+  });
+
+  const providers = Layer.mock(ProviderService)({
+    prepareSteerTurnMessageId: () =>
+      Effect.succeed(
+        options.steerResult?.status === "accepted" || options.steerResult?.status === "stale"
+          ? { status: "ready" as const, messageId: MessageId.make("native-steer-message") }
+          : { status: "unsupported" as const },
+      ),
+    steerTurn: (input) =>
+      Effect.sync(() => {
+        steerCalls.push(input);
+        return options.steerResult ?? { status: "unsupported" as const };
+      }),
   });
 
   const git = Layer.mock(GitWorkflowService)({
@@ -451,6 +487,32 @@ function fixture(
     },
   });
 
+  const gitVcsDriver = Layer.mock(GitVcsDriver.GitVcsDriver)({
+    resolveCommit: (input) => {
+      gitCommitResolutions.push(input);
+      const commitSha = options.resolveCommit
+        ? options.resolveCommit(input)
+        : input.revision === "HEAD"
+          ? head
+          : /^[0-9a-f]{7,64}$/iu.test(input.revision) &&
+              head.toLowerCase().startsWith(input.revision.toLowerCase())
+            ? head
+            : /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/iu.test(input.revision)
+              ? input.revision
+              : null;
+      return commitSha === null
+        ? Effect.fail(
+            new GitCommandError({
+              operation: "resolve-commit",
+              command: "git rev-parse --verify",
+              cwd: input.cwd,
+              detail: "scripted commit does not exist",
+            }),
+          )
+        : Effect.succeed({ commitSha });
+    },
+  });
+
   const layer = Layer.mergeAll(
     store,
     settings,
@@ -459,7 +521,9 @@ function fixture(
     engine,
     projection,
     turns,
+    providers,
     git,
+    gitVcsDriver,
     processLayer,
     ServerConfig.layerTest(process.cwd(), { prefix: "dispatch-orchestration-runtime-test-" }).pipe(
       Layer.provide(NodeServices.layer),
@@ -470,11 +534,13 @@ function fixture(
     layer,
     commands,
     processCalls,
+    gitCommitResolutions,
     removedWorktrees,
     createdWorktrees,
     executionModeCalls,
     profileCalls,
     turnDispatches,
+    steerCalls,
     current: () => current,
   };
 }
@@ -1582,6 +1648,66 @@ it.effect("dispatches a newly reserved integration attempt in the same scheduler
   }).pipe(Effect.provide(f.layer));
 });
 
+it.effect("supervises a late worker message before accepting final integration", () => {
+  const task = retryTask();
+  const integration = attempt({
+    id: "integration-before-late-message",
+    role: "integrate",
+    owner: baseRun().lead,
+    status: "succeeded",
+    result: JSON.stringify({
+      action: "accept",
+      summary: "The run is complete.",
+      checks: [{ criterionIndex: 0, command: "true", args: [] }],
+    }),
+  });
+  const f = fixture(
+    baseRun({
+      status: "review",
+      tasks: [{ ...task, status: "settled" }],
+      attempts: [integration],
+    }),
+  );
+  return Effect.gen(function* () {
+    const runtime = yield* make;
+    const store = yield* OrchestrationStore;
+    yield* runtime.sendMessage(task.owner.threadId!, {
+      id: "late-integration-progress",
+      toThreadId: leadThreadId,
+      text: "One last contract detail needs your attention.",
+      replyRequested: true,
+    });
+    yield* runtime.tick();
+    let run = f.current()!;
+    const supervisor = run.attempts.findLast((candidate) =>
+      candidate.prompt.startsWith(FLOW_SUPERVISION_PROMPT_MARKER),
+    );
+    expect(run.status).toBe("review");
+    expect(supervisor).toMatchObject({ status: "running" });
+    expect(supervisor?.prompt).toContain("late-integration-progress");
+    expect(run.attempts.filter((candidate) => candidate.role === "integrate")).toHaveLength(1);
+
+    yield* store.update(
+      run.id,
+      run.revision,
+      (state) => ({
+        ...state,
+        attempts: state.attempts.map((candidate) =>
+          candidate.id === supervisor?.id
+            ? { ...candidate, status: "succeeded" as const, result: "The detail is handled." }
+            : candidate,
+        ),
+      }),
+      "late-message-supervised",
+    );
+    yield* runtime.tick();
+    run = f.current()!;
+    expect(run.status).toBe("review");
+    expect(run.attempts.filter((candidate) => candidate.role === "integrate")).toHaveLength(2);
+    expect(run.attempts.at(-1)).toMatchObject({ role: "integrate", status: "running" });
+  }).pipe(Effect.provide(f.layer));
+});
+
 it.effect("enforces lead-only planning and dispatches final integration in the same tick", () => {
   const leadOnlyPolicy: TeamSettings["policy"] = { ...policy, maxActive: 1 };
   const planAcceptance = ["The complete lead-only objective is verified"];
@@ -2494,6 +2620,847 @@ const successfulWorkerResult = JSON.stringify({
   limitations: [],
 });
 
+it.effect("canonicalizes a valid short worker SHA before review and integration", () => {
+  const task = retryTask();
+  const workerResult = JSON.stringify({
+    summary: "Worker finished",
+    commit: head.slice(0, 9),
+    changedFiles: ["src/runtime.ts"],
+    checks: [],
+    limitations: [],
+  });
+  const work = attempt({
+    id: "short-sha-work",
+    role: "work",
+    owner: task.owner,
+    taskId: task.id,
+    status: "succeeded",
+    result: workerResult,
+  });
+  const integratedHead = "b".repeat(40);
+  const f = fixture(baseRun({ tasks: [task], attempts: [work] }), true, {
+    process: (input) => {
+      if (input.command !== "git") return undefined;
+      if (input.args[0] === "merge-base") return { stdout: `${head}\n` };
+      if (input.args[0] === "rev-list") return { stdout: "1\n" };
+      if (input.args[0] === "merge" && input.args[1] === "--no-edit") return { code: 0 };
+      if (input.args[0] === "rev-parse" && input.args[1] === "HEAD")
+        return { stdout: `${integratedHead}\n` };
+      return undefined;
+    },
+  });
+
+  return Effect.gen(function* () {
+    const runtime = yield* make;
+    yield* runtime.tick();
+
+    let run = f.current()!;
+    const review = run.attempts.find((candidate) => candidate.role === "review")!;
+    expect(review.prompt).toContain(`"commit":"${head}"`);
+    expect(run.tasks[0]?.result).toContain(`"commit":"${head}"`);
+    expect(f.gitCommitResolutions).toContainEqual({
+      cwd: task.worktreePath,
+      revision: head.slice(0, 9),
+    });
+
+    const store = yield* OrchestrationStore;
+    yield* store.update(
+      run.id,
+      run.revision,
+      (current) => ({
+        ...current,
+        attempts: current.attempts.map((candidate) =>
+          candidate.id === review.id
+            ? {
+                ...candidate,
+                status: "succeeded",
+                createdAt: "2026-09-21T12:00:01.000Z",
+                updatedAt: "2026-09-21T12:00:01.000Z",
+                result: JSON.stringify({
+                  action: "accept",
+                  summary: "Worker change meets acceptance",
+                  checks: [{ criterionIndex: 0, command: "true", args: [] }],
+                }),
+              }
+            : candidate,
+        ),
+      }),
+      "test-review-completed",
+    );
+    yield* runtime.tick();
+
+    run = f.current()!;
+    expect(run.status).not.toBe("paused");
+    expect(run.tasks[0]).toMatchObject({ status: "settled" });
+    expect(run.settlements[0]).toMatchObject({ headCommit: head, status: "applied" });
+    expect(
+      f.processCalls.some(
+        (call) =>
+          call.command === "git" &&
+          call.args[0] === "merge" &&
+          call.args[1] === "--no-edit" &&
+          call.args[2] === head,
+      ),
+    ).toBe(true);
+  }).pipe(Effect.provide(f.layer));
+});
+
+it.effect("resumes a legacy short-SHA pause through normal lead review", () => {
+  const task = retryTask();
+  const work = attempt({
+    id: "legacy-short-sha-work",
+    role: "work",
+    owner: task.owner,
+    taskId: task.id,
+    status: "succeeded",
+    result: JSON.stringify({
+      summary: "Worker finished",
+      commit: head.slice(0, 9),
+      changedFiles: ["src/runtime.ts"],
+      checks: [],
+      limitations: [],
+    }),
+  });
+  const f = fixture(
+    baseRun({
+      status: "paused",
+      statusReason: "Worker settlement commit does not match its worktree HEAD.",
+      tasks: [{ ...task, attemptIds: [work.id] }],
+      attempts: [work],
+    }),
+  );
+
+  return Effect.gen(function* () {
+    const runtime = yield* make;
+    const before = f.current()!;
+    const resumed = yield* runtime.control({
+      id: before.id,
+      revision: before.revision,
+      action: "resume",
+    });
+    expect(resumed).toMatchObject({ status: "running", statusReason: null });
+    expect(resumed.tasks[0]?.status).toBe("running");
+    yield* runtime.tick();
+
+    const run = f.current()!;
+    const review = run.attempts.findLast(
+      (candidate) => candidate.role === "review" && candidate.taskId === task.id,
+    );
+    expect(run.status).toBe("running");
+    expect(run.tasks[0]?.status).toBe("review");
+    expect(review).toMatchObject({ status: "running" });
+    expect(review?.prompt.includes('"commit":"' + head + '"')).toBe(true);
+    expect(run.settlements).toEqual([]);
+    expect(f.processCalls.some((call) => call.args[0] === "merge")).toBe(false);
+  }).pipe(Effect.provide(f.layer));
+});
+
+it.effect("marks a real worker commit mismatch failed and pauses without a running zombie", () => {
+  const task = retryTask();
+  const previous = {
+    ...attempt({
+      id: "previous-work-attempt",
+      role: "work",
+      owner: task.owner,
+      taskId: task.id,
+      status: "failed",
+    }),
+    failure: { kind: "provider-error" as const, message: "Earlier attempt failed" },
+  };
+  const mismatched = attempt({
+    id: "mismatched-work-attempt",
+    role: "work",
+    owner: task.owner,
+    taskId: task.id,
+    status: "succeeded",
+    sequence: 1,
+    result: JSON.stringify({
+      summary: "Worker finished",
+      commit: "b".repeat(40),
+      changedFiles: ["src/runtime.ts"],
+      checks: [],
+      limitations: [],
+    }),
+  });
+  const f = fixture(
+    baseRun({
+      tasks: [{ ...task, attemptIds: [previous.id, mismatched.id] }],
+      attempts: [previous, mismatched],
+    }),
+  );
+
+  return Effect.gen(function* () {
+    const runtime = yield* make;
+    yield* runtime.tick();
+
+    const run = f.current()!;
+    expect(run.status).toBe("paused");
+    expect(run.statusReason).toContain("does not match its worktree HEAD");
+    expect(run.statusReason).toContain("No worker changes were integrated");
+    expect(run.statusReason).toContain("report the current full SHA");
+    expect(run.tasks[0]).toMatchObject({ status: "failed" });
+    expect(run.attempts.find((candidate) => candidate.id === mismatched.id)).toMatchObject({
+      status: "failed",
+      failure: { kind: "invalid-result" },
+    });
+    const supervisor = run.attempts.findLast(
+      (candidate) =>
+        candidate.role === "review" &&
+        candidate.taskId === null &&
+        candidate.prompt.startsWith(FLOW_SUPERVISION_PROMPT_MARKER),
+    );
+    expect(supervisor).toMatchObject({ status: "running" });
+    expect(supervisor?.prompt).toContain("Worker attempt ID: mismatched-work-attempt");
+    expect(run.settlements).toEqual([]);
+    expect(f.processCalls.some((call) => call.args[0] === "merge")).toBe(false);
+  }).pipe(Effect.provide(f.layer));
+});
+
+it.effect("rejects non-SHA worker commit refs before asking Git to resolve them", () => {
+  const task = retryTask();
+  const previous = {
+    ...attempt({
+      id: "previous-ref-work-attempt",
+      role: "work",
+      owner: task.owner,
+      taskId: task.id,
+      status: "failed",
+    }),
+    failure: { kind: "provider-error" as const, message: "Earlier attempt failed" },
+  };
+  const invalidRef = attempt({
+    id: "invalid-ref-work-attempt",
+    role: "work",
+    owner: task.owner,
+    taskId: task.id,
+    status: "succeeded",
+    sequence: 1,
+    result: JSON.stringify({
+      summary: "Worker finished",
+      commit: "refs/heads/main",
+      changedFiles: ["src/runtime.ts"],
+      checks: [],
+      limitations: [],
+    }),
+  });
+  const f = fixture(
+    baseRun({
+      tasks: [{ ...task, attemptIds: [previous.id, invalidRef.id] }],
+      attempts: [previous, invalidRef],
+    }),
+  );
+
+  return Effect.gen(function* () {
+    const runtime = yield* make;
+    yield* runtime.tick();
+
+    const run = f.current()!;
+    expect(run.status).toBe("paused");
+    expect(run.tasks[0]?.status).toBe("failed");
+    expect(run.statusReason).toContain("hexadecimal Git commit SHA");
+    expect(f.gitCommitResolutions).toEqual([{ cwd: task.worktreePath, revision: "HEAD" }]);
+  }).pipe(Effect.provide(f.layer));
+});
+
+it.effect("queues worker messages during lead supervision and consumes each batch once", () => {
+  const task = retryTask();
+  const f = fixture(baseRun({ tasks: [task] }));
+
+  return Effect.gen(function* () {
+    const runtime = yield* make;
+    const store = yield* OrchestrationStore;
+    const sendWorkerMessage = (id: string, text: string) =>
+      runtime.sendMessage(task.owner.threadId!, {
+        id,
+        toThreadId: leadThreadId,
+        text,
+        replyRequested: false,
+      });
+    const supervisionAttempts = () =>
+      f
+        .current()!
+        .attempts.filter(
+          (candidate) =>
+            candidate.role === "review" &&
+            candidate.taskId === null &&
+            candidate.prompt.startsWith(FLOW_SUPERVISION_PROMPT_MARKER),
+        );
+
+    yield* sendWorkerMessage(
+      "progress-one",
+      "The API boundary is understood; I am implementing it.",
+    );
+    expect(f.current()?.messages.map((message) => message.id)).toContain("progress-one");
+    expect(supervisionAttempts()).toHaveLength(0);
+    expect(Option.isSome(yield* Stream.runHead(runtime.wakeups))).toBe(true);
+    yield* runtime.tick();
+    let run = f.current()!;
+    let supervisors = supervisionAttempts();
+    expect(supervisors).toHaveLength(1);
+    expect(supervisors[0]).toMatchObject({ status: "running" });
+    expect(supervisors[0]?.prompt).toContain("Message ID: progress-one");
+    expect(
+      f.commands.filter(
+        (command) => command.type === "thread.turn.start" && command.threadId === leadThreadId,
+      ),
+    ).toHaveLength(1);
+
+    yield* sendWorkerMessage("progress-two", "The targeted regression now passes.");
+    expect(supervisionAttempts()).toHaveLength(1);
+    expect(Option.isSome(yield* Stream.runHead(runtime.wakeups))).toBe(true);
+    yield* runtime.tick();
+    expect(supervisionAttempts()).toHaveLength(1);
+    expect(
+      f.commands.filter(
+        (command) => command.type === "thread.turn.start" && command.threadId === leadThreadId,
+      ),
+    ).toHaveLength(1);
+
+    run = f.current()!;
+    const first = supervisors[0]!;
+    yield* store.update(
+      run.id,
+      run.revision,
+      (current) => ({
+        ...current,
+        attempts: current.attempts.map((candidate) =>
+          candidate.id === first.id
+            ? { ...candidate, status: "succeeded", result: "I reviewed the first checkpoint." }
+            : candidate,
+        ),
+      }),
+      "test-first-supervisor-completed",
+    );
+    const restarted = yield* make;
+    yield* restarted.tick();
+
+    run = f.current()!;
+    supervisors = supervisionAttempts();
+    expect(supervisors).toHaveLength(2);
+    expect(supervisors[1]).toMatchObject({ status: "running" });
+    expect(supervisors[1]?.prompt).toContain("Message ID: progress-two");
+    expect(supervisors[1]?.prompt).not.toContain("Message ID: progress-one");
+    expect(
+      f.commands.filter(
+        (command) => command.type === "thread.turn.start" && command.threadId === leadThreadId,
+      ),
+    ).toHaveLength(2);
+
+    yield* runtime.sendMessage(leadThreadId, {
+      id: "lead-reply",
+      toThreadId: task.owner.threadId!,
+      text: "Please include the command used by the new regression.",
+      replyRequested: false,
+      inReplyTo: "progress-two",
+    });
+    yield* runtime.tick();
+    const second = supervisors[1]!;
+    run = f.current()!;
+    yield* store.update(
+      run.id,
+      run.revision,
+      (current) => ({
+        ...current,
+        attempts: current.attempts.map((candidate) =>
+          candidate.id === second.id
+            ? { ...candidate, status: "succeeded", result: "The command is included." }
+            : candidate,
+        ),
+      }),
+      "test-second-supervisor-completed",
+    );
+    yield* runtime.tick();
+
+    expect(supervisionAttempts()).toHaveLength(2);
+    expect(
+      f.commands.filter(
+        (command) => command.type === "thread.turn.start" && command.threadId === leadThreadId,
+      ),
+    ).toHaveLength(2);
+  }).pipe(Effect.provide(f.layer));
+});
+
+it.effect("steers a lead message into the exact active worker turn once", () => {
+  const task = retryTask();
+  const work = attempt({
+    id: "active-worker-message",
+    role: "work",
+    owner: task.owner,
+    taskId: task.id,
+    status: "running",
+  });
+  const turnId = TurnId.make("active-worker-turn");
+  const f = fixture(
+    baseRun({ tasks: [{ ...task, attemptIds: [work.id] }], attempts: [work] }),
+    true,
+    {
+      projectedTurns: [
+        {
+          threadId: task.owner.threadId!,
+          turnId,
+          pendingMessageId: work.requestMessageId,
+          sourceProposedPlanThreadId: null,
+          sourceProposedPlanId: null,
+          assistantMessageId: null,
+          state: "running",
+          requestedAt: now,
+          startedAt: now,
+          completedAt: null,
+          checkpointTurnCount: null,
+          checkpointRef: null,
+          checkpointStatus: null,
+          checkpointFiles: [],
+        },
+      ],
+      steerResult: { status: "accepted", turnId, messageId: "unused" as never },
+    },
+  );
+  return Effect.gen(function* () {
+    const runtime = yield* make;
+    yield* runtime.sendMessage(leadThreadId, {
+      id: "lead-to-active",
+      toThreadId: task.owner.threadId!,
+      text: "Check the public error envelope.",
+      replyRequested: false,
+    });
+    yield* runtime.tick();
+    expect(f.steerCalls).toHaveLength(1);
+    expect(f.steerCalls[0]).toMatchObject({
+      threadId: task.owner.threadId,
+      expectedTurnId: turnId,
+      messageId: MessageId.make("native-steer-message"),
+    });
+    expect(f.current()!.messages[0]?.delivery).toMatchObject({ status: "steered", turnId });
+    yield* (yield* make).tick();
+    expect(f.steerCalls).toHaveLength(1);
+    expect(f.commands.filter((command) => command.type === "thread.turn.start")).toHaveLength(0);
+  }).pipe(Effect.provide(f.layer));
+});
+
+it.effect("queues a stale native steer without creating an overlapping turn", () => {
+  const task = retryTask();
+  const work = attempt({
+    id: "stale-worker-message",
+    role: "work",
+    owner: task.owner,
+    taskId: task.id,
+    status: "running",
+  });
+  const turnId = TurnId.make("stale-worker-turn");
+  const f = fixture(
+    baseRun({ tasks: [{ ...task, attemptIds: [work.id] }], attempts: [work] }),
+    true,
+    {
+      projectedTurns: [
+        {
+          threadId: task.owner.threadId!,
+          turnId,
+          pendingMessageId: work.requestMessageId,
+          sourceProposedPlanThreadId: null,
+          sourceProposedPlanId: null,
+          assistantMessageId: null,
+          state: "running",
+          requestedAt: now,
+          startedAt: now,
+          completedAt: null,
+          checkpointTurnCount: null,
+          checkpointRef: null,
+          checkpointStatus: null,
+          checkpointFiles: [],
+        },
+      ],
+      steerResult: { status: "stale", activeTurnId: null },
+    },
+  );
+  return Effect.gen(function* () {
+    const runtime = yield* make;
+    yield* runtime.sendMessage(leadThreadId, {
+      id: "stale-message",
+      toThreadId: task.owner.threadId!,
+      text: "Check the response contract.",
+      replyRequested: false,
+    });
+    yield* runtime.tick();
+    expect(f.steerCalls).toHaveLength(1);
+    expect(f.current()!.messages[0]?.delivery).toMatchObject({ status: "queued" });
+    expect(f.commands.filter((command) => command.type === "thread.turn.start")).toHaveLength(0);
+  }).pipe(Effect.provide(f.layer));
+});
+
+it.effect("queues unsupported live steering and delivers after the worker turn ends", () => {
+  const task = retryTask();
+  const work = attempt({
+    id: "unsteerable-worker",
+    role: "work",
+    owner: task.owner,
+    taskId: task.id,
+    status: "running",
+  });
+  const turnId = TurnId.make("unsteerable-turn");
+  const f = fixture(
+    baseRun({ tasks: [{ ...task, attemptIds: [work.id] }], attempts: [work] }),
+    true,
+    {
+      projectedTurns: [
+        {
+          threadId: task.owner.threadId!,
+          turnId,
+          pendingMessageId: work.requestMessageId,
+          sourceProposedPlanThreadId: null,
+          sourceProposedPlanId: null,
+          assistantMessageId: null,
+          state: "running",
+          requestedAt: now,
+          startedAt: now,
+          completedAt: null,
+          checkpointTurnCount: null,
+          checkpointRef: null,
+          checkpointStatus: null,
+          checkpointFiles: [],
+        },
+      ],
+    },
+  );
+  return Effect.gen(function* () {
+    const runtime = yield* make;
+    const store = yield* OrchestrationStore;
+    yield* runtime.sendMessage(leadThreadId, {
+      id: "unsteerable-message",
+      toThreadId: task.owner.threadId!,
+      text: "Update the test case before completion.",
+      replyRequested: false,
+    });
+    yield* runtime.tick();
+    expect(f.steerCalls).toHaveLength(0);
+    expect(f.current()!.messages[0]?.delivery?.status).toBe("queued");
+    yield* runtime.tick();
+    expect(f.steerCalls).toHaveLength(0);
+    const run = f.current()!;
+    yield* store.update(
+      run.id,
+      run.revision,
+      (state) => ({
+        ...state,
+        attempts: state.attempts.map((candidate) =>
+          candidate.id === work.id
+            ? { ...candidate, status: "succeeded" as const, result: successfulWorkerResult }
+            : candidate,
+        ),
+      }),
+      "test-worker-ended",
+    );
+    yield* runtime.tick();
+    expect(f.current()!.messages[0]?.delivery?.status).toBe("sent");
+    expect(
+      f.current()!.attempts.findLast((candidate) => candidate.taskId === task.id)?.prompt,
+    ).toContain("Team message ID: unsteerable-message");
+  }).pipe(Effect.provide(f.layer));
+});
+
+it.effect("pauses and tells the lead about an unconfirmed native steer after restart", () => {
+  const task = retryTask();
+  const work = attempt({
+    id: "restart-active-worker",
+    role: "work",
+    owner: task.owner,
+    taskId: task.id,
+    status: "running",
+  });
+  const turnId = TurnId.make("restart-active-turn");
+  const providerMessageId = MessageId.make("team-inbox-runtime-run-restart-message");
+  const seed = baseRun({
+    tasks: [{ ...task, attemptIds: [work.id] }],
+    attempts: [work],
+    messages: [
+      {
+        id: "restart-message",
+        from: baseRun().lead,
+        to: task.owner,
+        text: "Check the active branch.",
+        replyRequested: false,
+        createdAt: now,
+        readAt: null,
+        delivery: { status: "pending", providerMessageId, turnId },
+      },
+    ],
+  });
+  const f = fixture(seed, true, {
+    projectedTurns: [
+      {
+        threadId: task.owner.threadId!,
+        turnId,
+        pendingMessageId: work.requestMessageId,
+        sourceProposedPlanThreadId: null,
+        sourceProposedPlanId: null,
+        assistantMessageId: null,
+        state: "running",
+        requestedAt: now,
+        startedAt: now,
+        completedAt: null,
+        checkpointTurnCount: null,
+        checkpointRef: null,
+        checkpointStatus: null,
+        checkpointFiles: [],
+      },
+    ],
+  });
+  return Effect.gen(function* () {
+    yield* (yield* make).tick();
+    expect(f.steerCalls).toHaveLength(0);
+    expect(f.current()!.status).toBe("paused");
+    expect(f.current()!.messages[0]?.delivery).toMatchObject({
+      status: "failed",
+      detail: expect.stringContaining("may have succeeded"),
+    });
+    expect(f.current()!.attempts.at(-1)?.prompt).toContain("restart-message");
+  }).pipe(Effect.provide(f.layer));
+});
+
+it.effect("reconciles a projected native message ID after restart without sending twice", () => {
+  const task = retryTask();
+  const work = attempt({
+    id: "observed-active-worker",
+    role: "work",
+    owner: task.owner,
+    taskId: task.id,
+    status: "running",
+  });
+  const turnId = TurnId.make("observed-active-turn");
+  const providerMessageId = MessageId.make("team-inbox-runtime-run-observed-message");
+  const seed = baseRun({
+    tasks: [{ ...task, attemptIds: [work.id] }],
+    attempts: [work],
+    messages: [
+      {
+        id: "observed-message",
+        from: baseRun().lead,
+        to: task.owner,
+        text: "Check the active branch.",
+        replyRequested: false,
+        createdAt: now,
+        readAt: null,
+        delivery: { status: "pending", providerMessageId, turnId },
+      },
+    ],
+  });
+  const f = fixture(seed, true, {
+    existingThreads: [task.owner.threadId!],
+    threadMessages: [
+      {
+        id: providerMessageId,
+        role: "user",
+        text: "Check the active branch.",
+        turnId,
+        streaming: false,
+        createdAt: now,
+        updatedAt: now,
+      },
+    ],
+  });
+  return Effect.gen(function* () {
+    yield* (yield* make).tick();
+    expect(f.steerCalls).toHaveLength(0);
+    expect(f.current()!.messages[0]?.delivery?.status).toBe("steered");
+    expect(f.current()!.status).toBe("running");
+  }).pipe(Effect.provide(f.layer));
+});
+
+it.effect("continues a finished worker for a queued peer message before lead review", () => {
+  const task = retryTask();
+  const peer = {
+    ...retryTask(),
+    id: "peer-task",
+    owner: {
+      ...retryTask().owner,
+      threadId: ThreadId.make("team-peer-worker"),
+      taskId: "peer-task",
+    },
+  };
+  const work = attempt({
+    id: "worker-finished-before-message",
+    role: "work",
+    owner: task.owner,
+    taskId: task.id,
+    status: "succeeded",
+    result: successfulWorkerResult,
+  });
+  const f = fixture(
+    baseRun({ tasks: [{ ...task, attemptIds: [work.id] }, peer], attempts: [work] }),
+  );
+  return Effect.gen(function* () {
+    const runtime = yield* make;
+    yield* runtime.sendMessage(peer.owner.threadId!, {
+      id: "peer-to-worker",
+      toThreadId: task.owner.threadId!,
+      text: "The response should include the request ID.",
+      replyRequested: true,
+    });
+    yield* runtime.tick();
+    const current = f.current()!;
+    const continuation = current.attempts.findLast((candidate) => candidate.taskId === task.id);
+    expect(continuation?.status).toBe("running");
+    expect(continuation?.prompt).toContain("Team message ID: peer-to-worker");
+    expect(current.messages[0]?.delivery?.status).toBe("sent");
+    expect(
+      current.attempts.some(
+        (candidate) => candidate.taskId === task.id && candidate.role === "review",
+      ),
+    ).toBe(false);
+    yield* (yield* make).tick();
+    expect(
+      f
+        .current()!
+        .attempts.filter((candidate) => candidate.taskId === task.id && candidate.role === "work"),
+    ).toHaveLength(2);
+  }).pipe(Effect.provide(f.layer));
+});
+
+it.effect("withdraws a ready settlement when a worker message arrives before integration", () => {
+  const seed = applyingSettlementSeed();
+  const task = seed.run.tasks[0]!;
+  const work = attempt({
+    id: seed.settlement.attemptId,
+    role: "work",
+    owner: task.owner,
+    taskId: task.id,
+    status: "succeeded",
+    result: successfulWorkerResult,
+  });
+  const f = fixture({
+    ...seed.run,
+    attempts: [work],
+    settlements: [{ ...seed.settlement, status: "ready" }],
+  });
+  return Effect.gen(function* () {
+    const runtime = yield* make;
+    yield* runtime.sendMessage(leadThreadId, {
+      id: "late-before-merge",
+      toThreadId: task.owner.threadId!,
+      text: "Include the alternate response path before integration.",
+      replyRequested: false,
+    });
+    yield* runtime.tick();
+    const run = f.current()!;
+    expect(run.settlements[0]?.status).toBe("rejected");
+    expect(run.tasks[0]).toMatchObject({ status: "running", settlementId: null });
+    expect(run.messages[0]?.delivery?.status).toBe("sent");
+    expect(run.attempts.findLast((candidate) => candidate.taskId === task.id)?.prompt).toContain(
+      "late-before-merge",
+    );
+    expect(f.processCalls.some((call) => call.command === "git" && call.args[0] === "merge")).toBe(
+      false,
+    );
+  }).pipe(Effect.provide(f.layer));
+});
+
+it.effect("rejects direct client messages to a worker while retaining lead access", () => {
+  const task = retryTask();
+  const f = fixture(baseRun({ tasks: [task] }));
+  return Effect.gen(function* () {
+    const runtime = yield* make;
+    const rejection = yield* runtime
+      .assertClientMessageAllowed(task.owner.threadId!)
+      .pipe(Effect.flip);
+    expect(rejection.message).toContain("Send messages to the Flow lead");
+    yield* runtime.assertClientMessageAllowed(leadThreadId);
+    yield* runtime.sendMessage(leadThreadId, {
+      id: "internal-lead-message",
+      toThreadId: task.owner.threadId!,
+      text: "Internal team message remains allowed.",
+      replyRequested: false,
+    });
+    expect(f.current()!.messages).toHaveLength(1);
+  }).pipe(Effect.provide(f.layer));
+});
+
+it.effect("treats a message ID as idempotent only when reply metadata matches", () => {
+  const task = retryTask();
+  const f = fixture(baseRun({ tasks: [task] }));
+  return Effect.gen(function* () {
+    const runtime = yield* make;
+    const original = yield* runtime.sendMessage(leadThreadId, {
+      id: "message-with-reply-policy",
+      toThreadId: task.owner.threadId!,
+      text: "Check the contract.",
+      replyRequested: false,
+    });
+    expect(
+      yield* runtime.sendMessage(leadThreadId, {
+        id: "message-with-reply-policy",
+        toThreadId: task.owner.threadId!,
+        text: "Check the contract.",
+        replyRequested: false,
+      }),
+    ).toEqual(original);
+    const conflict = yield* runtime
+      .sendMessage(leadThreadId, {
+        id: "message-with-reply-policy",
+        toThreadId: task.owner.threadId!,
+        text: "Check the contract.",
+        replyRequested: true,
+      })
+      .pipe(Effect.flip);
+    expect(conflict.code).toBe("conflict");
+    expect(f.current()!.messages).toHaveLength(1);
+  }).pipe(Effect.provide(f.layer));
+});
+
+it.effect("keeps a message durable without waking a manually paused run", () => {
+  const task = retryTask();
+  const f = fixture(baseRun({ status: "paused", statusReason: "Paused by user.", tasks: [task] }));
+  return Effect.gen(function* () {
+    const runtime = yield* make;
+    yield* runtime.sendMessage(leadThreadId, {
+      id: "paused-worker-message",
+      toThreadId: task.owner.threadId!,
+      text: "Check the formatter after resuming.",
+      replyRequested: false,
+    });
+    yield* runtime.tick();
+    expect(f.current()!.messages[0]?.delivery?.status).toBe("pending");
+    expect(f.commands).toHaveLength(0);
+  }).pipe(Effect.provide(f.layer));
+});
+
+it.effect(
+  "does not wake supervision for historical worker errors after an explicit user pause",
+  () => {
+    const task = retryTask();
+    const oldFailure = {
+      ...attempt({
+        id: "historical-worker-error",
+        role: "work",
+        owner: task.owner,
+        taskId: task.id,
+        status: "failed",
+      }),
+      failure: { kind: "provider-error" as const, message: "Earlier worker error" },
+    };
+    const f = fixture(
+      baseRun({
+        status: "paused",
+        statusReason: "Paused by user.",
+        tasks: [{ ...task, attemptIds: [oldFailure.id] }],
+        attempts: [oldFailure],
+      }),
+    );
+
+    return Effect.gen(function* () {
+      const runtime = yield* make;
+      yield* runtime.tick();
+
+      const run = f.current()!;
+      expect(run.status).toBe("paused");
+      expect(run.attempts).toEqual([oldFailure]);
+      expect(
+        f.commands.filter(
+          (command) => command.type === "thread.turn.start" && command.threadId === leadThreadId,
+        ),
+      ).toHaveLength(0);
+    }).pipe(Effect.provide(f.layer));
+  },
+);
+
 it.effect(
   "keeps a replacement worker running across ticks and restart, then reviews its result",
   () => {
@@ -2581,7 +3548,9 @@ for (const retryStatus of ["reserved", "running", "failed"] as const) {
         const runtime = yield* make;
         yield* runtime.tick();
         yield* runtime.tick();
-        expect(f.current()!.attempts).toHaveLength(2);
+        expect(f.current()!.attempts.filter((candidate) => candidate.role === "work")).toHaveLength(
+          2,
+        );
         expect(f.current()!.status).toBe(retryStatus === "failed" ? "paused" : "running");
         if (retryStatus === "failed") expect(f.current()!.statusReason).toBe("Replacement failed");
       }).pipe(Effect.provide(f.layer));

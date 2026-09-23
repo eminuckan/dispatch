@@ -1,15 +1,21 @@
 import { act, create, type ReactTestRenderer } from "react-test-renderer";
+import type { ReactNode } from "react";
 import { beforeEach, expect, it, vi } from "vite-plus/test";
 import {
   EnvironmentId,
+  MessageId,
   ProviderInstanceId,
   ThreadId,
+  TurnId,
   type TeamThreadView,
 } from "@dispatch/contracts";
+import type { TimelineEntry } from "../../session-logic";
 
 const mocks = vi.hoisted(() => ({
   providerDecision: vi.fn(),
   openPanel: vi.fn(),
+  query: vi.fn(),
+  thread: vi.fn(),
 }));
 
 vi.mock("../../state/team", () => ({
@@ -21,6 +27,11 @@ vi.mock("../../state/team", () => ({
 }));
 vi.mock("../../state/use-atom-command", () => ({
   useAtomCommand: () => mocks.providerDecision,
+}));
+vi.mock("../../state/query", () => ({ useEnvironmentQuery: mocks.query }));
+vi.mock("../../state/entities", () => ({ useThread: mocks.thread }));
+vi.mock("@tanstack/react-router", () => ({
+  Link: ({ children }: { children: ReactNode }) => <a>{children}</a>,
 }));
 vi.mock("../../rightPanelStore", () => ({
   useRightPanelStore: { getState: () => ({ open: mocks.openPanel }) },
@@ -34,7 +45,8 @@ vi.mock("@dispatch/client-runtime/state/runtime", async (importOriginal) => {
   };
 });
 
-import { TeamProviderLimitDecision } from "./TeamConversation";
+import { TeamAgentsPanel, TeamConversation, TeamProviderLimitDecision } from "./TeamConversation";
+import { teamAgentName } from "./teamConversation.logic";
 
 (
   globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
@@ -259,4 +271,228 @@ it("renders nothing outside awaiting-provider-decision", async () => {
     );
   });
   expect(renderer.toJSON()).toBeNull();
+});
+
+function assistantEntry(id: string, text: string): Extract<TimelineEntry, { kind: "message" }> {
+  return {
+    id,
+    kind: "message",
+    createdAt: "now",
+    message: {
+      id: MessageId.make(id),
+      role: "assistant",
+      text,
+      turnId: null,
+      streaming: false,
+      createdAt: "now",
+      updatedAt: "now",
+    },
+  };
+}
+
+it("keeps structured output readable across lead and worker thread selection while the run view is absent", async () => {
+  const windowStub = {
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+    setInterval: vi.fn(() => 1),
+    clearInterval: vi.fn(),
+  };
+  vi.stubGlobal("window", windowStub);
+  vi.stubGlobal("document", { hidden: false });
+  mocks.query.mockReturnValue({
+    data: null,
+    error: null,
+    isPending: false,
+    isSuccess: true,
+    refresh: vi.fn(),
+  });
+
+  const planEntry = assistantEntry(
+    "plan-follow-up",
+    JSON.stringify({
+      acceptance: ["Saved profiles remain unchanged."],
+      tasks: [
+        {
+          id: "ui-profile",
+          objective: "Keep profiles independent by effort.",
+          acceptance: ["The selected effort remains visible."],
+          dependencies: [],
+          context: "Private planning context.",
+        },
+      ],
+      rationale: "This is the lead's complete plan.",
+    }),
+  );
+  const workerEntry = assistantEntry(
+    "worker-settlement",
+    JSON.stringify({
+      summary: "The profile rows now show their selected effort.",
+      commit: "abcdef0123456789",
+      changedFiles: ["TeamSettingsPanel.tsx"],
+      checks: [{ command: "vp", args: ["test", "run"], outcome: "passed" }],
+      limitations: ["The integrated browser pass is pending."],
+    }),
+  );
+  const ordinaryJson = assistantEntry("manual-json", '{"summary":"A normal JSON example."}');
+
+  const view = (threadId: ThreadId, entries: TimelineEntry[]) => (
+    <TeamConversation environmentId={environmentId} threadId={threadId} entries={entries}>
+      {(visible) => (
+        <div>
+          {visible.flatMap((entry) => (entry.kind === "message" ? [entry.message.text] : []))}
+        </div>
+      )}
+    </TeamConversation>
+  );
+
+  let renderer!: ReactTestRenderer;
+  await act(async () => {
+    renderer = create(view(ThreadId.make("team-run-1-lead"), [planEntry]));
+  });
+  expect(JSON.stringify(renderer.toJSON())).toContain("This is the lead's complete plan.");
+  expect(JSON.stringify(renderer.toJSON())).not.toContain('"acceptance"');
+  expect(JSON.stringify(renderer.toJSON())).not.toContain("Private planning context.");
+
+  await act(async () => {
+    renderer.update(view(ThreadId.make("team-run-1-worker-task"), [workerEntry, ordinaryJson]));
+  });
+  const workerText = JSON.stringify(renderer.toJSON());
+  expect(workerText).toContain("The profile rows now show their selected effort.");
+  expect(workerText).not.toContain("abcdef0123456789");
+  const workerOutput = renderer.toJSON();
+  if (!workerOutput || Array.isArray(workerOutput)) throw new Error("Expected worker output.");
+  expect(workerOutput.children).toContain('{"summary":"A normal JSON example."}');
+
+  await act(async () => {
+    renderer.update(view(ThreadId.make("team-run-1-lead"), [planEntry]));
+    renderer.unmount();
+  });
+  vi.unstubAllGlobals();
+});
+
+it("tracks the lead thread while the Agents panel is opened from a worker chat", async () => {
+  const workerThreadId = ThreadId.make("team-run-1-worker-task");
+  const flow = { ...run(), status: "paused" as const, failovers: [] };
+  mocks.query.mockReturnValue({ data: flow, error: null, refresh: vi.fn() });
+  let leadThread: unknown = {
+    session: { status: "running", activeTurnId: TurnId.make("manual-lead-turn") },
+    latestTurn: null,
+  };
+  mocks.thread.mockImplementation(() => leadThread);
+
+  const view = () => (
+    <TeamAgentsPanel environmentId={environmentId} threadId={workerThreadId} cwd={undefined}>
+      <div>worker chat</div>
+    </TeamAgentsPanel>
+  );
+  let renderer!: ReactTestRenderer;
+  await act(async () => {
+    renderer = create(view());
+  });
+  expect(mocks.thread).toHaveBeenCalledWith({ environmentId, threadId: currentThreadId });
+  const leadStatus = () =>
+    renderer.root.findAll(
+      (node) =>
+        node.type === "span" &&
+        typeof node.props.className === "string" &&
+        node.props.className.includes("text-right") &&
+        node.children.length === 1,
+    )[0]?.children[0];
+  expect(leadStatus()).toBe("running");
+
+  leadThread = {
+    session: { status: "idle", activeTurnId: null },
+    latestTurn: { state: "completed", turnId: TurnId.make("manual-lead-turn") },
+  };
+  await act(async () => {
+    renderer.update(view());
+  });
+  expect(leadStatus()).toBe("paused");
+  await act(async () => renderer.unmount());
+});
+
+it("shows each durable Flow message once in both member chats while switching routes", async () => {
+  const workerThreadId = ThreadId.make("team-run-1-worker-task");
+  const task: TeamThreadView["tasks"][number] = {
+    id: "task-1",
+    objective: "Update the feature",
+    context: "Keep the change focused.",
+    acceptance: ["The direct message appears in this chat."],
+    dependencies: [],
+    owner: { role: "worker", profileId: "current", threadId: workerThreadId, taskId: "task-1" },
+    branch: null,
+    worktreePath: null,
+    status: "running",
+    attemptIds: [],
+    settlementId: null,
+    result: null,
+  };
+  const message = {
+    id: "flow-message-1",
+    from: { role: "lead" as const, profileId: "current", threadId: currentThreadId, taskId: null },
+    to: task.owner,
+    text: "Please check the retry path.",
+    replyRequested: false,
+    createdAt: "2026-09-23T11:00:00.000Z",
+    readAt: null,
+    delivery: { status: "sent" as const },
+  };
+  const teamRun = { ...run(), status: "running" as const, tasks: [task], messages: [message] };
+  const fromName = teamAgentName(teamRun, currentThreadId);
+  const toName = teamAgentName(teamRun, workerThreadId);
+  mocks.query.mockReturnValue({
+    data: teamRun,
+    error: null,
+    isPending: false,
+    isSuccess: true,
+    refresh: vi.fn(),
+  });
+  vi.stubGlobal("window", {
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+    setInterval: vi.fn(() => 1),
+    clearInterval: vi.fn(),
+  });
+  vi.stubGlobal("document", { hidden: false });
+
+  const view = (threadId: ThreadId) => (
+    <TeamConversation environmentId={environmentId} threadId={threadId} entries={[]}>
+      {(_entries, messages) => (
+        <div>
+          {messages.map((entry) => (
+            <article key={entry.id} data-id={entry.id}>
+              Flow message · {entry.from} → {entry.to}: {entry.text} · {entry.deliveryStatus}
+            </article>
+          ))}
+        </div>
+      )}
+    </TeamConversation>
+  );
+  let renderer!: ReactTestRenderer;
+  await act(async () => {
+    renderer = create(view(currentThreadId));
+  });
+  const assertMessageVisibleOnce = () => {
+    const articles = renderer.root.findAll((node) => node.props["data-id"] === message.id);
+    expect(articles).toHaveLength(1);
+    expect(articles[0]?.children).toEqual([
+      "Flow message · ",
+      fromName,
+      " → ",
+      toName,
+      ": ",
+      message.text,
+      " · ",
+      "sent",
+    ]);
+  };
+  assertMessageVisibleOnce();
+
+  await act(async () => renderer.update(view(workerThreadId)));
+  assertMessageVisibleOnce();
+
+  await act(async () => renderer.update(view(ThreadId.make("team-unrelated-worker"))));
+  expect(JSON.stringify(renderer.toJSON())).not.toContain(message.text);
+  await act(async () => renderer.unmount());
+  vi.unstubAllGlobals();
 });

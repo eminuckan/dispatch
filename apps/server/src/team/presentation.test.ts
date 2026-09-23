@@ -10,6 +10,8 @@ import {
 
 import { SMART_ROUTING_STANDARD_FALLBACK_NOTICE, teamThreadView } from "./presentation.ts";
 
+import { TEAM_SUPERVISION_PROMPT_MARKER } from "@dispatch/shared/teamProtocolPresentation";
+
 const profile = {
   id: "lead-profile",
   label: "Luna",
@@ -101,7 +103,10 @@ const run: TeamRun = {
     },
   ],
   attempts: [
-    attempt("plan", '{"tasks":[{"objective":"Rename heading"}],"rationale":"Check the heading."}'),
+    attempt(
+      "plan",
+      '{"acceptance":["Heading correct"],"tasks":[{"id":"rename-heading","objective":"Rename heading","acceptance":["Heading correct"],"dependencies":[],"context":"Update the visible heading."}],"rationale":"Check the heading."}',
+    ),
     attempt("review", '{"action":"accept","summary":"Heading checked.","checks":[]}'),
     attempt("work", 'A normal JSON example: {"action":"accept"}'),
   ],
@@ -121,10 +126,40 @@ it("projects attempts and derives the lead profile from the frozen policy", () =
   expect(view.phase).toBe("done");
   expect(view.notice).toBe("Verified the heading.");
   expect(view.turns.map((turn) => [turn.role, turn.summary])).toEqual([
-    ["plan", "Check the heading.\n\n- Rename heading"],
+    [
+      "plan",
+      "Check the heading.\n\nPlanned work:\n- Rename heading\n\nCompletion checks:\n- Heading correct",
+    ],
     ["review", "Heading checked."],
     ["worker", 'A normal JSON example: {"action":"accept"}'],
   ]);
+});
+
+it("projects the worker result summary instead of the settlement JSON", () => {
+  const worker = attempt(
+    "work",
+    JSON.stringify({
+      summary: "Updated the Flow activity statuses.",
+      commit: "abc1234",
+      changedFiles: ["TeamConversation.tsx"],
+      checks: [],
+      limitations: ["Integrated browser verification is pending."],
+    }),
+  );
+  const view = teamThreadView({ ...run, attempts: [worker] })!;
+  expect(view.turns[0]?.summary).toBe(
+    "Updated the Flow activity statuses.\n\nLimitations:\n- Integrated browser verification is pending.",
+  );
+  expect(view.turns[0]?.summary).not.toContain("abc1234");
+});
+
+it("keeps freeform supervision updates visible in activity history", () => {
+  const supervisor = {
+    ...attempt("review", "The worker is blocked on a decision."),
+    prompt: `${TEAM_SUPERVISION_PROMPT_MARKER}\nRead the mailbox and report useful progress.`,
+  };
+  const view = teamThreadView({ ...run, attempts: [supervisor] })!;
+  expect(view.turns[0]?.summary).toBe("The worker is blocked on a decision.");
 });
 
 it("projects direct execution mode without changing internal lead ownership", () => {

@@ -5,6 +5,7 @@ import { ProjectId } from "./baseSchemas.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
 import {
   TeamModelRecommendations,
+  TeamMessage,
   TeamAttempt,
   TeamPolicy,
   TeamProviderDecision,
@@ -29,6 +30,7 @@ const decodeStartRuntimeMode = Schema.decodeUnknownSync(TeamStart.fields.runtime
 const decodeSettings = Schema.decodeUnknownSync(TeamSettings);
 const decodeTask = Schema.decodeUnknownSync(TeamTask);
 const encodeTask = Schema.encodeSync(TeamTask);
+const decodeMessage = Schema.decodeUnknownSync(TeamMessage);
 
 const attachments = [
   {
@@ -46,6 +48,31 @@ const attachments = [
     sizeBytes: 512,
   },
 ];
+
+it("decodes legacy team messages and durable provider delivery receipts", () => {
+  const lead = { role: "lead", profileId: "lead", threadId: "team-lead", taskId: null };
+  const worker = { role: "worker", profileId: "worker", threadId: "team-worker", taskId: "task" };
+  const legacy = {
+    id: "message",
+    from: lead,
+    to: worker,
+    text: "Check the response.",
+    replyRequested: false,
+    createdAt: "2026-09-23T12:00:00.000Z",
+    readAt: null,
+  };
+  expect(decodeMessage(legacy).delivery).toBeUndefined();
+  expect(
+    decodeMessage({
+      ...legacy,
+      delivery: {
+        status: "steered",
+        providerMessageId: "provider-message",
+        turnId: "turn",
+      },
+    }).delivery,
+  ).toMatchObject({ status: "steered", providerMessageId: "provider-message" });
+});
 
 describe("team policy contracts", () => {
   it("keeps routing policy focused on enablement, profiles, concurrency and provider-limit behavior", () => {

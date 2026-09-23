@@ -24,6 +24,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
+import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
@@ -35,6 +36,7 @@ import {
   retainPendingAttachmentsForOwner,
 } from "../assets/AttachmentUpload.ts";
 import { GitWorkflowService } from "../git/GitWorkflowService.ts";
+import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import {
   isOrchestrationCommandRejection,
   OrchestrationCommandPreviouslyRejectedError,
@@ -45,6 +47,7 @@ import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSna
 import { ProjectionTurnRepositoryLive } from "../persistence/Layers/ProjectionTurns.ts";
 import { ProjectionTurnRepository } from "../persistence/Services/ProjectionTurns.ts";
 import { ProcessRunner, layer as ProcessRunnerLive } from "../processRunner.ts";
+import { ProviderService } from "../provider/Services/ProviderService.ts";
 import { forkParked } from "../serverActivation.ts";
 import { OrchestrationAdvisor } from "./OrchestrationAdvisor.ts";
 import { verificationDecision } from "./OrchestrationEvidence.ts";
@@ -56,6 +59,8 @@ import {
   providerHandoffPrompt,
   reviewPrompt,
   settlementConflictPrompt,
+  FLOW_SUPERVISION_PROMPT_MARKER,
+  supervisionPrompt,
   workerCorrectionPrompt,
   workerPrompt,
 } from "./OrchestrationPrompts.ts";
@@ -78,6 +83,16 @@ const isPreviouslyRejected = Schema.is(OrchestrationCommandPreviouslyRejectedErr
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const nowIso = DateTime.now.pipe(Effect.map(DateTime.formatIso));
 const MAX_VERIFY_OUTPUT = 16 * 1024;
+const WORKER_COMMIT_SHA = /^[0-9a-f]{7,64}$/iu;
+const FULL_COMMIT_SHA = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/iu;
+const SUPERVISION_RECEIPTS_PREFIX = "DISPATCH_FLOW_RECEIPTS_V1 ";
+const MESSAGE_CONTINUATION_MARKER = "DISPATCH_FLOW_MESSAGE_CONTINUATION_V1";
+const MESSAGE_PROMPT_LIMIT = 63_000;
+const SupervisionReceipts = Schema.Struct({
+  messageIds: Schema.Array(Schema.String),
+  workerAttemptIds: Schema.Array(Schema.String),
+});
+const decodeSupervisionReceipts = Schema.decodeSync(Schema.fromJsonString(SupervisionReceipts));
 
 const unavailable = (message: string) => new TeamError({ code: "unavailable", message });
 const invalid = (message: string) => new TeamError({ code: "invalid", message });
@@ -103,8 +118,69 @@ function ownerForThread(run: TeamRun, threadId: ThreadId): TeamOwner | null {
 }
 
 function attemptCount(run: TeamRun, taskId: string, role: TeamAttempt["role"]): number {
-  return run.attempts.filter((attempt) => attempt.taskId === taskId && attempt.role === role)
-    .length;
+  return run.attempts.filter(
+    (attempt) =>
+      attempt.taskId === taskId &&
+      attempt.role === role &&
+      !attempt.prompt.startsWith(MESSAGE_CONTINUATION_MARKER),
+  ).length;
+}
+
+function awaitsDelivery(message: TeamMessage): boolean {
+  return (
+    message.delivery === undefined ||
+    message.delivery.status === "pending" ||
+    message.delivery.status === "queued"
+  );
+}
+
+function messageInstruction(message: TeamMessage): string {
+  return [
+    `Team message ID: ${message.id}`,
+    `From: ${message.from.role}${message.from.taskId ? ` task ${message.from.taskId}` : ""}`,
+    `To: ${message.to.role}${message.to.taskId ? ` task ${message.to.taskId}` : ""}`,
+    `Reply requested: ${message.replyRequested ? "yes" : "no"}`,
+    `Text: ${message.text}`,
+  ].join("\n");
+}
+
+function messageBatch(messages: ReadonlyArray<TeamMessage>, prompt: string): TeamMessage[] {
+  const selected: TeamMessage[] = [];
+  let length = prompt.length;
+  for (const message of messages) {
+    const addition = messageInstruction(message).length + 2;
+    if (length + addition > MESSAGE_PROMPT_LIMIT) break;
+    selected.push(message);
+    length += addition;
+    if (selected.length === 4) break;
+  }
+  return selected;
+}
+
+function supervisionReceipts(run: TeamRun): {
+  readonly messageIds: ReadonlySet<string>;
+  readonly workerAttemptIds: ReadonlySet<string>;
+} {
+  const messageIds = new Set<string>();
+  const workerAttemptIds = new Set<string>();
+  for (const attempt of run.attempts) {
+    if (
+      attempt.role !== "review" ||
+      attempt.taskId !== null ||
+      !attempt.prompt.startsWith(FLOW_SUPERVISION_PROMPT_MARKER)
+    )
+      continue;
+    const header = attempt.prompt.split(/\r?\n/, 2)[1];
+    if (!header?.startsWith(SUPERVISION_RECEIPTS_PREFIX)) continue;
+    try {
+      const receipt = decodeSupervisionReceipts(header.slice(SUPERVISION_RECEIPTS_PREFIX.length));
+      for (const id of receipt.messageIds) messageIds.add(id);
+      for (const id of receipt.workerAttemptIds) workerAttemptIds.add(id);
+    } catch {
+      // Ignore malformed receipts; they cannot consume mailbox or failure events.
+    }
+  }
+  return { messageIds, workerAttemptIds };
 }
 
 function makeAttempt(input: {
@@ -167,9 +243,12 @@ export const make = Effect.gen(function* () {
   const engine = yield* OrchestrationEngineService;
   const projection = yield* ProjectionSnapshotQuery;
   const turns = yield* ProjectionTurnRepository;
+  const providers = yield* ProviderService;
   const git = yield* GitWorkflowService;
+  const gitVcs = yield* GitVcsDriver.GitVcsDriver;
   const processes = yield* ProcessRunner;
   const schedulerLock = yield* Semaphore.make(1);
+  const supervisorWakeQueue = yield* Queue.unbounded<void>();
 
   const runProcess = (input: {
     cwd: string;
@@ -433,15 +512,67 @@ export const make = Effect.gen(function* () {
     attempt = current.attempts.find((candidate) => candidate.id === attemptId)!;
     const threadId = ownerThread(attempt.owner);
     const requestMessageId = attempt.requestMessageId;
+    const isSupervision = attempt.prompt.startsWith(FLOW_SUPERVISION_PROMPT_MARKER);
+    const eligible = current.messages.filter(
+      (message) =>
+        message.to.threadId === threadId &&
+        awaitsDelivery(message) &&
+        (isSupervision ? message.delivery?.providerMessageId === requestMessageId : true),
+    );
+    const incoming = isSupervision ? eligible : messageBatch(eligible, attempt.prompt);
+    if (incoming.length > 0) {
+      const newInstructions = isSupervision
+        ? []
+        : incoming.filter(
+            (message) => !attempt!.prompt.includes(`Team message ID: ${message.id}\n`),
+          );
+      current = yield* store.update(
+        current.id,
+        current.revision,
+        (state) => ({
+          ...state,
+          attempts: state.attempts.map((candidate) =>
+            candidate.id === attemptId && newInstructions.length > 0
+              ? {
+                  ...candidate,
+                  prompt: `${candidate.prompt}\n\n${newInstructions.map(messageInstruction).join("\n\n")}`,
+                }
+              : candidate,
+          ),
+          messages: state.messages.map((message) =>
+            incoming.some((selected) => selected.id === message.id)
+              ? { ...message, delivery: { status: "queued", providerMessageId: requestMessageId } }
+              : message,
+          ),
+        }),
+        "team-messages-assigned",
+      );
+      attempt = current.attempts.find((candidate) => candidate.id === attemptId)!;
+    }
+    const markAttemptMessagesSent = (state: TeamRun) => ({
+      ...state,
+      attempts: state.attempts.map((candidate) =>
+        candidate.id === attemptId ? { ...candidate, status: "running" as const } : candidate,
+      ),
+      messages: state.messages.map((message) =>
+        message.delivery?.status === "queued" &&
+        message.delivery.providerMessageId === requestMessageId
+          ? {
+              ...message,
+              delivery: { status: "sent" as const, providerMessageId: requestMessageId },
+            }
+          : message,
+      ),
+    });
     const pending = yield* turns
       .getPendingTurnStartByThreadId({ threadId })
       .pipe(Effect.mapError(mapError));
     if (Option.isSome(pending)) {
       if (pending.value.messageId !== attempt.requestMessageId) return current;
-      return yield* setAttempt(
-        current,
-        attempt.id,
-        (candidate) => ({ ...candidate, status: "running" }),
+      return yield* store.update(
+        current.id,
+        current.revision,
+        markAttemptMessagesSent,
         "attempt-reconciled-running",
       );
     }
@@ -453,10 +584,10 @@ export const make = Effect.gen(function* () {
           (candidate.state === "pending" || candidate.state === "running"),
       )
     )
-      return yield* setAttempt(
-        current,
-        attempt.id,
-        (candidate) => ({ ...candidate, status: "running" }),
+      return yield* store.update(
+        current.id,
+        current.revision,
+        markAttemptMessagesSent,
         "attempt-reconciled-running",
       );
     const thread = yield* projection.getThreadDetailById(threadId).pipe(Effect.mapError(mapError));
@@ -510,10 +641,10 @@ export const make = Effect.gen(function* () {
         }),
         "attempt-rejected",
       );
-    return yield* setAttempt(
-      current,
-      attempt.id,
-      (candidate) => ({ ...candidate, status: "running" }),
+    return yield* store.update(
+      current.id,
+      current.revision,
+      markAttemptMessagesSent,
       "attempt-running",
     );
   });
@@ -651,6 +782,293 @@ export const make = Effect.gen(function* () {
       }),
       succeeded ? "attempt-succeeded" : "attempt-failed",
     );
+  });
+
+  const deliverTeamMessages = Effect.fn("TeamRuntime.deliverTeamMessages")(function* (
+    run: TeamRun,
+  ) {
+    let current = run;
+    for (const message of run.messages.filter(awaitsDelivery)) {
+      const threadId = message.to.threadId;
+      if (!threadId) continue;
+      if (message.delivery?.providerMessageId && message.delivery.turnId) {
+        const providerMessageId = message.delivery.providerMessageId;
+        const turnId = message.delivery.turnId;
+        const detail = yield* projection
+          .getThreadDetailById(threadId)
+          .pipe(Effect.mapError(mapError));
+        const observed =
+          Option.isSome(detail) &&
+          detail.value.messages.some((candidate) => candidate.id === providerMessageId);
+        current = yield* store.update(
+          current.id,
+          current.revision,
+          (state) => ({
+            ...state,
+            status: observed ? state.status : "paused",
+            statusReason: observed
+              ? state.statusReason
+              : "Native team-message delivery could not be confirmed. Ask the lead before retrying it.",
+            messages: state.messages.map((candidate) =>
+              candidate.id === message.id
+                ? {
+                    ...candidate,
+                    delivery: observed
+                      ? { status: "steered", providerMessageId, turnId }
+                      : {
+                          status: "failed",
+                          providerMessageId,
+                          turnId,
+                          detail:
+                            "Native admission may have succeeded without a projected receipt.",
+                        },
+                  }
+                : candidate,
+            ),
+          }),
+          observed ? "team-message-native-reconciled" : "team-message-native-uncertain",
+        );
+        if (!observed) return current;
+        continue;
+      }
+      const task = current.tasks.find((candidate) => candidate.owner.threadId === threadId);
+      if (
+        ["completed", "cancelled", "failed"].includes(current.status) ||
+        (task && ["settled", "cancelled"].includes(task.status))
+      ) {
+        current = yield* store.update(
+          current.id,
+          current.revision,
+          (state) => ({
+            ...state,
+            messages: state.messages.map((candidate) =>
+              candidate.id === message.id
+                ? {
+                    ...candidate,
+                    delivery: { status: "closed", detail: "Recipient work has ended." },
+                  }
+                : candidate,
+            ),
+          }),
+          "team-message-closed",
+        );
+        continue;
+      }
+      const active = current.attempts.findLast(
+        (attempt) => attempt.owner.threadId === threadId && attempt.status === "running",
+      );
+      if (!active || message.delivery?.status === "queued") continue;
+      const projected = yield* turns.listByThreadId({ threadId }).pipe(Effect.mapError(mapError));
+      const activeTurn = projected.find(
+        (candidate) =>
+          candidate.pendingMessageId === active.requestMessageId &&
+          candidate.turnId !== null &&
+          candidate.state === "running",
+      );
+      if (!activeTurn?.turnId) continue;
+      const prepared = yield* providers.prepareSteerTurnMessageId(threadId).pipe(
+        Effect.timeout("10 seconds"),
+        Effect.catch(() => Effect.succeed({ status: "unsupported" as const })),
+      );
+      if (prepared.status === "unsupported") {
+        current = yield* store.update(
+          current.id,
+          current.revision,
+          (state) => ({
+            ...state,
+            messages: state.messages.map((candidate) =>
+              candidate.id === message.id
+                ? { ...candidate, delivery: { status: "queued" as const } }
+                : candidate,
+            ),
+          }),
+          "team-message-queued",
+        );
+        continue;
+      }
+      const providerMessageId = prepared.messageId;
+      current = yield* store.update(
+        current.id,
+        current.revision,
+        (state) => ({
+          ...state,
+          messages: state.messages.map((candidate) =>
+            candidate.id === message.id
+              ? {
+                  ...candidate,
+                  delivery: { status: "pending", providerMessageId, turnId: activeTurn.turnId! },
+                }
+              : candidate,
+          ),
+        }),
+        "team-message-steer-intent",
+      );
+      const result = yield* providers
+        .steerTurn({
+          threadId,
+          expectedTurnId: activeTurn.turnId,
+          messageId: providerMessageId,
+          input: messageInstruction(message),
+        })
+        .pipe(
+          Effect.timeout("10 seconds"),
+          Effect.catch((error) =>
+            Effect.succeed({ status: "uncertain" as const, detail: error.message }),
+          ),
+        );
+      current = yield* store.update(
+        current.id,
+        current.revision,
+        (state) => ({
+          ...state,
+          status: result.status === "uncertain" ? "paused" : state.status,
+          statusReason:
+            result.status === "uncertain"
+              ? "Native team-message delivery could not be confirmed. Ask the lead before retrying it."
+              : state.statusReason,
+          messages: state.messages.map((candidate) =>
+            candidate.id === message.id
+              ? {
+                  ...candidate,
+                  delivery:
+                    result.status === "accepted"
+                      ? { status: "steered" as const, providerMessageId, turnId: result.turnId }
+                      : result.status === "uncertain"
+                        ? {
+                            status: "failed" as const,
+                            providerMessageId,
+                            turnId: activeTurn.turnId!,
+                            detail: result.detail,
+                          }
+                        : {
+                            status: "queued" as const,
+                          },
+                }
+              : candidate,
+          ),
+        }),
+        result.status === "accepted"
+          ? "team-message-steered"
+          : result.status === "uncertain"
+            ? "team-message-native-uncertain"
+            : "team-message-queued",
+      );
+      if (result.status === "uncertain") return current;
+    }
+
+    for (const task of current.tasks) {
+      const threadId = task.owner.threadId;
+      if (!threadId) continue;
+      const incoming = current.messages.filter(
+        (message) => message.to.threadId === threadId && awaitsDelivery(message),
+      );
+      if (incoming.length === 0) continue;
+      if (task.status === "settling") {
+        const settlement = current.settlements.find(
+          (candidate) => candidate.id === task.settlementId,
+        );
+        if (settlement?.status !== "ready") {
+          current = yield* store.update(
+            current.id,
+            current.revision,
+            (state) => ({
+              ...state,
+              status: "paused",
+              statusReason:
+                "A team message arrived after worker settlement started. Ask the lead to reconcile it.",
+              messages: state.messages.map((message) =>
+                incoming.some((selected) => selected.id === message.id)
+                  ? {
+                      ...message,
+                      delivery: { status: "failed", detail: "Worker settlement already started." },
+                    }
+                  : message,
+              ),
+            }),
+            "team-message-settlement-conflict",
+          );
+          return current;
+        }
+        const updatedAt = yield* nowIso;
+        current = yield* store.update(
+          current.id,
+          current.revision,
+          (state) => ({
+            ...state,
+            tasks: state.tasks.map((candidate) =>
+              candidate.id === task.id
+                ? { ...candidate, status: "running" as const, settlementId: null }
+                : candidate,
+            ),
+            settlements: state.settlements.map((candidate) =>
+              candidate.id === settlement.id
+                ? { ...candidate, status: "rejected" as const, updatedAt }
+                : candidate,
+            ),
+          }),
+          "settlement-superseded-by-message",
+        );
+      }
+      if (!["running", "review", "settling"].includes(task.status)) continue;
+      if (
+        current.attempts.some(
+          (attempt) =>
+            attempt.owner.threadId === threadId &&
+            ["reserved", "dispatching", "running"].includes(attempt.status),
+        )
+      )
+        continue;
+      const latestWork = current.attempts.findLast(
+        (attempt) => attempt.taskId === task.id && attempt.role === "work",
+      );
+      if (latestWork?.status !== "succeeded") continue;
+      const createdAt = yield* nowIso;
+      const continuationPrompt = [
+        MESSAGE_CONTINUATION_MARKER,
+        "Continue this same Dispatch-managed task in its existing worktree. Apply the team messages below before reporting completion. Send a concise reply only if a concrete decision is needed. Return the normal complete worker JSON result with the current full Git commit SHA; this continuation is part of the same task.",
+        `Task: ${task.objective}\nContext: ${task.context}\nAcceptance: ${task.acceptance.join("; ")}`,
+      ].join("\n\n");
+      const batch = messageBatch(incoming, continuationPrompt);
+      if (batch.length === 0) continue;
+      const continuation = makeAttempt({
+        run: current,
+        owner: task.owner,
+        role: "work",
+        taskId: task.id,
+        prompt: `${continuationPrompt}\n\n${batch.map(messageInstruction).join("\n\n")}`,
+        createdAt,
+      });
+      current = yield* store.update(
+        current.id,
+        current.revision,
+        (state) => ({
+          ...state,
+          attempts: [...state.attempts, continuation],
+          tasks: state.tasks.map((candidate) =>
+            candidate.id === task.id
+              ? {
+                  ...candidate,
+                  status: "running" as const,
+                  attemptIds: [...candidate.attemptIds, continuation.id],
+                }
+              : candidate,
+          ),
+          messages: state.messages.map((message) =>
+            batch.some((selected) => selected.id === message.id)
+              ? {
+                  ...message,
+                  delivery: {
+                    status: "queued" as const,
+                    providerMessageId: continuation.requestMessageId,
+                  },
+                }
+              : message,
+          ),
+        }),
+        "team-message-continuation-reserved",
+      );
+    }
+    return current;
   });
 
   const verify = Effect.fn("TeamRuntime.verify")(function* (
@@ -935,6 +1353,11 @@ export const make = Effect.gen(function* () {
                   : task,
               ),
         attempts: [...current.attempts, replacement],
+        messages: current.messages.map((message) =>
+          awaitsDelivery(message) && message.to.threadId === failed.owner.threadId
+            ? { ...message, to: nextOwner, delivery: { status: "pending" as const } }
+            : message,
+        ),
         failovers: current.failovers.some((candidate) => candidate.id === failover.id)
           ? current.failovers.map((candidate) =>
               candidate.id === failover.id ? appliedFailover : candidate,
@@ -952,6 +1375,17 @@ export const make = Effect.gen(function* () {
         attempt.failure?.kind === "provider-unavailable"
       )
         return yield* createFailover(run, attempt);
+      if (attempt.prompt.startsWith(MESSAGE_CONTINUATION_MARKER))
+        return yield* store.update(
+          run.id,
+          run.revision,
+          (current) => ({
+            ...current,
+            status: "paused",
+            statusReason: attempt.failure?.message ?? "Team message continuation failed.",
+          }),
+          "team-message-continuation-paused",
+        );
       if (attempt.role === "work" && attempt.taskId) {
         const task = run.tasks.find((candidate) => candidate.id === attempt.taskId)!;
         if (attemptCount(run, task.id, "work") < run.policy.maxAttempts) {
@@ -1183,35 +1617,63 @@ export const make = Effect.gen(function* () {
       );
     }
     if (!task.worktreePath) return yield* invalid("Worker worktree is missing.");
-    const head = yield* runProcess({
-      cwd: task.worktreePath,
-      command: "git",
-      args: ["rev-parse", "HEAD"],
-      timeout: "10 seconds",
-    });
-    if (head.code !== 0 || head.stdout.trim() !== workerResult.commit)
-      return yield* store.update(
-        run.id,
-        run.revision,
-        (current) => ({
-          ...current,
-          status: "paused",
-          statusReason: "Worker settlement commit does not match its worktree HEAD.",
+    const head = yield* gitVcs.resolveCommit({ cwd: task.worktreePath, revision: "HEAD" }).pipe(
+      Effect.map((resolved) => resolved.commitSha),
+      Effect.catch(() => Effect.succeed(null)),
+    );
+    const reportedCommit =
+      head && WORKER_COMMIT_SHA.test(workerResult.commit)
+        ? head.toLowerCase() === workerResult.commit.toLowerCase()
+          ? head
+          : yield* gitVcs
+              .resolveCommit({ cwd: task.worktreePath, revision: workerResult.commit })
+              .pipe(
+                Effect.map((resolved) => resolved.commitSha),
+                Effect.catch(() => Effect.succeed(null)),
+              )
+        : null;
+    if (
+      !head ||
+      !FULL_COMMIT_SHA.test(head) ||
+      !reportedCommit ||
+      reportedCommit.toLowerCase() !== head.toLowerCase()
+    ) {
+      const message = !WORKER_COMMIT_SHA.test(workerResult.commit)
+        ? "Worker settlement must report a hexadecimal Git commit SHA. No worker changes were integrated; have the worker report the current full SHA from `git rev-parse --verify HEAD`."
+        : !head || !FULL_COMMIT_SHA.test(head)
+          ? "Dispatch could not verify the worker worktree HEAD. No worker changes were integrated; inspect the worker worktree and report its full SHA before continuing."
+          : !reportedCommit
+            ? `Worker settlement SHA ${workerResult.commit} could not be resolved to a commit in its assigned worktree. No worker changes were integrated; have the worker report the current full SHA from \`git rev-parse --verify HEAD\`.`
+            : `Worker settlement commit ${reportedCommit} does not match its worktree HEAD ${head}. No worker changes were integrated; have the worker report the current full SHA from \`git rev-parse --verify HEAD\`.`;
+      const failed = yield* setAttempt(
+        run,
+        work.id,
+        (attempt) => ({
+          ...attempt,
+          status: "failed",
+          failure: { kind: "invalid-result", message },
         }),
         "worker-commit-mismatch",
       );
+      return yield* handleTerminalAttemptFailure(
+        failed,
+        failed.attempts.find((attempt) => attempt.id === work.id)!,
+      );
+    }
+    workerResult = { ...workerResult, commit: reportedCommit };
+    const canonicalWorkerResult = encodeJson(workerResult);
 
     const existingReview = run.attempts.findLast(
       (attempt) => attempt.taskId === task.id && attempt.role === "review",
     );
-    if (!existingReview || existingReview.createdAt < work.updatedAt) {
+    if (!existingReview || run.attempts.indexOf(existingReview) < run.attempts.indexOf(work)) {
       const createdAt = yield* nowIso;
       const review = makeAttempt({
         run,
         owner: run.lead,
         role: "review",
         taskId: task.id,
-        prompt: reviewPrompt(run, task, work.result ?? ""),
+        prompt: reviewPrompt(run, task, canonicalWorkerResult),
         createdAt,
       });
       return yield* store.update(
@@ -1224,7 +1686,7 @@ export const make = Effect.gen(function* () {
               ? {
                   ...candidate,
                   status: "review",
-                  result: work.result,
+                  result: canonicalWorkerResult,
                   attemptIds: [...candidate.attemptIds, review.id],
                 }
               : candidate,
@@ -1371,6 +1833,107 @@ export const make = Effect.gen(function* () {
       }),
       "settlement-ready",
     );
+  });
+
+  const reserveSupervision = Effect.fn("TeamRuntime.reserveSupervision")(function* (run: TeamRun) {
+    if (!["running", "settling", "review", "paused"].includes(run.status)) return run;
+    if (run.status === "paused" && run.statusReason === "Paused by user.") return run;
+    const leadThreadId = ownerThread(run.lead);
+    const consumed = supervisionReceipts(run);
+    const messages = run.messages.filter(
+      (message) =>
+        !consumed.messageIds.has(message.id) &&
+        (message.delivery?.status === "failed" ||
+          (message.from.role === "worker" &&
+            message.to.threadId === leadThreadId &&
+            awaitsDelivery(message))),
+    );
+    const failedDelivery = messages.some((message) => message.delivery?.status === "failed");
+    const failedWorkerAttempts = run.attempts.filter((attempt) => {
+      if (
+        attempt.role !== "work" ||
+        attempt.taskId === null ||
+        attempt.status !== "failed" ||
+        attempt.failure === null
+      )
+        return false;
+      const task = run.tasks.find((candidate) => candidate.id === attempt.taskId);
+      return (
+        task !== undefined &&
+        ["running", "failed"].includes(task.status) &&
+        (attempt.failure.kind === "invalid-result" ||
+          attempt.prompt.startsWith(MESSAGE_CONTINUATION_MARKER) ||
+          run.status === "paused") &&
+        !consumed.workerAttemptIds.has(attempt.id)
+      );
+    });
+    if (messages.length === 0 && failedWorkerAttempts.length === 0) return run;
+    if (run.status === "paused" && failedWorkerAttempts.length === 0 && !failedDelivery) return run;
+    const leadIsBusy = run.attempts.some(
+      (attempt) =>
+        attempt.owner.threadId === leadThreadId &&
+        ["reserved", "dispatching", "running"].includes(attempt.status),
+    );
+    if (leadIsBusy) return run;
+    const leadThread = yield* projection
+      .getThreadDetailById(leadThreadId)
+      .pipe(Effect.orElseSucceed(() => Option.none()));
+    if (Option.isSome(leadThread) && leadThread.value.latestTurn?.state === "running") return run;
+
+    const selectedMessages = messages.slice(0, 8);
+    const selectedFailures = failedWorkerAttempts.slice(0, 8);
+    const createdAt = yield* nowIso;
+    const supervisor = makeAttempt({
+      run,
+      owner: run.lead,
+      role: "review",
+      taskId: null,
+      prompt: supervisionPrompt(
+        run,
+        selectedMessages,
+        selectedFailures.map((attempt) => attempt.id),
+      ),
+      createdAt,
+    });
+    return yield* store.update(
+      run.id,
+      run.revision,
+      (current) => ({
+        ...current,
+        attempts: [...current.attempts, supervisor],
+        messages: current.messages.map((message) =>
+          awaitsDelivery(message) && selectedMessages.some((selected) => selected.id === message.id)
+            ? {
+                ...message,
+                delivery: {
+                  status: "queued" as const,
+                  providerMessageId: supervisor.requestMessageId,
+                },
+              }
+            : message,
+        ),
+      }),
+      "lead-supervision-reserved",
+    );
+  });
+
+  const advancePausedSupervision = Effect.fn("TeamRuntime.advancePausedSupervision")(function* (
+    run: TeamRun,
+  ) {
+    if (run.statusReason === "Paused by user.") return run;
+    let current = run;
+    for (const attempt of current.attempts.filter((candidate) => candidate.status === "running"))
+      current = yield* reconcileAttempt(current, attempt.id);
+    current = yield* reserveSupervision(current);
+    const pending = current.attempts.findLast(
+      (attempt) =>
+        attempt.role === "review" &&
+        attempt.taskId === null &&
+        attempt.prompt.startsWith(FLOW_SUPERVISION_PROMPT_MARKER) &&
+        attempt.status === "reserved",
+    );
+    if (pending) return yield* dispatchAttempt(current, pending.id);
+    return current;
   });
 
   const cleanupAppliedSettlement = Effect.fn("TeamRuntime.cleanupAppliedSettlement")(function* (
@@ -1687,6 +2250,31 @@ export const make = Effect.gen(function* () {
 
   const advanceIntegration = Effect.fn("TeamRuntime.advanceIntegration")(function* (run: TeamRun) {
     if (run.tasks.some((task) => task.status !== "settled")) return run;
+    const lastSupervisionIndex = run.attempts.findLastIndex(
+      (attempt) =>
+        attempt.role === "review" &&
+        attempt.taskId === null &&
+        attempt.prompt.startsWith(FLOW_SUPERVISION_PROMPT_MARKER),
+    );
+    const lastIntegrationIndex = run.attempts.findLastIndex(
+      (attempt) => attempt.role === "integrate" && attempt.taskId === null,
+    );
+    if (lastSupervisionIndex > lastIntegrationIndex) {
+      if (run.attempts[lastSupervisionIndex]?.status !== "succeeded") return run;
+      const createdAt = yield* nowIso;
+      return yield* appendAttempt(
+        run,
+        makeAttempt({
+          run,
+          owner: run.lead,
+          role: "integrate",
+          taskId: null,
+          prompt: integrationPrompt(run),
+          createdAt,
+        }),
+        "integration-after-supervision",
+      );
+    }
     const last = run.attempts.findLast(
       (attempt) => attempt.role === "integrate" && attempt.taskId === null,
     );
@@ -1819,19 +2407,18 @@ export const make = Effect.gen(function* () {
 
   const advanceRun = Effect.fn("TeamRuntime.advanceRun")(function* (id: string) {
     let run = yield* store.get(id);
-    if (
-      ["paused", "cancelled", "completed", "failed", "awaiting-provider-decision"].includes(
-        run.status,
-      )
-    )
+    if (run.status === "paused") return yield* advancePausedSupervision(run);
+    if (["cancelled", "completed", "failed", "awaiting-provider-decision"].includes(run.status))
       return run;
 
     run = yield* reconcileAppliedSettlementCleanup(run);
     run = yield* dispatchPendingAttempts(run);
-    if (["paused", "awaiting-provider-decision", "cancelled", "failed"].includes(run.status))
-      return run;
+    if (run.status === "paused") return yield* advancePausedSupervision(run);
+    if (["awaiting-provider-decision", "cancelled", "failed"].includes(run.status)) return run;
     for (const attempt of run.attempts.filter((candidate) => candidate.status === "running"))
       run = yield* reconcileAttempt(run, attempt.id);
+    run = yield* deliverTeamMessages(run);
+    if (run.status === "paused") return yield* advancePausedSupervision(run);
 
     const terminalFailure = run.attempts.findLast(
       (attempt) =>
@@ -1845,7 +2432,8 @@ export const make = Effect.gen(function* () {
     );
     if (terminalFailure) {
       run = yield* handleTerminalAttemptFailure(run, terminalFailure);
-      if (["paused", "awaiting-provider-decision"].includes(run.status)) return run;
+      if (run.status === "paused") return yield* advancePausedSupervision(run);
+      if (run.status === "awaiting-provider-decision") return run;
     }
 
     if (run.status === "planning") {
@@ -1867,7 +2455,8 @@ export const make = Effect.gen(function* () {
           if (settlement && ["ready", "applying", "conflict"].includes(settlement.status))
             run = yield* applySettlement(run, settlement);
         }
-        if (["paused", "awaiting-provider-decision"].includes(run.status)) return run;
+        if (run.status === "paused") return yield* advancePausedSupervision(run);
+        if (run.status === "awaiting-provider-decision") return run;
       }
       if (run.tasks.every((task) => task.status === "settled"))
         run = yield* store.update(
@@ -1879,6 +2468,7 @@ export const make = Effect.gen(function* () {
       else run = yield* advanceWorkers(run);
     }
 
+    run = yield* reserveSupervision(run);
     if (run.status === "review") run = yield* advanceIntegration(run);
     if (
       !["paused", "awaiting-provider-decision", "cancelled", "completed", "failed"].includes(
@@ -2203,14 +2793,20 @@ export const make = Effect.gen(function* () {
       return yield* invalid(
         "Team messages can only target current members of the same managed run.",
       );
+    if (["completed", "cancelled", "failed"].includes(run.status))
+      return yield* invalid("This managed run has ended.");
     const existing = run.messages.find((message) => message.id === input.id);
     if (existing) {
       if (
         existing.from.threadId === from.threadId &&
         existing.to.threadId === to.threadId &&
-        existing.text === input.text
-      )
+        existing.text === input.text &&
+        existing.replyRequested === input.replyRequested &&
+        existing.inReplyTo === input.inReplyTo
+      ) {
+        if (awaitsDelivery(existing)) yield* Queue.offer(supervisorWakeQueue, undefined);
         return existing;
+      }
       return yield* new TeamError({
         code: "conflict",
         message: "Message ID already belongs to different content.",
@@ -2228,6 +2824,7 @@ export const make = Effect.gen(function* () {
       ...(input.inReplyTo ? { inReplyTo: input.inReplyTo } : {}),
       createdAt,
       readAt: null,
+      delivery: { status: "pending" },
     };
     yield* store.update(
       run.id,
@@ -2235,8 +2832,9 @@ export const make = Effect.gen(function* () {
       (current) => ({ ...current, messages: [...current.messages, message] }),
       "team-message-sent",
     );
+    yield* Queue.offer(supervisorWakeQueue, undefined);
     return message;
-  });
+  }, schedulerLock.withPermits(1));
 
   const readMessages = Effect.fn("TeamRuntime.readMessages")(function* (
     threadId: ThreadId,
@@ -2300,6 +2898,16 @@ export const make = Effect.gen(function* () {
       members,
       messages,
     };
+  }, schedulerLock.withPermits(1));
+
+  const assertClientMessageAllowed = Effect.fn("TeamRuntime.assertClientMessageAllowed")(function* (
+    threadId: ThreadId,
+  ) {
+    const run = yield* store.findByThread(threadId);
+    if (run && run.lead.threadId !== threadId)
+      return yield* invalid(
+        "Managed worker threads are read-only. Send messages to the Flow lead.",
+      );
   });
 
   const tick = Effect.fn("TeamRuntime.tick")(function* () {
@@ -2330,7 +2938,9 @@ export const make = Effect.gen(function* () {
     providerDecision,
     sendMessage,
     readMessages,
+    assertClientMessageAllowed,
     tick,
+    wakeups: Stream.fromQueue(supervisorWakeQueue),
     list: store.list,
     get: store.get,
     forThread: Effect.fn("TeamRuntime.forThread")(function* (threadId: ThreadId) {
@@ -2353,28 +2963,29 @@ export const reactorLayer = Layer.effectDiscard(
     const runtime = yield* TeamRuntime;
     const engine = yield* OrchestrationEngineService;
     const events = yield* engine.subscribeDomainEvents;
+    const wakeups = Stream.merge(
+      events.pipe(
+        Stream.filter(
+          (event) =>
+            event.aggregateId.startsWith("team-") &&
+            (event.type === "thread.session-set" ||
+              event.type === "thread.turn-diff-completed" ||
+              (event.type === "thread.message-sent" && !event.payload.streaming) ||
+              (event.type === "thread.activity-appended" &&
+                [
+                  "approval.resolved",
+                  "user-input.resolved",
+                  "user-input.answer-submitted",
+                  "provider.turn.start.failed",
+                ].includes(event.payload.activity.kind))),
+        ),
+      ),
+      runtime.wakeups,
+    );
     yield* forkParked(
       Effect.andThen(
         runtime.tick().pipe(Effect.ignoreCause({ log: true })),
-        Stream.runForEach(
-          events.pipe(
-            Stream.filter(
-              (event) =>
-                event.aggregateId.startsWith("team-") &&
-                (event.type === "thread.session-set" ||
-                  event.type === "thread.turn-diff-completed" ||
-                  (event.type === "thread.message-sent" && !event.payload.streaming) ||
-                  (event.type === "thread.activity-appended" &&
-                    [
-                      "approval.resolved",
-                      "user-input.resolved",
-                      "user-input.answer-submitted",
-                      "provider.turn.start.failed",
-                    ].includes(event.payload.activity.kind))),
-            ),
-          ),
-          () => runtime.tick().pipe(Effect.ignoreCause({ log: true })),
-        ),
+        Stream.runForEach(wakeups, () => runtime.tick().pipe(Effect.ignoreCause({ log: true }))),
       ).pipe(
         Effect.catchCause(() =>
           Effect.logError(

@@ -36,6 +36,7 @@ import {
   type CanonicalRequestType,
   type ClaudeSettings,
   EventId,
+  MessageId,
   type ProviderApprovalDecision,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -5290,6 +5291,55 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     };
   });
 
+  const steerTurn: ClaudeAdapterShape["steerTurn"] = Effect.fn("steerTurn")(function* (input) {
+    const context = yield* requireSession(input.threadId);
+    const activeTurn = context.turnState;
+    if (
+      !activeTurn ||
+      activeTurn.synthetic === true ||
+      context.session.status !== "running" ||
+      activeTurn.turnId !== input.expectedTurnId
+    ) {
+      return {
+        status: "stale",
+        activeTurnId: activeTurn?.turnId ?? null,
+      } as const;
+    }
+
+    const message: SDKUserMessage = {
+      ...buildUserMessage({ sdkContent: [{ type: "text", text: input.input }] }),
+      uuid: String(input.messageId) as NonNullable<SDKUserMessage["uuid"]>,
+    };
+    // The SDK queue is unbounded. Its synchronous offer keeps the final
+    // active-turn check and admission in one event-loop step, so a completed
+    // turn cannot turn this into a new prompt between the guard and offer.
+    if (context.turnState !== activeTurn || context.session.status !== "running") {
+      return {
+        status: "stale",
+        activeTurnId: context.turnState?.turnId ?? null,
+      } as const;
+    }
+    if (!Queue.offerUnsafe(context.promptQueue, { type: "message", message })) {
+      return {
+        status: "stale",
+        activeTurnId: context.turnState?.turnId ?? null,
+      } as const;
+    }
+    return {
+      status: "accepted",
+      turnId: activeTurn.turnId,
+      messageId: input.messageId,
+    } as const;
+  });
+
+  const prepareSteerTurnMessageId: NonNullable<ClaudeAdapterShape["prepareSteerTurnMessageId"]> =
+    Effect.fn("prepareSteerTurnMessageId")(function* () {
+      return {
+        status: "ready",
+        messageId: MessageId.make(yield* randomUUIDv4),
+      } as const;
+    });
+
   const interruptTurn: ClaudeAdapterShape["interruptTurn"] = Effect.fn("interruptTurn")(
     function* (threadId, _turnId) {
       const context = yield* requireSession(threadId);
@@ -5573,11 +5623,14 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     provider: PROVIDER,
     capabilities: {
       sessionModelSwitch: "in-session",
+      liveTurnSteering: "same-turn",
       managedTeamNativeDelegation: "blocked",
     },
     compaction: { type: "slash-command", command: "/compact" },
     startSession,
     sendTurn,
+    steerTurn,
+    prepareSteerTurnMessageId,
     interruptTurn,
     readThread,
     rollbackThread,

@@ -19,6 +19,7 @@ import {
 import * as ProjectCloneTracker from "../project/ProjectCloneTracker.ts";
 import { OrchestrationEngineService } from "./Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "./Services/ProjectionSnapshotQuery.ts";
+import { TeamRuntime } from "../team/TeamRuntime.ts";
 
 export const orchestrationHttpApiLayer = HttpApiBuilder.group(
   EnvironmentHttpApi,
@@ -26,6 +27,7 @@ export const orchestrationHttpApiLayer = HttpApiBuilder.group(
   Effect.fnUntraced(function* (handlers) {
     const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
     const orchestrationEngine = yield* OrchestrationEngineService;
+    const teamRuntime = yield* TeamRuntime;
     const projectCloneTracker = yield* ProjectCloneTracker.ProjectCloneTracker;
 
     return handlers
@@ -109,6 +111,16 @@ export const orchestrationHttpApiLayer = HttpApiBuilder.group(
           const normalizedCommand = yield* normalizeDispatchCommand(args.payload).pipe(
             Effect.catch(() => failEnvironmentInvalidRequest("invalid_command")),
           );
+          if (
+            normalizedCommand.type === "thread.turn.start" ||
+            normalizedCommand.type === "thread.message.user.append"
+          )
+            yield* teamRuntime.assertClientMessageAllowed(normalizedCommand.threadId).pipe(
+              Effect.tapError(() =>
+                cleanupFailedUploadedAttachments(args.payload, normalizedCommand),
+              ),
+              Effect.catch(() => failEnvironmentInvalidRequest("invalid_command")),
+            );
           const result = yield* orchestrationEngine.dispatch(normalizedCommand).pipe(
             Effect.tapError(() =>
               cleanupFailedUploadedAttachments(args.payload, normalizedCommand),

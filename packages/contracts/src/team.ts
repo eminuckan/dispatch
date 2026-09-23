@@ -186,6 +186,15 @@ export const TeamMessage = Schema.Struct({
   inReplyTo: Schema.optional(Id),
   createdAt: Timestamp,
   readAt: Schema.NullOr(Timestamp),
+  /** Absent on messages written before provider delivery was tracked. */
+  delivery: Schema.optional(
+    Schema.Struct({
+      status: Schema.Literals(["pending", "queued", "steered", "sent", "failed", "closed"]),
+      providerMessageId: Schema.optional(MessageId),
+      turnId: Schema.optional(TurnId),
+      detail: Schema.optional(Schema.String),
+    }),
+  ),
 });
 export type TeamMessage = typeof TeamMessage.Type;
 

@@ -32,7 +32,12 @@ import type * as Effect from "effect/Effect";
 import type * as Stream from "effect/Stream";
 
 import type { ProviderServiceError } from "../Errors.ts";
-import type { ProviderAdapterCapabilities } from "./ProviderAdapter.ts";
+import type {
+  ProviderAdapterCapabilities,
+  ProviderSteerTurnInput,
+  ProviderSteerTurnResult,
+  ProviderSteerTurnMessageIdResult,
+} from "./ProviderAdapter.ts";
 import type { ProviderInstanceRoutingInfo } from "./ProviderAdapterRegistry.ts";
 
 /**
@@ -53,6 +58,16 @@ export interface ProviderServiceShape {
   readonly sendTurn: (
     input: ProviderSendTurnInput,
   ) => Effect.Effect<ProviderTurnStartResult, ProviderServiceError>;
+
+  /** Accept a message into the exact active provider turn without starting a new turn. */
+  readonly steerTurn: (
+    input: ProviderSteerTurnInput,
+  ) => Effect.Effect<ProviderSteerTurnResult, ProviderServiceError>;
+
+  /** Generate a native correlation ID before the team delivery intent is persisted. */
+  readonly prepareSteerTurnMessageId: (
+    threadId: ThreadId,
+  ) => Effect.Effect<ProviderSteerTurnMessageIdResult, ProviderServiceError>;
 
   readonly compactThread: (
     threadId: ThreadId,

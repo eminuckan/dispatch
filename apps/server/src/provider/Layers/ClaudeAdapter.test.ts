@@ -15,11 +15,13 @@ import type {
 import {
   ApprovalRequestId,
   ClaudeSettings,
+  MessageId,
   ProviderDriverKind,
   ProviderItemId,
   ProviderRuntimeEvent,
   type RuntimeMode,
   ThreadId,
+  TurnId,
   ProviderInstanceId,
 } from "@dispatch/contracts";
 import { createModelSelection } from "@dispatch/shared/model";
@@ -1639,6 +1641,78 @@ describe("ClaudeAdapterLive", () => {
       assert.equal(String(turnStartedEvents[0]?.turnId), String(turn.turnId));
       assert.equal(turnCompletedEvents.length, 1);
       assert.equal(String(turnCompletedEvents[0]?.turnId), String(turn.turnId));
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("steers the exact active Claude turn with the durable team message id", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const runtimeEventsFiber = yield* Stream.takeUntil(
+        adapter.streamEvents,
+        (event) => event.type === "turn.completed",
+      ).pipe(Stream.runCollect, Effect.forkChild);
+
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+      const turn = yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "Inspect the failing test and keep working.",
+        attachments: [],
+      });
+      const prepared = yield* adapter.prepareSteerTurnMessageId!(session.threadId);
+      assert.equal(prepared.status, "ready");
+      if (prepared.status !== "ready") throw new Error("Claude steer IDs must be native.");
+      const messageId = prepared.messageId;
+      assert.match(
+        String(messageId),
+        /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+      );
+
+      assert.equal(adapter.capabilities.liveTurnSteering, "same-turn");
+      const accepted = yield* adapter.steerTurn!({
+        threadId: session.threadId,
+        expectedTurnId: turn.turnId,
+        messageId,
+        input: "Also report the precise failing assertion in your next checkpoint.",
+      });
+      assert.deepEqual(accepted, {
+        status: "accepted",
+        turnId: turn.turnId,
+        messageId,
+      });
+
+      const promptMessages = yield* Effect.promise(() =>
+        readPromptMessages(harness.getLastCreateQueryInput(), 2),
+      );
+      assert.equal(String(promptMessages[0]?.uuid), String(turn.turnId));
+      assert.equal(String(promptMessages[1]?.uuid), String(messageId));
+
+      const stale = yield* adapter.steerTurn!({
+        threadId: session.threadId,
+        expectedTurnId: TurnId.make("turn-claude-stale"),
+        messageId: MessageId.make("550e8400-e29b-41d4-a716-446655440032"),
+        input: "This must stay queued for a safe continuation.",
+      });
+      assert.deepEqual(stale, { status: "stale", activeTurnId: turn.turnId });
+
+      harness.query.emit({
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        errors: [],
+        session_id: "sdk-session-live-steer",
+        uuid: "result-live-steer",
+      } as unknown as SDKMessage);
+      const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+      assert.equal(runtimeEvents.filter((event) => event.type === "turn.started").length, 1);
+      assert.equal(runtimeEvents.filter((event) => event.type === "turn.completed").length, 1);
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),

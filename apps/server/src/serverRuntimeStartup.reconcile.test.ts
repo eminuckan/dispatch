@@ -58,6 +58,8 @@ const makeProviderService = (liveThreadIds: ReadonlyArray<ThreadId> = []) =>
   ({
     startSession: () => Effect.die("unused"),
     sendTurn: () => Effect.die("unused"),
+    steerTurn: () => Effect.succeed({ status: "unsupported" }),
+    prepareSteerTurnMessageId: () => Effect.succeed({ status: "unsupported" }),
     compactThread: () => Effect.die("unused"),
     interruptTurn: () => Effect.die("unused"),
     respondToRequest: () => Effect.die("unused"),

@@ -26,10 +26,12 @@ import type {
 
 import {
   ApprovalRequestId,
+  MessageId,
   OpenCodeSettings,
   ProviderDriverKind,
   ProviderInstanceId,
   ThreadId,
+  TurnId,
 } from "@dispatch/contracts";
 import { createModelSelection } from "@dispatch/shared/model";
 import { ServerConfig } from "../../config.ts";
@@ -1873,6 +1875,59 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       const session = sessions.find((entry) => entry.threadId === threadId);
       NodeAssert.equal(session?.status, "running");
       NodeAssert.equal(String(session?.activeTurnId), String(turn.turnId));
+      NodeAssert.equal(runtimeMock.state.promptCalls.length, 2);
+    }),
+  );
+
+  it.effect("steers only the expected OpenCode turn and uses the durable message id", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-explicit-steer");
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+      const turn = yield* adapter.sendTurn({
+        threadId,
+        input: "Start the task.",
+        modelSelection: createModelSelection(ProviderInstanceId.make("opencode"), "openai/gpt-5"),
+      });
+      const prepared = yield* adapter.prepareSteerTurnMessageId!(threadId);
+      NodeAssert.equal(prepared.status, "ready");
+      if (prepared.status !== "ready") throw new Error("OpenCode steer IDs must be native.");
+      const messageId = prepared.messageId;
+      NodeAssert.match(String(messageId), /^msg_[0-9a-f]{12}[0-9A-Za-z]{14}$/);
+
+      NodeAssert.equal(adapter.capabilities.liveTurnSteering, "same-turn");
+      const accepted = yield* adapter.steerTurn!({
+        threadId,
+        expectedTurnId: turn.turnId,
+        messageId,
+        input: "Keep working and verify the failing assertion first.",
+      });
+      NodeAssert.deepStrictEqual(accepted, {
+        status: "accepted",
+        turnId: turn.turnId,
+        messageId,
+      });
+      NodeAssert.equal(runtimeMock.state.promptCalls.length, 2);
+      NodeAssert.equal(
+        (runtimeMock.state.promptCalls[1] as { readonly messageID?: string }).messageID,
+        messageId,
+      );
+      NodeAssert.equal(
+        runtimeMock.state.messages.some((message) => message.info.id === messageId),
+        true,
+      );
+
+      const stale = yield* adapter.steerTurn!({
+        threadId,
+        expectedTurnId: TurnId.make("different-opencode-turn"),
+        messageId: MessageId.make("msg_0000000000000000000000"),
+        input: "Wait for a safe continuation.",
+      });
+      NodeAssert.deepStrictEqual(stale, { status: "stale", activeTurnId: turn.turnId });
       NodeAssert.equal(runtimeMock.state.promptCalls.length, 2);
     }),
   );

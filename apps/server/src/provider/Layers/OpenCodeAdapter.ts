@@ -2,12 +2,14 @@ import { makeOpenCodeSessionClient, type OpenCodeSessionClient } from "../OpenCo
 import { isManagedTeamThread } from "../../team/nativeDelegation.ts";
 import {
   EventId,
+  MessageId,
   type OpenCodeSettings,
   ProviderDriverKind,
   ProviderInstanceId,
   type ProviderRuntimeEvent,
   type ProviderSendTurnInput,
   type ProviderSession,
+  type ProviderTurnStartResult,
   RuntimeItemId,
   RuntimeRequestId,
   ThreadId,
@@ -46,7 +48,8 @@ import {
   ProviderAdapterValidationError,
 } from "../Errors.ts";
 import { buildRuntimeInstructions } from "../RuntimeInstructions.ts";
-import { type OpenCodeAdapterShape } from "../Services/OpenCodeAdapter.ts";
+import type { OpenCodeAdapterShape } from "../Services/OpenCodeAdapter.ts";
+import type { ProviderSteerTurnInput } from "../Services/ProviderAdapter.ts";
 import {
   buildOpenCodePermissionRules,
   OpenCodeRuntime,
@@ -3138,7 +3141,11 @@ export function makeOpenCodeAdapter(
       },
     );
 
-    const sendTurn: OpenCodeAdapterShape["sendTurn"] = Effect.fn("sendTurn")(function* (input) {
+    const submitTurn = Effect.fn("submitTurn")(function* (
+      input: ProviderSendTurnInput,
+      expectedTurnId?: TurnId,
+      stableMessageId?: ProviderSteerTurnInput["messageId"],
+    ) {
       const context = yield* ensureSessionContext(sessions, input.threadId);
       yield* awaitOpenCodeContextReady(context);
       const modelSelection =
@@ -3190,8 +3197,19 @@ export function makeOpenCodeAdapter(
 
       return yield* context.promptSemaphore.withPermit(
         Effect.gen(function* () {
+          if (expectedTurnId !== undefined && context.activeTurnId !== expectedTurnId) {
+            return {
+              kind: "stale" as const,
+              activeTurnId: context.activeTurnId ?? null,
+            };
+          }
+          // OpenCode's command endpoint has no same-turn admission contract.
+          // A live steer must never fall through to a command/new-turn path.
+          if (expectedTurnId !== undefined && nativeCommand !== undefined) {
+            return { kind: "unsupported" as const };
+          }
           const freshTurnId = TurnId.make(`opencode-turn-${yield* randomUUIDv4}`);
-          const messageId = yield* makeOpenCodeMessageId();
+          const messageId = stableMessageId ?? (yield* makeOpenCodeMessageId());
           const pendingCancellation = context.cancellation;
           if (pendingCancellation) {
             const cancellationResult = yield* Deferred.await(pendingCancellation.completion).pipe(
@@ -3568,16 +3586,59 @@ export function makeOpenCodeAdapter(
           }
 
           return {
-            threadId: input.threadId,
-            turnId,
-            // Re-surface the durable cursor on every turn so the persisted binding
-            // is refreshed alongside last-seen/runtime state (mirrors Grok/Codex).
-            ...(context.session.resumeCursor !== undefined
-              ? { resumeCursor: context.session.resumeCursor }
-              : {}),
+            kind: "turn" as const,
+            turn: {
+              threadId: input.threadId,
+              turnId,
+              // Re-surface the durable cursor on every turn so the persisted binding
+              // is refreshed alongside last-seen/runtime state (mirrors Grok/Codex).
+              ...(context.session.resumeCursor !== undefined
+                ? { resumeCursor: context.session.resumeCursor }
+                : {}),
+            } satisfies ProviderTurnStartResult,
           };
         }),
       );
+    });
+
+    const sendTurn: OpenCodeAdapterShape["sendTurn"] = Effect.fn("sendTurn")(function* (input) {
+      const result = yield* submitTurn(input);
+      if (result.kind !== "turn") {
+        return yield* Effect.die(
+          new Error(`Unexpected OpenCode ${result.kind} while sending a turn.`),
+        );
+      }
+      return result.turn;
+    });
+
+    const steerTurn: NonNullable<OpenCodeAdapterShape["steerTurn"]> = Effect.fn("steerTurn")(
+      function* (input: ProviderSteerTurnInput) {
+        const result = yield* submitTurn(
+          { threadId: input.threadId, input: input.input },
+          input.expectedTurnId,
+          input.messageId,
+        );
+        if (result.kind === "stale") {
+          return { status: "stale", activeTurnId: result.activeTurnId };
+        }
+        if (result.kind === "unsupported") {
+          return { status: "unsupported" };
+        }
+        return {
+          status: "accepted",
+          turnId: result.turn.turnId,
+          messageId: input.messageId,
+        };
+      },
+    );
+
+    const prepareSteerTurnMessageId: NonNullable<
+      OpenCodeAdapterShape["prepareSteerTurnMessageId"]
+    > = Effect.fn("prepareSteerTurnMessageId")(function* () {
+      return {
+        status: "ready",
+        messageId: MessageId.make(yield* makeOpenCodeMessageId()),
+      } as const;
     });
 
     const compactThread = Effect.fn("compactThread")(function* (
@@ -4075,10 +4136,13 @@ export function makeOpenCodeAdapter(
       provider: PROVIDER,
       capabilities: {
         sessionModelSwitch: "in-session",
+        liveTurnSteering: "same-turn",
         managedTeamNativeDelegation: "blocked",
       },
       startSession,
       sendTurn,
+      steerTurn,
+      prepareSteerTurnMessageId,
       compaction: { type: "native", start: compactThread },
       interruptTurn,
       respondToRequest,

@@ -43,6 +43,7 @@ import {
   type TimelineEntriesProjection,
 } from "../../session-logic";
 import { isImageAttachment, type ChatMessage, type TurnDiffSummary } from "../../types";
+import type { TeamConversationMessage } from "./teamConversation.logic";
 
 describe("streaming row projection", () => {
   function fixture(text = "") {
@@ -1103,6 +1104,77 @@ describe("deriveMessagesTimelineRows", () => {
     submissionIntent: "foreground" as const,
     queuedAfterToolActivityId: null,
     createdAt: "2026-01-01T00:00:01Z",
+  });
+
+  it("inserts deduplicated Flow messages by chronology with stable namespaced row identity", () => {
+    const userEntry = {
+      id: "user-entry",
+      kind: "message",
+      createdAt: "2026-01-01T00:00:00Z",
+      message: {
+        id: "user-1" as never,
+        role: "user",
+        text: "Start work",
+        turnId: null,
+        createdAt: "2026-01-01T00:00:00Z",
+        updatedAt: "2026-01-01T00:00:00Z",
+        streaming: false,
+      },
+    } as const;
+    const assistantEntry = {
+      id: "assistant-entry",
+      kind: "message",
+      createdAt: "2026-01-01T00:00:20Z",
+      message: {
+        id: "assistant-1" as never,
+        role: "assistant",
+        text: "The work is done.",
+        turnId: "turn-1" as never,
+        createdAt: "2026-01-01T00:00:20Z",
+        updatedAt: "2026-01-01T00:00:20Z",
+        streaming: false,
+      },
+    } as const;
+    const message: TeamConversationMessage = {
+      id: "mail-1",
+      createdAt: "2026-01-01T00:00:10Z",
+      text: "The worker has finished the first pass.",
+      from: "Lead",
+      to: "Worker 1",
+      deliveryStatus: "sent",
+      providerMessageId: null,
+    };
+    const echoedMessage = {
+      ...message,
+      id: "mail-echo",
+      providerMessageId: MessageId.make("assistant-1"),
+    };
+    const input = {
+      timelineEntries: [userEntry, assistantEntry],
+      teamMessages: [message, { ...message }, echoedMessage],
+      isWorking: false,
+      activeTurnStartedAt: null,
+      turnDiffSummaries: [],
+      supportsConversationRollback: false,
+    } satisfies Parameters<typeof deriveMessagesTimelineRows>[0];
+    const rows = deriveMessagesTimelineRows(input);
+    expect(rows.map(({ id }) => id)).toEqual([
+      "user-entry",
+      "team-message:mail-1",
+      "assistant-entry",
+    ]);
+    expect(rows[1]).toMatchObject({
+      kind: "team-message",
+      message: { id: "mail-1", from: "Lead", to: "Worker 1", text: message.text },
+    });
+    expect(rows.filter(({ kind }) => kind === "message")).toHaveLength(2);
+
+    const previous = computeStableMessagesTimelineRows(rows, { byId: new Map(), result: [] });
+    const next = computeStableMessagesTimelineRows(
+      deriveMessagesTimelineRows({ ...input, teamMessages: [{ ...message }] }),
+      previous,
+    );
+    expect(next.result[1]).toBe(previous.result[1]);
   });
 
   it("appends queued messages after the live rows, marking the oldest as next", () => {

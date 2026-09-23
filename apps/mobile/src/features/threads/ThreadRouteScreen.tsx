@@ -77,8 +77,10 @@ import { useSelectedThreadGitState } from "../../state/use-selected-thread-git-s
 import { useSelectedThreadRequests } from "../../state/use-selected-thread-requests";
 import { useSelectedThreadWorktree } from "../../state/use-selected-thread-worktree";
 import { useThreadComposerState } from "../../state/use-thread-composer-state";
+import { teamEnvironment } from "../../state/team";
 import { threadEnvironment } from "../../state/threads";
 import { projectThreadContentPresentation } from "./threadContentPresentation";
+import { isTeamWorkerThreadCandidate, resolveTeamThreadComposerAccess } from "./teamThreadAccess";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import {
   useAdaptiveWorkspaceLayout,
@@ -352,11 +354,83 @@ function ThreadRouteContent(
   }, [selectedThread, selectedThreadDetailState]);
   const { selectedThreadCwd } = useSelectedThreadWorktree();
   const composer = useThreadComposerState();
+  const {
+    onSendMessage: sendComposerMessage,
+    onPickDraftMedia: pickComposerMedia,
+    onPickDraftFiles: pickComposerFiles,
+    onNativePasteImages: pasteComposerImages,
+    onNativePasteText: pasteComposerText,
+    onChangeDraftMessage: changeComposerDraft,
+    onRemoveDraftImage: removeComposerImage,
+  } = composer;
+  const teamWorkerCandidate =
+    selectedThread !== null && isTeamWorkerThreadCandidate(selectedThread.id);
+  const teamThreadQuery = useEnvironmentQuery(
+    teamWorkerCandidate && selectedThread
+      ? teamEnvironment.forThread({
+          environmentId: selectedThread.environmentId,
+          input: { threadId: selectedThread.id },
+        })
+      : null,
+  );
+  const teamThreadComposerAccess = selectedThread
+    ? resolveTeamThreadComposerAccess({
+        threadId: selectedThread.id,
+        run: teamThreadQuery.data,
+        resolved: teamThreadQuery.isSuccess,
+        error: teamThreadQuery.error,
+      })
+    : null;
+  const composerInputAllowed = teamThreadComposerAccess === null;
+  const onComposerSendMessage = useCallback(
+    () => (composerInputAllowed ? sendComposerMessage() : Promise.resolve(null)),
+    [composerInputAllowed, sendComposerMessage],
+  );
+  const onComposerPickMedia = useCallback(
+    () => (composerInputAllowed ? pickComposerMedia() : Promise.resolve()),
+    [composerInputAllowed, pickComposerMedia],
+  );
+  const onComposerPickFiles = useCallback(
+    () => (composerInputAllowed ? pickComposerFiles() : Promise.resolve()),
+    [composerInputAllowed, pickComposerFiles],
+  );
+  const onComposerPasteImages = useCallback(
+    (uris: ReadonlyArray<string>) =>
+      composerInputAllowed ? pasteComposerImages(uris) : Promise.resolve(),
+    [composerInputAllowed, pasteComposerImages],
+  );
+  const onComposerPasteText = useCallback(
+    (paste: Parameters<typeof composer.onNativePasteText>[0]) =>
+      composerInputAllowed ? pasteComposerText(paste) : Promise.resolve(),
+    [composerInputAllowed, pasteComposerText],
+  );
+  const onComposerChangeDraft = useCallback(
+    (value: string) => {
+      if (composerInputAllowed) changeComposerDraft(value);
+    },
+    [changeComposerDraft, composerInputAllowed],
+  );
+  const onComposerRemoveDraftImage = useCallback(
+    (imageId: string) => {
+      if (composerInputAllowed) removeComposerImage(imageId);
+    },
+    [composerInputAllowed, removeComposerImage],
+  );
   const gitState = useSelectedThreadGitState();
   const gitActions = useSelectedThreadGitActions();
   const requests = useSelectedThreadRequests();
   const interruptThreadTurn = useAtomCommand(threadEnvironment.interruptTurn, "thread interrupt");
   const navigation = useNavigation();
+  const openTeamLead = useCallback(() => {
+    const leadThreadId = teamThreadQuery.data?.leadThreadId;
+    if (selectedThread === null || leadThreadId === null || leadThreadId === undefined) return;
+    navigation.dispatch(
+      StackActions.replace("Thread", {
+        environmentId: String(selectedThread.environmentId),
+        threadId: String(leadThreadId),
+      }),
+    );
+  }, [navigation, selectedThread, teamThreadQuery.data?.leadThreadId]);
   const params = props.route.params;
   const environmentIdRaw = firstRouteParam(params.environmentId);
   const environmentId = environmentIdRaw ? EnvironmentId.make(environmentIdRaw) : null;
@@ -1017,15 +1091,19 @@ function ThreadRouteContent(
           layoutVariant={layout.variant}
           usesAutomaticContentInsets={usesNativeHeaderGlass}
           onOpenConnectionEditor={handleOpenConnectionEditor}
-          onChangeDraftMessage={composer.onChangeDraftMessage}
-          onPickDraftMedia={composer.onPickDraftMedia}
-          onPickDraftFiles={composer.onPickDraftFiles}
-          onNativePasteImages={composer.onNativePasteImages}
-          onNativePasteText={composer.onNativePasteText}
-          onRemoveDraftImage={composer.onRemoveDraftImage}
+          teamThreadComposerAccess={teamThreadComposerAccess}
+          teamLeadThreadId={teamThreadQuery.data?.leadThreadId ?? null}
+          onOpenTeamLead={openTeamLead}
+          onRetryTeamThreadAccess={teamThreadQuery.refresh}
+          onChangeDraftMessage={onComposerChangeDraft}
+          onPickDraftMedia={onComposerPickMedia}
+          onPickDraftFiles={onComposerPickFiles}
+          onNativePasteImages={onComposerPasteImages}
+          onNativePasteText={onComposerPasteText}
+          onRemoveDraftImage={onComposerRemoveDraftImage}
           serverConfig={serverConfig}
           onStopThread={awaitingBootstrapTurn ? handleCancelWorktreeSetup : handleStopThread}
-          onSendMessage={composer.onSendMessage}
+          onSendMessage={onComposerSendMessage}
           onReconnectEnvironment={handleReconnectEnvironment}
           onUpdateThreadModelSelection={composer.onUpdateModelSelection}
           onUpdateThreadRuntimeMode={composer.onUpdateRuntimeMode}

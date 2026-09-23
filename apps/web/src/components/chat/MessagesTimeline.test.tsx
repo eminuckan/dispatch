@@ -13,6 +13,7 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 import type { LegendListRef, MaintainScrollAtEndOptions } from "@legendapp/list/react";
 import { shouldUseRestingComposerLayout } from "../composerFooterLayout";
 import { useComposerFocusState } from "./useComposerFocusState";
+import type { TeamConversationMessage } from "./teamConversation.logic";
 
 vi.mock("@legendapp/list/react", async () => {
   const legendListTestId = "legend-list";
@@ -509,6 +510,34 @@ describe("MessagesTimeline", () => {
     );
 
     expect(markup).toContain("Worked for 8.0s");
+  });
+
+  it("renders durable Flow messages as attributed chat notes with delivery state", async () => {
+    const message: TeamConversationMessage = {
+      id: "mail-1",
+      createdAt: MESSAGE_CREATED_AT,
+      text: "Please check the edge case before finishing.",
+      from: "Flow lead",
+      to: "Worker 1",
+      deliveryStatus: "queued",
+      providerMessageId: null,
+    };
+    let renderer!: ReactTestRenderer;
+    await act(() => {
+      renderer = create(
+        <MessagesTimeline {...buildProps()} timelineEntries={[]} teamMessages={[message]} />,
+      );
+    });
+
+    expect(renderer.root.findByProps({ "data-team-message-id": "mail-1" }).props.role).toBe("note");
+    const renderedText = JSON.stringify(renderer.toJSON());
+    expect(renderedText).toContain("Flow message");
+    expect(renderedText).toContain("Flow lead");
+    expect(renderedText).toContain("Worker 1");
+    expect(renderedText).toContain("Please check the edge case before finishing.");
+    expect(renderedText).toContain("Waiting for a safe handoff");
+    expect(renderedText).not.toContain('"role":"assistant"');
+    await act(() => renderer.unmount());
   });
 
   it("keeps assistant changed-files headers sticky below the thread header", () => {
