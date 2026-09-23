@@ -25,14 +25,11 @@ on:
         required: false
         type: string
 
-# Serialize nightlies (scheduled and manual) so overlapping runs cannot build
-# the same commit twice or publish out of order. Stable tag releases get their
-# own group so a nightly never blocks them. Running publishers are never
-# canceled, and queue: max keeps every pending run instead of the default
-# newest-wins single slot, so a queued stable tag can never be silently
-# dropped. Automatic nightlies recheck the release gap after leaving the queue.
+# Serialize each release channel independently. Preview has its own tags and
+# updater feed, so scheduled Nightlies cannot block a manual Preview release.
+# Running publishers are never canceled; queue: max preserves pending runs.
 concurrency:
-  group: release-${{ (github.event_name == 'schedule' || inputs.channel == 'nightly' || inputs.channel == 'preview') && 'nightly' || 'stable' }}
+  group: release-${{ github.event_name == 'workflow_dispatch' && inputs.channel == 'preview' && 'preview' || (github.event_name == 'schedule' || inputs.channel == 'nightly') && 'nightly' || 'stable' }}
   cancel-in-progress: false
   queue: max
 
@@ -47,7 +44,7 @@ jobs:
   # have already run. Scheduled runs also decide here whether a nightly is due.
   resolve_commit:
     name: Resolve release commit
-    runs-on: blacksmith-8vcpu-ubuntu-2404
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && inputs.channel == 'preview' && 'ubuntu-24.04' || 'blacksmith-8vcpu-ubuntu-2404' }}
     timeout-minutes: 5
     outputs:
       ref: ${{ steps.resolve.outputs.ref }}
@@ -101,7 +98,7 @@ jobs:
     if: |
       needs.resolve_commit.result == 'success' &&
       (github.event_name != 'schedule' || needs.resolve_commit.outputs.has_changes == 'true')
-    runs-on: blacksmith-8vcpu-ubuntu-2404
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && inputs.channel == 'preview' && 'ubuntu-24.04' || 'blacksmith-8vcpu-ubuntu-2404' }}
     timeout-minutes: 10
     outputs:
       release_channel: ${{ steps.release_meta.outputs.release_channel }}
@@ -227,7 +224,7 @@ jobs:
     name: Release quality checks
     needs: [preflight]
     if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' }}
-    runs-on: blacksmith-8vcpu-ubuntu-2404
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && inputs.channel == 'preview' && 'ubuntu-24.04' || 'blacksmith-8vcpu-ubuntu-2404' }}
     timeout-minutes: 10
     steps:
       - name: Checkout
@@ -271,7 +268,7 @@ jobs:
     name: Build JS bundle
     needs: [preflight]
     if: ${{ always() && !cancelled() && needs.preflight.result == 'success' }}
-    runs-on: blacksmith-32vcpu-ubuntu-2404
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && inputs.channel == 'preview' && 'ubuntu-24.04' || 'blacksmith-32vcpu-ubuntu-2404' }}
     timeout-minutes: 30
     env:
       DISPATCH_CONNECT_URL: ${{ vars.DISPATCH_CONNECT_URL || 'https://connect.opendispatch.dev' }}
@@ -352,7 +349,7 @@ jobs:
       release_channel: ${{ needs.preflight.outputs.release_channel }}
       connect_url: ${{ vars.DISPATCH_CONNECT_URL || 'https://connect.opendispatch.dev' }}
       label: macOS arm64
-      runner: blacksmith-12vcpu-macos-26
+      runner: ${{ inputs.channel == 'preview' && 'macos-26' || 'blacksmith-12vcpu-macos-26' }}
       platform: mac
       target: dmg
       arch: arm64
@@ -372,7 +369,7 @@ jobs:
       release_channel: ${{ needs.preflight.outputs.release_channel }}
       connect_url: ${{ vars.DISPATCH_CONNECT_URL || 'https://connect.opendispatch.dev' }}
       label: macOS x64
-      runner: blacksmith-12vcpu-macos-26
+      runner: ${{ inputs.channel == 'preview' && 'macos-26-intel' || 'blacksmith-12vcpu-macos-26' }}
       platform: mac
       target: dmg
       arch: x64
@@ -386,7 +383,7 @@ jobs:
   desktop_linux_x64:
     name: Desktop Linux x64
     needs: [preflight, build_bundle]
-    if: ${{ always() && !cancelled() && needs.preflight.result == 'success' && needs.build_bundle.result == 'success' }}
+    if: ${{ always() && !cancelled() && needs.preflight.result == 'success' && needs.build_bundle.result == 'success' && needs.preflight.outputs.release_channel != 'preview' }}
     uses: ./.github/workflows/release-desktop.yml
     secrets: inherit
     with:
@@ -408,7 +405,7 @@ jobs:
   desktop_linux_arm64:
     name: Desktop Linux arm64
     needs: [preflight, build_bundle]
-    if: ${{ always() && !cancelled() && needs.preflight.result == 'success' && needs.build_bundle.result == 'success' }}
+    if: ${{ always() && !cancelled() && needs.preflight.result == 'success' && needs.build_bundle.result == 'success' && needs.preflight.outputs.release_channel != 'preview' }}
     uses: ./.github/workflows/release-desktop.yml
     secrets: inherit
     with:
@@ -432,7 +429,7 @@ jobs:
   desktop_win_x64:
     name: Desktop Windows x64
     needs: [preflight, build_bundle, desktop_linux_x64]
-    if: ${{ always() && !cancelled() && needs.preflight.result == 'success' && needs.build_bundle.result == 'success' }}
+    if: ${{ always() && !cancelled() && needs.preflight.result == 'success' && needs.build_bundle.result == 'success' && needs.preflight.outputs.release_channel != 'preview' }}
     uses: ./.github/workflows/release-desktop.yml
     secrets: inherit
     with:
@@ -452,7 +449,7 @@ jobs:
   desktop_win_arm64:
     name: Desktop Windows arm64
     needs: [preflight, build_bundle, desktop_linux_arm64]
-    if: ${{ always() && !cancelled() && needs.preflight.result == 'success' && needs.build_bundle.result == 'success' }}
+    if: ${{ always() && !cancelled() && needs.preflight.result == 'success' && needs.build_bundle.result == 'success' && needs.preflight.outputs.release_channel != 'preview' }}
     uses: ./.github/workflows/release-desktop.yml
     secrets: inherit
     with:
@@ -486,7 +483,7 @@ jobs:
         desktop_win_x64,
         desktop_win_arm64,
       ]
-    if: ${{ !failure() && !cancelled() && vars.DISPATCH_RELEASE_PUBLISH_LEGACY_NPM == 'true' && needs.preflight.result == 'success' && needs.quality.result == 'success' && needs.desktop_mac_arm64.result == 'success' && needs.desktop_linux_x64.result == 'success' && needs.desktop_linux_arm64.result == 'success' && needs.desktop_win_x64.result == 'success' && needs.desktop_win_arm64.result == 'success' }}
+    if: ${{ !failure() && !cancelled() && vars.DISPATCH_RELEASE_PUBLISH_LEGACY_NPM == 'true' && needs.preflight.outputs.release_channel != 'preview' && needs.preflight.result == 'success' && needs.quality.result == 'success' && needs.desktop_mac_arm64.result == 'success' && needs.desktop_linux_x64.result == 'success' && needs.desktop_linux_arm64.result == 'success' && needs.desktop_win_x64.result == 'success' && needs.desktop_win_arm64.result == 'success' }}
     runs-on: ubuntu-24.04 # blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 15
     permissions:
@@ -549,8 +546,8 @@ jobs:
         desktop_win_arm64,
         publish_cli,
       ]
-    if: ${{ always() && !cancelled() && needs.preflight.result == 'success' && needs.quality.result == 'success' && needs.desktop_mac_arm64.result == 'success' && needs.desktop_mac_x64.result == 'success' && needs.desktop_linux_x64.result == 'success' && needs.desktop_linux_arm64.result == 'success' && needs.desktop_win_x64.result == 'success' && needs.desktop_win_arm64.result == 'success' && (needs.publish_cli.result == 'success' || needs.publish_cli.result == 'skipped') }}
-    runs-on: blacksmith-8vcpu-ubuntu-2404
+    if: ${{ always() && !cancelled() && needs.preflight.result == 'success' && needs.quality.result == 'success' && needs.desktop_mac_arm64.result == 'success' && needs.desktop_mac_x64.result == 'success' && (needs.preflight.outputs.release_channel == 'preview' || (needs.desktop_linux_x64.result == 'success' && needs.desktop_linux_arm64.result == 'success' && needs.desktop_win_x64.result == 'success' && needs.desktop_win_arm64.result == 'success')) && (needs.publish_cli.result == 'success' || needs.publish_cli.result == 'skipped') }}
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && inputs.channel == 'preview' && 'ubuntu-24.04' || 'blacksmith-8vcpu-ubuntu-2404' }}
     timeout-minutes: 30
     permissions:
       contents: write
@@ -662,10 +659,14 @@ jobs:
             echo 'files<<EOF'
             echo 'release-assets/*.dmg'
             echo 'release-assets/*.zip'
-            echo 'release-assets/*.AppImage'
-            echo 'release-assets/*.exe'
             echo 'release-assets/*.blockmap'
-            echo 'release-assets/*.yml'
+            if [[ "${{ needs.preflight.outputs.release_channel }}" == preview ]]; then
+              echo 'release-assets/preview*.yml'
+            else
+              echo 'release-assets/*.AppImage'
+              echo 'release-assets/*.exe'
+              echo 'release-assets/*.yml'
+            fi
             echo 'release-assets/*.tar.gz'
             echo 'release-assets/SHA256SUMS'
             echo 'EOF'
