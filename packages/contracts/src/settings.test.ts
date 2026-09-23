@@ -733,10 +733,10 @@ describe("ClientSettings pull request merge methods", () => {
 });
 
 describe("ServerSettings.providerInstances (slice-2 invariant)", () => {
-  it("defaults text generation to Luna at low reasoning effort", () => {
+  it("defaults text generation to GPT-6 Luna at low reasoning effort", () => {
     expect(DEFAULT_SERVER_SETTINGS.textGenerationModelSelection).toEqual({
       instanceId: ProviderInstanceId.make("codex"),
-      model: "gpt-5.6-luna",
+      model: "gpt-6-luna",
       options: [{ id: "reasoningEffort", value: "low" }],
     });
   });

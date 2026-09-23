@@ -6,9 +6,10 @@ releases. Failed fetches or invalid data preserve the last usable manifest.
 Remote data must pass both catalog-reference validation and the owning provider's
 adapter validation before replacing the cache.
 
-A newer bundle outranks the cached remote manifest by `updatedAt`, so a release can
-correct model data before the next successful fetch. Bump `updatedAt` whenever the
-file changes. Fetch time cannot establish which copy contains the newer edit.
+A newer bundle outranks cached and fetched remote manifests by `updatedAt`, so a
+release can correct model data before the published manifest catches up. Bump
+`updatedAt` whenever the file changes. Fetch time cannot establish which copy
+contains the newer edit.
 
 Generic catalog data describes presentation and capabilities. Each provider owns
 its adapter schema and dispatch mappings. Claude uses the manifest for its entire
