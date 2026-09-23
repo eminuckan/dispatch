@@ -282,6 +282,43 @@ jobs:
             Select-Object -Unique
           "PSModulePath=$($modulePathEntries -join ';')" >> $env:GITHUB_ENV
 
+      # electron-builder 26.15.6 passes the P12 password to
+      # set-key-partition-list for its own generated keychain. Import once with
+      # the actual keychain password and point both desktop and CLI signing at it.
+      - name: Import macOS signing certificate
+        if: inputs.platform == 'mac'
+        shell: bash
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          umask 077
+          if [[ -z "$CSC_LINK" || -z "$CSC_KEY_PASSWORD" ]]; then
+            echo "macOS signing disabled (missing CSC_LINK)."
+            exit 0
+          fi
+          keychain="$RUNNER_TEMP/dispatch-signing.keychain-db"
+          keychain_password="$(openssl rand -hex 16)"
+          cert_path="$RUNNER_TEMP/dispatch-signing.p12"
+          echo "::add-mask::$keychain_password"
+          trap 'rm -f "$cert_path"' EXIT
+          printf '%s' "$CSC_LINK" | base64 --decode > "$cert_path"
+          security create-keychain -p "$keychain_password" "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security import "$cert_path" -k "$keychain" -P "$CSC_KEY_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$keychain_password" "$keychain" >/dev/null
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+          identity="$(security find-identity -v -p codesigning "$keychain" | sed -n 's/.*"\(Developer ID Application: [^"]*\)".*/\1/p' | head -n 1)"
+          if [[ -z "$identity" ]]; then
+            echo "No Developer ID Application identity found in CSC_LINK." >&2
+            exit 1
+          fi
+          echo "CSC_KEYCHAIN=$keychain" >> "$GITHUB_ENV"
+          echo "DISPATCH_CLI_MAC_SIGN_IDENTITY=$identity" >> "$GITHUB_ENV"
+          echo "macOS signing identity imported."
+
       - name: Build desktop artifact
         shell: bash
         env:
@@ -301,6 +338,7 @@ jobs:
           AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME: ${{ secrets.AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME }}
           AZURE_TRUSTED_SIGNING_PUBLISHER_NAME: ${{ secrets.AZURE_TRUSTED_SIGNING_PUBLISHER_NAME }}
         run: |
+          umask 077
           args=(
             --platform "${{ inputs.platform }}"
             --target "${{ inputs.target }}"
@@ -327,6 +365,9 @@ jobs:
 
               echo "macOS signing enabled."
               args+=(--signed)
+              # Reuse the imported keychain; CSC_LINK would make electron-builder
+              # create another one and use the P12 password to unlock it.
+              unset CSC_LINK CSC_KEY_PASSWORD
             else
               echo "macOS signing disabled (missing one or more Apple signing secrets)."
             fi
@@ -367,37 +408,6 @@ jobs:
           # step with SEA_NODE_VERSION in apps/server/vite.config.ts.
           VP_NODE_VERSION: "26.8.2"
         run: node apps/server/scripts/cli.ts build-exe --verbose
-
-      - name: Import macOS signing certificate for the CLI archive
-        if: inputs.cli_archive && inputs.platform == 'mac'
-        shell: bash
-        env:
-          CSC_LINK: ${{ secrets.CSC_LINK }}
-          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
-        run: |
-          set -euo pipefail
-          if [[ -z "$CSC_LINK" || -z "$CSC_KEY_PASSWORD" ]]; then
-            echo "macOS CLI signing disabled (missing CSC_LINK); the archive is signed ad hoc."
-            exit 0
-          fi
-          keychain="$RUNNER_TEMP/dispatch-cli-signing.keychain-db"
-          keychain_password="$(openssl rand -hex 16)"
-          cert_path="$RUNNER_TEMP/dispatch-cli-signing.p12"
-          printf '%s' "$CSC_LINK" | base64 --decode > "$cert_path"
-          security create-keychain -p "$keychain_password" "$keychain"
-          security set-keychain-settings -lut 21600 "$keychain"
-          security unlock-keychain -p "$keychain_password" "$keychain"
-          security import "$cert_path" -k "$keychain" -P "$CSC_KEY_PASSWORD" -T /usr/bin/codesign
-          security set-key-partition-list -S apple-tool:,apple: -s -k "$keychain_password" "$keychain" >/dev/null
-          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
-          identity="$(security find-identity -v -p codesigning "$keychain" | sed -n 's/.*"\(Developer ID Application: [^"]*\)".*/\1/p' | head -n 1)"
-          if [[ -z "$identity" ]]; then
-            echo "No Developer ID Application identity found in CSC_LINK." >&2
-            exit 1
-          fi
-          echo "::add-mask::$keychain_password"
-          echo "DISPATCH_CLI_MAC_SIGN_IDENTITY=$identity" >> "$GITHUB_ENV"
-          echo "macOS CLI signing enabled."
 
       - name: Stage resource monitor for the CLI archive
         if: inputs.cli_archive
