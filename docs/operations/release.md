@@ -47,10 +47,11 @@ The normal graph is:
 3. `quality` runs `vp check`, `vp run typecheck`, and `vp run test`.
 4. `build_bundle` aligns package versions and builds the platform-independent server, web client, and
    Electron main process once.
-5. Six platform jobs call `release-desktop.yml` to package that shared bundle and build native pieces.
-6. `publish_cli` optionally publishes the legacy npm compatibility packages. A skipped job is valid.
-7. `release` publishes the GitHub Release after quality and all platform jobs succeed. It explicitly
-   accepts `publish_cli` as either successful or skipped.
+5. Stable and nightly call six platform jobs; Preview calls only the two macOS jobs. Each packages
+   the shared bundle and builds native pieces through `release-desktop.yml`.
+6. `publish_cli` optionally publishes legacy npm compatibility packages for stable and nightly.
+7. `release` publishes after quality and the channel's required platform jobs succeed. It accepts
+   `publish_cli` as either successful or skipped.
 8. AUR, hosted web, marketing, stable version finalization, and Discord announcement run afterward
    according to their own conditions.
 
@@ -61,7 +62,8 @@ release path available.
 
 ## Produced artifacts
 
-The workflow builds these desktop targets on native-architecture runners:
+Stable and nightly build all of these desktop targets on native-architecture runners. Preview builds
+only the two macOS targets:
 
 - macOS arm64 and x64 DMG builds. The packaging output also includes the macOS zip used by
   `electron-updater`.
@@ -82,24 +84,22 @@ The GitHub Release also contains `SHA256SUMS` generated from the final archive b
 embed the same-architecture Linux CLI archive as their WSL runtime, so the WSL payload is the same
 archive published for Linux.
 
-Stable, nightly, and preview desktop releases include updater manifests and any blockmaps produced by
-their targets. The release job merges the per-architecture macOS and Windows manifests back into the
-single channel manifest expected by `electron-updater`. Preview is isolated by channel name rather
-than by omitting metadata: macOS follows `preview-mac.yml`, Windows follows `preview.yml`, and Linux
-follows `preview-linux.yml` or the architecture-suffixed equivalent. The Preview release job requires
-Preview manifests and fails if `latest*` or `nightly*` manifests leak into that release.
+Every built target includes an updater manifest and any blockmaps it produces. The release job merges
+per-architecture macOS manifests into one file; stable and nightly also merge Windows manifests.
+Preview includes `preview-mac.yml` for both macOS architectures and no Windows or Linux packages.
+The Preview release job fails if `latest*` or `nightly*` manifests leak into that release.
 
 ## Safe-by-default external publishing gates
 
 All gates below are GitHub repository variables. The workflow requires the literal string `true`.
 Any other value, including an unset variable, leaves the integration disabled.
 
-| Integration                       | Repository gate                       | Channels                 | When disabled                                                               |
-| --------------------------------- | ------------------------------------- | ------------------------ | --------------------------------------------------------------------------- |
-| Legacy npm compatibility packages | `DISPATCH_RELEASE_PUBLISH_LEGACY_NPM` | stable, nightly, preview | npm publication is skipped and the GitHub Release can still publish.        |
-| Legacy AUR compatibility package  | `DISPATCH_RELEASE_PUBLISH_AUR_COMPAT` | stable, nightly          | AUR publication is skipped. Preview never publishes AUR.                    |
-| Hosted web deployment             | `DISPATCH_RELEASE_DEPLOY_WEB`         | stable, nightly          | hosted web deployment is skipped. Preview never deploys hosted web.         |
-| Marketing deployment              | `DISPATCH_RELEASE_DEPLOY_MARKETING`   | nightly only             | marketing deployment is skipped. Stable and preview never deploy marketing. |
+| Integration                       | Repository gate                       | Channels        | When disabled                                                               |
+| --------------------------------- | ------------------------------------- | --------------- | --------------------------------------------------------------------------- |
+| Legacy npm compatibility packages | `DISPATCH_RELEASE_PUBLISH_LEGACY_NPM` | stable, nightly | npm publication is skipped and the GitHub Release can still publish.        |
+| Legacy AUR compatibility package  | `DISPATCH_RELEASE_PUBLISH_AUR_COMPAT` | stable, nightly | AUR publication is skipped. Preview never publishes AUR.                    |
+| Hosted web deployment             | `DISPATCH_RELEASE_DEPLOY_WEB`         | stable, nightly | hosted web deployment is skipped. Preview never deploys hosted web.         |
+| Marketing deployment              | `DISPATCH_RELEASE_DEPLOY_MARKETING`   | nightly only    | marketing deployment is skipped. Stable and preview never deploy marketing. |
 
 ### Dispatch Connect public origin
 
@@ -304,9 +304,9 @@ deployment was explicitly enabled, the announcement waits for it to succeed.
 There is no non-publishing release mode. Every accepted release run publishes a real GitHub
 Release when the core jobs succeed:
 
-- `preview` is manual-only, publishes a real prerelease plus its dedicated desktop updater metadata,
-  and skips AUR, hosted web, and marketing. Its warning body is prepended to generated GitHub release
-  notes. Legacy npm still publishes only if its gate is explicitly enabled.
+- `preview` is manual-only, publishes macOS arm64 and x64 packages plus the dedicated updater
+  metadata, and skips Windows, Linux, legacy npm, AUR, hosted web, and marketing. Its warning body is
+  prepended to generated GitHub release notes.
 - `nightly` publishes a real prerelease and updater feed metadata. Scheduled nightlies apply the
   six-hour/change checks; manual nightlies do not.
 - `stable` publishes a real stable-channel release. A manual stable promotes the latest nightly
@@ -331,9 +331,8 @@ dispatch update --channel nightly
 For desktop Preview validation, inspect the published release assets before installing anything:
 
 - macOS must contain the merged `preview-mac.yml` with both arm64 and x64 ZIP entries;
-- Windows must contain the merged `preview.yml` with both arm64 and x64 installer entries;
-- Linux must contain `preview-linux.yml` for x64 and `preview-linux-arm64.yml` for arm64;
-- the Preview release must not contain `latest*.yml` or `nightly*.yml` updater manifests.
+- Windows and Linux packages and updater manifests must be absent;
+- `latest*.yml` and `nightly*.yml` updater manifests must be absent.
 
 Then test from an older feed-capable packaged build: select Preview, check/download/install, verify the
 same Dispatch state is present after restart, verify What's New appears only for the version actually

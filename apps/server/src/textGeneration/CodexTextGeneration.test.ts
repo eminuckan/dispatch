@@ -160,6 +160,52 @@ function withFakeCodexEnv<A, E, R>(
 }
 
 it.layer(CodexTextGenerationTestLayer)("CodexTextGeneration", (it) => {
+  it.effect("uses GPT-6 Luna at low effort when the live Codex catalog offers it", () =>
+    withFakeCodexEnv(
+      {
+        output: JSON.stringify({ title: "Current Luna title" }),
+        models: ["openai.gpt-6-luna", "openai.gpt-5.6-luna"],
+        requireArg: "--model openai.gpt-6-luna",
+        forbidArg: "--model openai.gpt-5.6-luna",
+        requireReasoningEffort: "low",
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const result = yield* textGeneration.generateThreadTitle({
+            cwd: process.cwd(),
+            message: "Describe this change",
+            modelSelection: createModelSelection(ProviderInstanceId.make("codex"), "gpt-6-luna", [
+              { id: "reasoningEffort", value: "low" },
+            ]),
+          });
+          expect(result.title).toBe("Current Luna title");
+        }),
+    ),
+  );
+
+  it.effect("uses the earlier Luna when GPT-6 Luna has not reached this Codex account", () =>
+    withFakeCodexEnv(
+      {
+        output: JSON.stringify({ title: "Available Luna title" }),
+        models: ["openai.gpt-5.6-luna"],
+        requireArg: "--model openai.gpt-5.6-luna",
+        forbidArg: "--model gpt-6-luna",
+        requireReasoningEffort: "low",
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const result = yield* textGeneration.generateThreadTitle({
+            cwd: process.cwd(),
+            message: "Describe this change",
+            modelSelection: createModelSelection(ProviderInstanceId.make("codex"), "gpt-6-luna", [
+              { id: "reasoningEffort", value: "low" },
+            ]),
+          });
+          expect(result.title).toBe("Available Luna title");
+        }),
+    ),
+  );
+
   for (const selectedModel of ["gpt-5.6-luna", "openai.gpt-5.6-luna"]) {
     it.effect(`dispatches the qualified live model for ${selectedModel}`, () =>
       withFakeCodexEnv(

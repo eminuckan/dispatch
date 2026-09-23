@@ -9,6 +9,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import {
   type CodexSettings,
+  DEFAULT_TEXT_GENERATION_MODEL,
   DEFAULT_TEXT_GENERATION_REASONING_EFFORT,
   type ModelSelection,
   type ServerProviderModel,
@@ -182,12 +183,20 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
     const runCodexCommand = Effect.fn("runCodexJson.runCodexCommand")(function* () {
       const models = yield* getModels;
       const requestedModel = modelSelection.model;
-      const model =
+      const availableModel =
         models.find((candidate) => candidate.slug === requestedModel)?.slug ??
         models.find(
           (candidate) => !candidate.isCustom && codexModelFamily(candidate.slug) === requestedModel,
-        )?.slug ??
-        requestedModel;
+        )?.slug;
+      // The new default may not be available to every Codex account during rollout.
+      const fallbackModel =
+        !availableModel && requestedModel === DEFAULT_TEXT_GENERATION_MODEL
+          ? models.find(
+              (candidate) =>
+                !candidate.isCustom && codexModelFamily(candidate.slug) === "gpt-5.6-luna",
+            )?.slug
+          : undefined;
+      const model = availableModel ?? fallbackModel ?? requestedModel;
       const launchArgs = resolveCodexLaunchArgs(codexConfig.launchArgs, resolvedEnvironment);
       const reasoningEffort =
         getModelSelectionStringOptionValue(modelSelection, "reasoningEffort") ??
