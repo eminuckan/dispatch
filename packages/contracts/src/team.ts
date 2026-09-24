@@ -322,6 +322,8 @@ export type TeamStart = typeof TeamStart.Type;
 export const TeamRoute = Schema.Struct({
   projectId: ProjectId,
   prompt: BoundedText,
+  /** Derived from draft attachments; image bytes are sent only with the chosen run. */
+  requiresImageInput: Schema.optional(Schema.Boolean),
 });
 export type TeamRoute = typeof TeamRoute.Type;
 

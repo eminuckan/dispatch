@@ -14,6 +14,7 @@ import {
   directWorkerProfileOrder,
   equivalentProfileOrder,
   makeOrchestrationModelCatalog,
+  orderedDirectProfiles,
   orchestrationModelUsable,
   orchestrationQuotaExhausted,
   orderedRoleProfiles,
@@ -68,7 +69,7 @@ const policy = (profiles: ReadonlyArray<TeamModelProfile>): TeamPolicy => ({
 });
 
 describe("orchestration model ordering", () => {
-  effectIt.effect("offers every ready text model to direct Auto regardless of Flow roles", () => {
+  effectIt.effect("offers only allowed models to direct Auto regardless of Flow roles", () => {
     const saved = profile("saved", codex, "gpt-6-sol", {
       selection: {
         instanceId: codex,
@@ -85,10 +86,7 @@ describe("orchestration model ordering", () => {
     return Effect.gen(function* () {
       const catalog = yield* makeOrchestrationModelCatalog;
       const models = yield* catalog.runnableDirectProfiles(policy([saved]));
-      expect(models.map((candidate) => candidate.selection.model)).toEqual([
-        "gpt-6-sol",
-        "gpt-6-luna",
-      ]);
+      expect(models.map((candidate) => candidate.selection.model)).toEqual(["gpt-6-sol"]);
       expect(models[0]?.selection).toEqual(saved.selection);
       expect(models[0]?.effortMode).toBe("fixed");
       expect(models.every((candidate) => !candidate.lead && !candidate.worker)).toBe(true);
@@ -105,6 +103,61 @@ describe("orchestration model ordering", () => {
         ),
       ),
     );
+  });
+
+  it("excludes image-incompatible and unlisted models from image routes", () => {
+    const textOnly = profile("text-only", codex, "deepseek-v4", {
+      lead: false,
+      worker: false,
+    });
+    const imageReady = profile("image-ready", codex, "gpt-6-sol", {
+      lead: false,
+      worker: false,
+    });
+    const unknown = profile("unknown", codex, "unknown-image-support", {
+      lead: false,
+      worker: false,
+    });
+    const snapshot = {
+      ...provider(codex, ["deepseek-v4", "gpt-6-sol", "unknown-image-support", "unlisted"]),
+      models: [
+        {
+          slug: "deepseek-v4",
+          name: "DeepSeek",
+          isCustom: false,
+          capabilities: null,
+          supportsImageInput: false,
+        },
+        {
+          slug: "gpt-6-sol",
+          name: "Sol",
+          isCustom: false,
+          capabilities: null,
+          supportsImageInput: true,
+        },
+        { slug: "unknown-image-support", name: "Unknown", isCustom: false, capabilities: null },
+        {
+          slug: "unlisted",
+          name: "Unlisted",
+          isCustom: false,
+          capabilities: null,
+          supportsImageInput: true,
+        },
+      ],
+    } satisfies ServerProvider;
+    expect(
+      orderedDirectProfiles(policy([textOnly, imageReady, unknown]), [snapshot], true).map(
+        (candidate) => candidate.selection.model,
+      ),
+    ).toEqual(["gpt-6-sol"]);
+    expect(
+      orderedDirectProfiles(policy([textOnly, imageReady, unknown]), [snapshot]).map(
+        (candidate) => candidate.selection.model,
+      ),
+    ).toEqual(["deepseek-v4", "gpt-6-sol", "unknown-image-support"]);
+    expect(
+      orderedRoleProfiles(policy([textOnly, imageReady, unknown]), [snapshot], "lead", true),
+    ).toEqual([]);
   });
 
   it("preserves policy order while filtering by role, readiness and quota", () => {

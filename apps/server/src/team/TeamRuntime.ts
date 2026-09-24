@@ -2585,28 +2585,38 @@ export const make = Effect.gen(function* () {
             ? "Flow Standard uses a managed team."
             : "Smart Routing is unavailable; Flow Standard will run a managed team.",
       };
-    const candidates = yield* models.runnableDirectProfiles(settings.policy);
+    const requiresImageInput = input.requiresImageInput === true;
+    const objective = requiresImageInput
+      ? `The user attached image input. ${input.prompt.trim()}`
+      : input.prompt.trim();
+    const candidates = yield* models.runnableDirectProfiles(settings.policy, requiresImageInput);
     if (candidates.length === 0)
-      return yield* unavailable("No available model can run this objective.");
+      return yield* unavailable(
+        requiresImageInput
+          ? "No allowed model with confirmed image input support is available for Auto. Add one in Flow settings."
+          : "No allowed model is currently available for Auto.",
+      );
     const decision = yield* advisor.routeExecution({
-      objective: input.prompt.trim(),
+      objective,
       workers: candidates,
     });
     if (decision.mode === "orchestrated") {
-      const leads = yield* models.runnableProfiles(settings.policy, "lead");
+      const leads = yield* models.runnableProfiles(settings.policy, "lead", requiresImageInput);
       if (leads.length === 0)
         return yield* unavailable(
-          "Smart Routing chose a team, but no selected Lead model is available.",
+          requiresImageInput
+            ? "Smart Routing chose a team, but no image-capable Lead model is available."
+            : "Smart Routing chose a team, but no selected Lead model is available.",
         );
       return { kind: "team" as const, source: decision.source, reason: decision.reason };
     }
     const choice = yield* advisor.chooseProfile({
       purpose: "worker",
-      objective: input.prompt.trim(),
+      objective,
       candidates,
     });
     if (choice.source !== "jev" && candidates.length > 1) {
-      const leads = yield* models.runnableProfiles(settings.policy, "lead");
+      const leads = yield* models.runnableProfiles(settings.policy, "lead", requiresImageInput);
       if (leads.length === 0)
         return yield* unavailable(
           "Smart Routing could not select a model, and Standard needs a selected Lead.",
@@ -2621,7 +2631,7 @@ export const make = Effect.gen(function* () {
       candidates.find((candidate) => candidate.id === choice.profileId) ?? candidates[0]!;
     const effort = profileUsesAutoEffort(profile)
       ? yield* advisor.chooseEffort({
-          objective: input.prompt.trim(),
+          objective,
           profile,
           choices: yield* models.supportedEfforts(profile),
         })
@@ -2665,10 +2675,21 @@ export const make = Effect.gen(function* () {
     });
     if (head.code !== 0 || !/^[a-f0-9]{40,64}$/.test(head.stdout.trim()))
       return yield* invalid("Flow requires a Git repository with an initial commit.");
-    const routedCandidates = yield* models.runnableProfiles(settings.policy, "lead");
+    const requiresImageInput =
+      settings.policy.flowMode === "auto" &&
+      input.attachments.some(
+        (attachment) => attachment.type === "image" || attachment.mimeType.startsWith("image/"),
+      );
+    const routedCandidates = yield* models.runnableProfiles(
+      settings.policy,
+      "lead",
+      requiresImageInput,
+    );
     if (routedCandidates.length === 0)
       return yield* unavailable(
-        "No selected Lead model is currently safe and available for a managed Flow team.",
+        requiresImageInput
+          ? "No selected Lead model with confirmed image input support is available for this Flow team."
+          : "No selected Lead model is currently safe and available for a managed Flow team.",
       );
     const smartRoutingAvailable =
       settings.policy.flowMode === "auto" &&

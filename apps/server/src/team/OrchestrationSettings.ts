@@ -36,12 +36,12 @@ function validatePolicy(policy: TeamPolicy): void {
     if (ids.has(profile.id))
       throw new TeamError({ code: "invalid", message: "Flow model IDs must be unique." });
     ids.add(profile.id);
-    if (!profile.lead && !profile.worker)
-      throw new TeamError({
-        code: "invalid",
-        message: `${profile.label} must be enabled for Lead, Worker, or both.`,
-      });
   }
+  if (policy.enabled && policy.flowMode === "auto" && policy.profiles.length === 0)
+    throw new TeamError({
+      code: "invalid",
+      message: "Add at least one allowed model before enabling Flow Auto.",
+    });
   const hasLead = policy.profiles.some((profile) => profile.lead);
   if (policy.enabled && policy.flowMode === "standard" && !hasLead)
     throw new TeamError({

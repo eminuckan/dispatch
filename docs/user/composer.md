@@ -70,18 +70,21 @@ Leaving reasoning level or service tier unset uses the provider's own configurat
 ## Dispatch Flow and managed teams (experimental)
 
 Dispatch Flow is optional. You can choose it during onboarding or configure it later in
-**Dispatch Flow** in the sidebar or **Settings → Flow**. Choose a Flow mode. For managed teams,
-select which provider models Dispatch may use as **Lead**, **Worker**, or both. Those role choices
-do not limit Auto's single-model selection. Set **Auto effort** to let routing choose a provider-supported reasoning level per task,
-or **Fixed effort** to keep the selected level.
+**Dispatch Flow** in the sidebar or **Settings → Flow**. Choose a Flow mode and add allowed models.
+Auto chooses only from this list. Mark a model as **Lead**, **Worker**, or both to allow it in a
+managed team; a model with neither role remains available for direct Auto tasks. Set **Auto effort**
+to let routing choose a provider-supported reasoning level per task, or **Fixed effort** to keep the
+selected level.
 
 **Standard** needs no Dispatch Connect account and does not use Dispatch's hosted routing
 service. It runs with the Lead and Worker models you selected on that environment.
 
 **Auto** requires a signed-in Dispatch Connect account and a linked environment. It uses
 Dispatch-hosted Smart Routing to assess task difficulty, workload, opportunities to delegate,
-and review value. For a single-model task it chooses from all available provider models,
-regardless of Lead or Worker role, selects a supported effort, and sends through ordinary chat.
+and review value. For a single-model task it chooses from the allowed model list regardless of
+Lead or Worker role, selects a supported effort, and sends through ordinary chat. When the prompt
+includes images, Auto considers only allowed models with confirmed image input support.
+If none is available, the draft stays in the composer so you can add a compatible model.
 For a team it selects a Lead and effort, asks the Lead for a compact repository scope, chooses a
 useful worker count, then has the Lead write concrete directives. Each directive receives its
 own Worker model and effort. The team uses only models enabled for those roles. Dispatch sends

@@ -109,14 +109,14 @@ describe("onboarding Flow policy", () => {
     expect(result).toMatchObject({ enabled: true, flowMode: "auto" });
   });
 
-  it("uses the first unassigned recommendation as a Worker for Auto direct execution", () => {
+  it("keeps a direct-only recommendation unassigned for Auto", () => {
     const result = prepareOnboardingFlowPolicy({
       policy,
       recommendations: [profile("ready")],
       flowMode: "auto",
     });
 
-    expect(result?.profiles).toEqual([profile("ready", false, true)]);
+    expect(result?.profiles).toEqual([profile("ready")]);
   });
 
   it("makes the first supported catalog model explicit Lead + Worker for Standard setup", () => {

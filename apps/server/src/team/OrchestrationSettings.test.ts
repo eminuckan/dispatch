@@ -154,37 +154,46 @@ it.effect("does not trust persisted Smart Routing availability after restart", (
   });
 });
 
-it.effect("allows Auto without profiles but still requires a Lead for Standard", () => {
-  const f = settingsFixture({ configured: true, recommend: (profiles) => profiles });
-  const workerOnly: TeamModelProfile = { ...savedProfile, lead: false, worker: true };
-  return Effect.gen(function* () {
-    const service = yield* make;
-    const auto = yield* service.saveSettings({
-      ...stored.policy,
-      flowMode: "auto",
-      profiles: [workerOnly],
-    });
-    expect(auto.policy.flowMode).toBe("auto");
-    expect(auto.policy.profiles[0]).toMatchObject({ lead: false, worker: true });
-
-    const unassignedAuto = yield* service.saveSettings({
-      ...stored.policy,
-      flowMode: "auto",
-      profiles: [],
-    });
-    expect(unassignedAuto.policy.profiles).toEqual([]);
-
-    const error = yield* service
-      .saveSettings({
+it.effect(
+  "allows direct-only Auto models but requires an allowed model and a Standard Lead",
+  () => {
+    const f = settingsFixture({ configured: true, recommend: (profiles) => profiles });
+    const workerOnly: TeamModelProfile = { ...savedProfile, lead: false, worker: true };
+    return Effect.gen(function* () {
+      const service = yield* make;
+      const auto = yield* service.saveSettings({
         ...stored.policy,
-        flowMode: "standard",
+        flowMode: "auto",
         profiles: [workerOnly],
-      })
-      .pipe(Effect.flip);
-    expect(error.code).toBe("invalid");
-    expect(error.message).toContain("Lead model");
-  }).pipe(Effect.provide(f.layer));
-});
+      });
+      expect(auto.policy.flowMode).toBe("auto");
+      expect(auto.policy.profiles[0]).toMatchObject({ lead: false, worker: true });
+
+      const unassignedAuto = yield* service.saveSettings({
+        ...stored.policy,
+        flowMode: "auto",
+        profiles: [{ ...workerOnly, worker: false }],
+      });
+      expect(unassignedAuto.policy.profiles).toMatchObject([{ lead: false, worker: false }]);
+
+      const emptyError = yield* service
+        .saveSettings({ ...stored.policy, flowMode: "auto", profiles: [] })
+        .pipe(Effect.flip);
+      expect(emptyError.code).toBe("invalid");
+      expect(emptyError.message).toContain("allowed model");
+
+      const error = yield* service
+        .saveSettings({
+          ...stored.policy,
+          flowMode: "standard",
+          profiles: [workerOnly],
+        })
+        .pipe(Effect.flip);
+      expect(error.code).toBe("invalid");
+      expect(error.message).toContain("Lead model");
+    }).pipe(Effect.provide(f.layer));
+  },
+);
 
 function providerFixture(name: string, overrides: Partial<ServerProvider> = {}): ServerProvider {
   const candidateInstanceId = ProviderInstanceId.make(name);

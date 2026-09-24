@@ -115,7 +115,7 @@ function roleLabel(profile: Pick<TeamModelProfile, "lead" | "worker">): string {
   if (profile.lead && profile.worker) return "Lead + Worker";
   if (profile.lead) return "Lead";
   if (profile.worker) return "Worker";
-  return "No role";
+  return "Direct Auto only";
 }
 
 function effortMode(profile: TeamModelProfile): "auto" | "fixed" {
@@ -233,8 +233,7 @@ function TeamSettingsForm({
   const hasUnsavedEdits = JSON.stringify(policy) !== JSON.stringify(initial.policy);
   const hasLead = hasFlowLead(policy);
   const hasRequiredRole = hasRequiredFlowRole(policy);
-  const hasUnassignedModel = policy.profiles.some((profile) => !profile.lead && !profile.worker);
-  const policyValid = (!policy.enabled || hasRequiredRole) && !hasUnassignedModel;
+  const policyValid = !policy.enabled || hasRequiredRole;
 
   function updateProfile(id: string, update: Partial<TeamModelProfile>) {
     setPolicy((current) => ({
@@ -248,7 +247,11 @@ function TeamSettingsForm({
 
   function setEnabled(enabled: boolean) {
     if (enabled && !hasRequiredRole) {
-      setMessage("Choose at least one Lead model before enabling Flow Standard.");
+      setMessage(
+        policy.flowMode === "auto"
+          ? "Add at least one allowed model before enabling Flow Auto."
+          : "Choose at least one Lead model before enabling Flow Standard.",
+      );
       return;
     }
     setPolicy((current) => ({ ...current, enabled }));
@@ -364,7 +367,7 @@ function TeamSettingsForm({
           profile.selection.instanceId === instanceId && profile.selection.model === modelSlug,
       )
     ) {
-      setMessage("That model is already selected for Flow.");
+      setMessage("That model is already in the allowed list.");
       return;
     }
 
@@ -396,7 +399,9 @@ function TeamSettingsForm({
           description={
             hasRequiredRole
               ? "Makes Flow available in the composer for this environment."
-              : "Choose at least one Lead model before enabling Flow Standard."
+              : policy.flowMode === "auto"
+                ? "Add at least one allowed model before enabling Flow Auto."
+                : "Choose at least one Lead model before enabling Flow Standard."
           }
           control={
             <Switch
@@ -488,7 +493,7 @@ function TeamSettingsForm({
 
       <SettingsSection
         id="routing-models"
-        title="Models Flow can use"
+        title={policy.flowMode === "auto" ? "Auto mode allowed models" : "Flow models"}
         headerAction={
           firstProvider && firstModel ? (
             <ProviderModelPicker
@@ -499,13 +504,17 @@ function TeamSettingsForm({
               modelOptionsByInstance={modelOptionsByInstance}
               onInstanceModelChange={addModel}
               triggerLabel="Add model"
-              triggerAriaLabel="Add Flow model"
+              triggerAriaLabel="Add allowed model"
               size="xs"
               disabled={pending || policy.profiles.length >= 40}
             />
           ) : undefined
         }
       >
+        <p className="text-xs text-muted-foreground">
+          Auto chooses only from this list for direct tasks. Lead and Worker roles control managed
+          teams; models with neither role can still handle direct Auto tasks.
+        </p>
         {initial.supportedProviderInstanceIds === undefined ? (
           <p className="text-xs text-muted-foreground" role="status">
             Update this environment's server to choose supported Flow models.
@@ -516,7 +525,7 @@ function TeamSettingsForm({
             title="No models selected"
             description={
               firstProvider
-                ? "Add models, then choose whether each one can Lead, execute Worker tasks, or both. Worker models can also handle simple Auto work directly."
+                ? "Add the models Auto may choose. Mark models as Lead or Worker when they should join managed teams."
                 : "Connect a provider that supports Flow in Settings → Providers before adding models."
             }
           />
@@ -652,11 +661,6 @@ function TeamSettingsForm({
                 <p className="text-xs text-muted-foreground">
                   This model is currently unavailable. Flow will use another eligible selected model
                   until its provider is ready again.
-                </p>
-              ) : null}
-              {!profile.lead && !profile.worker ? (
-                <p className="text-xs text-destructive">
-                  Choose Lead, Worker, or remove this model before saving.
                 </p>
               ) : null}
             </SettingsRow>
@@ -826,8 +830,8 @@ function TeamSettingsForm({
         ) : null}
         {!policyValid ? (
           <p className="text-xs text-destructive">
-            {hasUnassignedModel
-              ? "Every selected model needs Lead, Worker, or both."
+            {policy.flowMode === "auto"
+              ? "Add at least one allowed model before enabling Flow Auto."
               : "Choose at least one Lead model before enabling Flow Standard."}
           </p>
         ) : null}

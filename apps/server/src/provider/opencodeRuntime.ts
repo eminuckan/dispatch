@@ -203,7 +203,9 @@ export interface OpenCodeCommandResult {
 export interface OpenCodeInventory {
   readonly providers: ReadonlyArray<Pick<ProviderInfo, "id" | "name" | "activation">>;
   readonly models: ReadonlyArray<
-    Pick<ModelInfo, "id" | "providerID" | "name" | "enabled" | "variants">
+    Pick<ModelInfo, "id" | "providerID" | "name" | "enabled" | "variants"> & {
+      readonly capabilities?: Pick<ModelInfo["capabilities"], "input">;
+    }
   >;
   readonly agents: ReadonlyArray<Pick<AgentInfo, "id" | "name" | "mode" | "hidden">>;
   readonly skills: ReadonlyArray<OpenCodeSkill>;
@@ -774,11 +776,12 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
       client.model.list(locationInput(directory), { signal }),
     ).pipe(
       Effect.map((result) =>
-        result.data.map(({ id, providerID, name, enabled, variants }) => ({
+        result.data.map(({ id, providerID, name, enabled, variants, capabilities }) => ({
           id,
           providerID,
           name,
           enabled,
+          capabilities: { input: capabilities.input },
           variants: variants.map(({ id: variantID }) => ({ id: variantID })),
         })),
       ),

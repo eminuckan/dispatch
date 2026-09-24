@@ -227,7 +227,7 @@ describe("team routing readiness", () => {
           profiles: [],
         },
       }),
-    ).toBe(true);
+    ).toBe(false);
     expect(
       isTeamRoutingReady(true, {
         ...configuredSettings,
@@ -407,7 +407,7 @@ describe("team routing readiness", () => {
     expect(latest?.ready).toBe(true);
     expect(latest?.smartRouting).toBe(true);
     expect(latest?.autoManagedNeedsLead).toBe(true);
-    expect(latest?.autoLeadNotice).toContain("single-model task can use any available model");
+    expect(latest?.autoLeadNotice).toContain("any allowed model directly");
     expect(latest?.summary).toContain("managed teams require a selected Lead");
   });
 });
@@ -435,6 +435,29 @@ describe("team routing attachments", () => {
       result = await latest!.submit();
     });
     expect(result).toMatchObject({ kind: "direct", selection });
+    expect(mocks.route.mock.calls[0]?.[0].input.requiresImageInput).toBe(true);
+    expect(mocks.start).not.toHaveBeenCalled();
+    expect(mocks.startAttachmentUpload).not.toHaveBeenCalled();
+    expect(mocks.forgetDraftAttachmentUploads).not.toHaveBeenCalled();
+  });
+
+  it("keeps the image draft when no allowed image-capable model can be routed", async () => {
+    mocks.settingsData = {
+      ...configuredSettings,
+      smartRouting: { available: true, reason: null },
+      policy: { ...configuredSettings.policy, flowMode: "auto" },
+    };
+    mocks.route.mockResolvedValue({
+      _tag: "Failure",
+      cause: new Error("No allowed model with confirmed image input support is available."),
+    });
+    await mountAndEnable({ hasAttachments: true, attachments: [attachment] });
+    let result: Awaited<ReturnType<RoutingState["submit"]>> = false;
+    await act(async () => {
+      result = await latest!.submit();
+    });
+    expect(result).toBe(false);
+    expect(latest?.startError).toContain("image input support");
     expect(mocks.start).not.toHaveBeenCalled();
     expect(mocks.startAttachmentUpload).not.toHaveBeenCalled();
     expect(mocks.forgetDraftAttachmentUploads).not.toHaveBeenCalled();

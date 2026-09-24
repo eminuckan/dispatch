@@ -25,9 +25,7 @@ export function prepareOnboardingFlowPolicy(input: {
   readonly recommendations: ReadonlyArray<TeamModelProfile>;
   readonly flowMode: TeamFlowMode;
 }): TeamPolicy | null {
-  const existingProfiles = input.policy.profiles.filter(
-    (profile) => profile.lead || profile.worker,
-  );
+  const existingProfiles = input.policy.profiles;
   if (
     existingProfiles.length > 0 &&
     (input.flowMode === "auto" || existingProfiles.some((profile) => profile.lead))
@@ -40,7 +38,10 @@ export function prepareOnboardingFlowPolicy(input: {
     };
   }
 
-  const assigned = input.recommendations.filter((profile) => profile.lead || profile.worker);
+  const assigned =
+    input.flowMode === "auto"
+      ? input.recommendations
+      : input.recommendations.filter((profile) => profile.lead || profile.worker);
   if (
     assigned.length > 0 &&
     (input.flowMode === "auto" || assigned.some((profile) => profile.lead))

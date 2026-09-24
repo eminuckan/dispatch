@@ -29,10 +29,11 @@ describe("Flow policy role readiness", () => {
     expect(hasRequiredFlowRole(policy("standard", false, true))).toBe(false);
   });
 
-  it("allows Auto without role assignments because direct routing sees all available models", () => {
+  it("allows Auto without role assignments when at least one model is allowed", () => {
     expect(hasRequiredFlowRole(policy("auto", false, true))).toBe(true);
     expect(hasRequiredFlowRole(policy("auto", true, false))).toBe(true);
     expect(hasRequiredFlowRole(policy("auto", false, false))).toBe(true);
+    expect(hasRequiredFlowRole({ ...policy("auto", false, false), profiles: [] })).toBe(false);
   });
 
   it("keeps explicit Lead and assigned-model checks available for fallback presentation", () => {

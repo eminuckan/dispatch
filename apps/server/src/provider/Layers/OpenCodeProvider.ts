@@ -264,6 +264,9 @@ function flattenOpenCodeModels(input: OpenCodeInventory): ReadonlyArray<ServerPr
       name,
       ...(subProvider ? { subProvider } : {}),
       isCustom: false,
+      ...(model.capabilities
+        ? { supportsImageInput: model.capabilities.input.includes("image") }
+        : {}),
       capabilities: openCodeCapabilitiesForModel({
         providerID: model.providerID,
         model,

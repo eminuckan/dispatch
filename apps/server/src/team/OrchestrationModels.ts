@@ -48,13 +48,50 @@ export function orderedRoleProfiles(
   policy: TeamPolicy,
   providers: ReadonlyArray<ServerProvider>,
   role: "lead" | "worker",
+  requiresImageInput = false,
 ): ReadonlyArray<TeamModelProfile> {
   return policy.profiles.filter((profile) => {
     if (!profile[role]) return false;
     const provider = providers.find(
       (candidate) => candidate.instanceId === profile.selection.instanceId,
     );
-    return orchestrationModelUsable(provider, profile.selection.model);
+    return (
+      orchestrationModelUsable(provider, profile.selection.model) &&
+      (!requiresImageInput ||
+        provider?.models.some(
+          (model) => model.slug === profile.selection.model && model.supportsImageInput === true,
+        ))
+    );
+  });
+}
+
+export function orderedDirectProfiles(
+  policy: TeamPolicy,
+  providers: ReadonlyArray<ServerProvider>,
+  requiresImageInput = false,
+): ReadonlyArray<TeamModelProfile> {
+  return policy.profiles.flatMap((profile) => {
+    const provider = providers.find(
+      (candidate) => candidate.instanceId === profile.selection.instanceId,
+    );
+    const model = provider?.models.find((candidate) => candidate.slug === profile.selection.model);
+    if (
+      !provider ||
+      !model ||
+      provider.supportsTextGeneration === false ||
+      !orchestrationModelUsable(provider, model.slug) ||
+      (requiresImageInput && model.supportsImageInput !== true)
+    )
+      return [];
+    const prior = modelRoutingPrior(model.slug);
+    return [
+      {
+        ...profile,
+        lead: false,
+        worker: false,
+        ...(profile.capability || !prior.capability ? {} : { capability: prior.capability }),
+      },
+    ];
   });
 }
 
@@ -101,9 +138,10 @@ export const makeOrchestrationModelCatalog = Effect.gen(function* () {
   const runnableProfiles = Effect.fn("OrchestrationModelCatalog.runnableProfiles")(function* (
     policy: TeamPolicy,
     role: "lead" | "worker",
+    requiresImageInput = false,
   ) {
     const snapshots = yield* registry.getProviders;
-    const catalog = orderedRoleProfiles(policy, snapshots, role);
+    const catalog = orderedRoleProfiles(policy, snapshots, role, requiresImageInput);
     return yield* Effect.filter(catalog, (profile) =>
       providers.getCapabilities(profile.selection.instanceId).pipe(
         Effect.map((capabilities) => capabilities.managedTeamNativeDelegation === "blocked"),
@@ -113,46 +151,9 @@ export const makeOrchestrationModelCatalog = Effect.gen(function* () {
   });
 
   const runnableDirectProfiles = Effect.fn("OrchestrationModelCatalog.runnableDirectProfiles")(
-    function* (policy: TeamPolicy) {
+    function* (policy: TeamPolicy, requiresImageInput = false) {
       const snapshots = yield* registry.getProviders;
-      const configured = new Map(
-        policy.profiles.map((profile) => [
-          `${profile.selection.instanceId}\0${profile.selection.model}`,
-          profile,
-        ]),
-      );
-      const choices = snapshots.flatMap((provider) =>
-        provider.models
-          .filter(
-            (model) =>
-              !model.isLegacy &&
-              provider.supportsTextGeneration !== false &&
-              orchestrationModelUsable(provider, model.slug),
-          )
-          .map((model) => ({
-            provider,
-            model,
-            priority:
-              (configured.has(`${provider.instanceId}\0${model.slug}`) ? 4 : 0) +
-              (modelRoutingPrior(model.slug).costClass !== "unknown" ? 2 : 0) +
-              (model.isDefault ? 1 : 0),
-          })),
-      );
-      return choices
-        .toSorted((a, b) => b.priority - a.priority)
-        .map(({ provider, model }, index): TeamModelProfile => {
-          const saved = configured.get(`${provider.instanceId}\0${model.slug}`);
-          const prior = modelRoutingPrior(model.slug);
-          return {
-            id: `direct-${index}`,
-            label: `${provider.displayName ?? provider.instanceId} · ${model.name}`.slice(0, 100),
-            selection: saved?.selection ?? { instanceId: provider.instanceId, model: model.slug },
-            ...(saved?.effortMode ? { effortMode: saved.effortMode } : {}),
-            lead: false,
-            worker: false,
-            ...(prior.capability ? { capability: prior.capability } : {}),
-          };
-        });
+      return orderedDirectProfiles(policy, snapshots, requiresImageInput);
     },
   );
 

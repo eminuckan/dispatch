@@ -25,5 +25,5 @@ export function hasAssignedFlowModel(policy: Pick<TeamPolicy, "profiles">): bool
 }
 
 export function hasRequiredFlowRole(policy: Pick<TeamPolicy, "flowMode" | "profiles">): boolean {
-  return policy.flowMode === "auto" || hasFlowLead(policy);
+  return policy.flowMode === "auto" ? policy.profiles.length > 0 : hasFlowLead(policy);
 }

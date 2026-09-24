@@ -138,14 +138,14 @@ export function useTeamRoutingState({
   const fallbackNotice = orchestration ? flowAutoFallbackNotice(settings.data) : null;
   const autoLeadNotice =
     orchestration && autoManagedNeedsLead
-      ? "A single-model task can use any available model. Add a Lead before a managed team can start."
+      ? "Auto can use any allowed model directly. Add a Lead before a managed team can start."
       : null;
   const modeLabel = flowMode === "auto" ? "Flow · Auto" : "Flow · Standard";
   const summary =
     flowMode === "auto"
       ? smartRouting
         ? autoManagedNeedsLead
-          ? "Single-model routing can use any available model; managed teams require a selected Lead"
+          ? "Auto can use your allowed models directly; managed teams require a selected Lead"
           : "Smart Routing assesses the task, then selects one model or a Lead and task-specific workers"
         : autoFallbackNeedsLead
           ? "Auto is unavailable; Standard fallback needs a selected Lead before this task can start"
@@ -189,7 +189,14 @@ export function useTeamRoutingState({
       if (flowMode === "auto") {
         const routed = await route({
           environmentId,
-          input: { projectId, prompt: promptForRouting },
+          input: {
+            projectId,
+            prompt: promptForRouting,
+            requiresImageInput: attachments.some(
+              (attachment) =>
+                attachment.type === "image" || attachment.mimeType.startsWith("image/"),
+            ),
+          },
         });
         if (routed._tag === "Failure") {
           const error = squashAtomCommandFailure(routed);

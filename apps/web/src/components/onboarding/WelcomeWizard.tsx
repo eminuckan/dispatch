@@ -708,10 +708,7 @@ function FlowEnvironmentSetup({
           settings.data.supportedProviderInstanceIds,
         );
         recommendations = model ? [{ id: randomUUID(), ...model, lead: false, worker: false }] : [];
-      } else if (
-        flowMode === "auto" &&
-        !recommendations.some((profile) => profile.lead || profile.worker)
-      ) {
+      } else if (flowMode === "auto" && recommendations.length === 0) {
         const recommended = await recommendModels({ environmentId, input: {} });
         if (recommended._tag === "Failure") {
           const error = squashAtomCommandFailure(recommended);

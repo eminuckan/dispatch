@@ -392,6 +392,7 @@ it.layer(testLayer)("checkOpenCodeProviderStatus", (it) => {
             providerID: "opencode-go",
             name: "GPT-5.6 Sol",
             enabled: true,
+            capabilities: { input: ["text", "image"] },
             variants: [{ id: "low" }, { id: "medium" }, { id: "high" }],
           },
           {
@@ -399,6 +400,7 @@ it.layer(testLayer)("checkOpenCodeProviderStatus", (it) => {
             providerID: "opencode-go",
             name: "Disabled Model",
             enabled: false,
+            capabilities: { input: ["text"] },
             variants: [],
           },
         ],
@@ -417,6 +419,7 @@ it.layer(testLayer)("checkOpenCodeProviderStatus", (it) => {
       );
       const model = snapshot.models[0];
       NodeAssert.ok(model);
+      NodeAssert.equal(model.supportsImageInput, true);
       const variantDescriptor = model.capabilities?.optionDescriptors?.find(
         (descriptor) => descriptor.id === "variant" && descriptor.type === "select",
       );
@@ -432,6 +435,28 @@ it.layer(testLayer)("checkOpenCodeProviderStatus", (it) => {
           { id: "high", isDefault: false },
         ],
       );
+    }),
+  );
+
+  it.effect("marks an OpenCode text-only model as ineligible for image routing", () =>
+    Effect.gen(function* () {
+      runtimeMock.state.inventory = {
+        providers: [{ id: "deepseek", name: "DeepSeek", activation: "enabled" }],
+        models: [
+          {
+            id: "deepseek-v4",
+            providerID: "deepseek",
+            name: "DeepSeek V4",
+            enabled: true,
+            capabilities: { input: ["text"] },
+            variants: [],
+          },
+        ],
+        agents: [{ id: "build", name: "Build", hidden: false, mode: "primary" }],
+        skills: [],
+      };
+      const snapshot = yield* checkProvider(makeOpenCodeSettings());
+      NodeAssert.equal(snapshot.models[0]?.supportsImageInput, false);
     }),
   );
 

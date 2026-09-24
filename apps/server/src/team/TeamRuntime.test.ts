@@ -184,6 +184,7 @@ function fixture(
     readonly profileAdvisorSource?: "policy" | "jev";
     readonly executionMode?: TeamRun["executionMode"];
     readonly directProfiles?: ReadonlyArray<TeamModelProfile>;
+    readonly imageCapableProfileIds?: ReadonlyArray<string>;
     readonly workerCount?: number;
     readonly workerCountSource?: "jev" | "policy";
     readonly selectedEffort?: string;
@@ -225,6 +226,7 @@ function fixture(
     purpose: "lead" | "worker" | "failover" | "review";
     candidateProfileIds: ReadonlyArray<string>;
   }> = [];
+  const modelCalls: Array<{ role: "lead" | "worker" | "direct"; requiresImageInput: boolean }> = [];
   const turnDispatches: Array<{
     readonly persistedAttachments: ReadonlyArray<ChatAttachment>;
     readonly dispatchedAttachments: ReadonlyArray<ChatAttachment>;
@@ -349,10 +351,22 @@ function fixture(
   });
 
   const models = Layer.mock(OrchestrationModelCatalog)({
-    runnableProfiles: (activePolicy, role) =>
-      Effect.succeed(activePolicy.profiles.filter((profile) => profile[role])),
-    runnableDirectProfiles: (activePolicy) =>
-      Effect.succeed([...(options.directProfiles ?? activePolicy.profiles)]),
+    runnableProfiles: (activePolicy, role, requiresImageInput = false) =>
+      Effect.sync(() => {
+        modelCalls.push({ role, requiresImageInput });
+        return activePolicy.profiles.filter(
+          (profile) =>
+            profile[role] &&
+            (!requiresImageInput || options.imageCapableProfileIds?.includes(profile.id)),
+        );
+      }),
+    runnableDirectProfiles: (activePolicy, requiresImageInput = false) =>
+      Effect.sync(() => {
+        modelCalls.push({ role: "direct", requiresImageInput });
+        return (options.directProfiles ?? activePolicy.profiles).filter(
+          (profile) => !requiresImageInput || options.imageCapableProfileIds?.includes(profile.id),
+        );
+      }),
     supportedEfforts: () =>
       Effect.succeed(
         options.selectedEffort
@@ -563,6 +577,7 @@ function fixture(
     createdWorktrees,
     executionModeCalls,
     profileCalls,
+    modelCalls,
     turnDispatches,
     steerCalls,
     current: () => current,
@@ -605,11 +620,11 @@ it.effect(
   },
 );
 
-it.effect("routes a single-model task through any available model without creating a team", () => {
+it.effect("routes a single-model task through an allowed model without creating a team", () => {
   const unassigned: TeamModelProfile = {
     ...leadProfile,
     id: "unassigned-direct-model",
-    label: "Available model outside Flow roles",
+    label: "Allowed model outside team roles",
     selection: { instanceId: ProviderInstanceId.make("openai"), model: "luna" },
     lead: false,
     worker: false,
@@ -618,7 +633,7 @@ it.effect("routes a single-model task through any available model without creati
     advisorConfigured: true,
     executionMode: "direct",
     advisorSource: "jev",
-    settingsPolicy: { ...policy, flowMode: "auto" },
+    settingsPolicy: { ...policy, flowMode: "auto", profiles: [unassigned, leadProfile] },
     directProfiles: [unassigned, leadProfile],
   });
   return Effect.gen(function* () {
@@ -638,6 +653,97 @@ it.effect("routes a single-model task through any available model without creati
     });
     expect(f.current()).toBeNull();
     expect(f.commands).toEqual([]);
+  }).pipe(Effect.provide(f.layer));
+});
+
+it.effect("requires image support before asking Smart Routing to select a direct model", () => {
+  const textOnly: TeamModelProfile = {
+    ...leadProfile,
+    id: "text-only",
+    selection: { instanceId: ProviderInstanceId.make("opencode"), model: "deepseek-v4" },
+    lead: false,
+    worker: false,
+  };
+  const imageReady: TeamModelProfile = {
+    ...leadProfile,
+    id: "image-ready",
+    selection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-6-sol" },
+    lead: false,
+    worker: false,
+  };
+  const f = fixture(null, true, {
+    advisorConfigured: true,
+    executionMode: "direct",
+    advisorSource: "jev",
+    settingsPolicy: { ...policy, flowMode: "auto", profiles: [textOnly, imageReady] },
+    imageCapableProfileIds: [imageReady.id],
+  });
+  return Effect.gen(function* () {
+    const runtime = yield* make;
+    const decision = yield* runtime.route({
+      projectId,
+      prompt: "Fix the dialog shown in the screenshot",
+      requiresImageInput: true,
+    });
+    expect(decision).toMatchObject({ kind: "direct", selection: imageReady.selection });
+    expect(f.modelCalls[0]).toEqual({ role: "direct", requiresImageInput: true });
+    expect(f.executionModeCalls[0]?.candidateProfileIds).toEqual([imageReady.id]);
+    expect(f.executionModeCalls[0]?.objective).toContain("attached image input");
+  }).pipe(Effect.provide(f.layer));
+});
+
+it.effect("rejects an image Auto route when no allowed model can view images", () => {
+  const textOnly: TeamModelProfile = {
+    ...leadProfile,
+    id: "text-only",
+    lead: false,
+    worker: false,
+  };
+  const f = fixture(null, true, {
+    advisorConfigured: true,
+    executionMode: "direct",
+    settingsPolicy: { ...policy, flowMode: "auto", profiles: [textOnly] },
+    imageCapableProfileIds: [],
+  });
+  return Effect.gen(function* () {
+    const runtime = yield* make;
+    const error = yield* runtime
+      .route({ projectId, prompt: "Inspect this screenshot", requiresImageInput: true })
+      .pipe(Effect.flip);
+    expect(error.code).toBe("unavailable");
+    expect(error.message).toContain("image input support");
+    expect(f.executionModeCalls).toEqual([]);
+  }).pipe(Effect.provide(f.layer));
+});
+
+it.effect("does not start an image Auto team with a text-only Lead", () => {
+  const f = fixture(null, true, {
+    settingsPolicy: { ...policy, flowMode: "auto" },
+    imageCapableProfileIds: [],
+  });
+  return Effect.gen(function* () {
+    const runtime = yield* make;
+    const error = yield* runtime
+      .start({
+        commandId: "image-team-with-text-lead",
+        projectId,
+        runtimeMode: "approval-required",
+        prompt: "Inspect the attached diagram",
+        attachments: [
+          {
+            type: "image",
+            id: "pending-00000000-0000-4000-8000-0000000000ae" as never,
+            name: "diagram.png",
+            mimeType: "image/png",
+            sizeBytes: 4,
+          },
+        ],
+      })
+      .pipe(Effect.flip);
+    expect(error.code).toBe("unavailable");
+    expect(error.message).toContain("image input support");
+    expect(f.modelCalls).toContainEqual({ role: "lead", requiresImageInput: true });
+    expect(f.current()).toBeNull();
   }).pipe(Effect.provide(f.layer));
 });
 
@@ -2403,7 +2509,7 @@ it.effect(
 it.effect(
   "persists materialized attempt attachments before dispatch and releases the run lease on cancel",
   () => {
-    const f = fixture();
+    const f = fixture(null, true, { imageCapableProfileIds: [leadProfile.id] });
     return Effect.gen(function* () {
       const config = yield* ServerConfig.ServerConfig;
       const attachment: ChatAttachment = {
