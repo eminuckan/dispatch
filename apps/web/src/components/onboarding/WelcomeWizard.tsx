@@ -599,7 +599,7 @@ function FlowStep({
       <WizardPanel>
         <StepShell
           title="Dispatch Flow"
-          description="Choose how Flow coordinates agents on each environment."
+          description="Flow plans tasks, manages changes, and verifies results with your selected agents. Choose a mode for each environment."
         >
           <ScrollArea
             scrollFade
@@ -623,7 +623,7 @@ function FlowStep({
       <WizardFooter
         leading={
           <p className="text-xs text-muted-foreground">
-            Flow is optional. Continue to Projects without enabling it, or set it up later in
+            Continue with the Flow settings shown; no extra setup is needed. Change them later in
             Settings → Flow.
           </p>
         }
@@ -808,7 +808,7 @@ function FlowEnvironmentSetup({
         </span>
       </div>
 
-      <fieldset className="mt-3 grid grid-cols-2 gap-2">
+      <fieldset className="mt-3 grid grid-cols-1 gap-2 min-[480px]:grid-cols-2">
         <legend className="sr-only">{machineLabel} Flow mode</legend>
         <Button
           size="sm"
