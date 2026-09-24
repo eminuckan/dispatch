@@ -599,11 +599,11 @@ function FlowStep({
       <WizardPanel>
         <StepShell
           title="Dispatch Flow"
-          description="Flow plans tasks, manages changes, and verifies results with your selected agents. Standard uses your chosen Lead and Workers; Auto chooses one Worker or a coordinated team."
+          description="Choose how Flow coordinates agents on each environment."
         >
           <ScrollArea
             scrollFade
-            className="mt-5 h-auto max-h-96 [&_[data-slot=scroll-area-scrollbar]]:opacity-100"
+            className="mt-4 h-auto max-h-96 [&_[data-slot=scroll-area-scrollbar]]:opacity-100"
           >
             <div className="space-y-4 pr-3">
               {environmentIds.map((environmentId) => (
@@ -623,7 +623,8 @@ function FlowStep({
       <WizardFooter
         leading={
           <p className="text-xs text-muted-foreground">
-            You can skip Flow and set it up later in Settings → Flow.
+            Flow is optional. Continue to Projects without enabling it, or set it up later in
+            Settings → Flow.
           </p>
         }
       >
@@ -758,9 +759,14 @@ function FlowEnvironmentSetup({
 
   if (!capable) {
     return (
-      <section className="rounded-lg border border-border bg-background px-3 py-3">
-        <p className="text-sm font-medium">{machineLabel}</p>
-        <p className="mt-1 text-xs text-muted-foreground">
+      <section className="rounded-xl border border-border bg-background px-3 py-3">
+        <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+          <p className="min-w-0 text-sm font-medium">{machineLabel}</p>
+          <span className="shrink-0 rounded-full bg-muted/50 px-2 py-0.5 text-xs font-medium text-muted-foreground">
+            Not supported
+          </span>
+        </div>
+        <p className="mt-1.5 text-xs text-muted-foreground">
           This server does not support Dispatch Flow yet. You can continue setup without it.
         </p>
       </section>
@@ -769,9 +775,14 @@ function FlowEnvironmentSetup({
 
   if (!settings.data) {
     return (
-      <section className="rounded-lg border border-border bg-background px-3 py-3">
-        <p className="text-sm font-medium">{machineLabel}</p>
-        <p className="mt-1 text-xs text-muted-foreground" role="status">
+      <section className="rounded-xl border border-border bg-background px-3 py-3">
+        <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+          <p className="min-w-0 text-sm font-medium">{machineLabel}</p>
+          <span className="shrink-0 rounded-full bg-muted/50 px-2 py-0.5 text-xs font-medium text-muted-foreground">
+            Checking Flow
+          </span>
+        </div>
+        <p className="mt-1.5 text-xs text-muted-foreground" role="status">
           {settings.error ? settings.error : "Checking Flow availability…"}
         </p>
       </section>
@@ -783,118 +794,147 @@ function FlowEnvironmentSetup({
       ? "Auto"
       : "Standard"
     : "Off";
+  const standardSelected = currentMode === "Standard";
+  const autoSelected = currentMode === "Auto";
+  const autoAvailable = settings.data.smartRouting.available;
+  const autoStatusId = `flow-auto-status-${environmentId}`;
 
   return (
-    <section className="rounded-lg border border-border bg-background px-3 py-3">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0">
-          <p className="text-sm font-medium">{machineLabel}</p>
-          <p className="mt-1 text-xs text-muted-foreground">
-            Current: {currentMode}. Standard needs no Dispatch account.
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center justify-end gap-2">
-          <Button
-            size="sm"
-            variant={
-              settings.data.policy.enabled && settings.data.policy.flowMode === "standard"
-                ? "secondary"
-                : "outline"
-            }
-            disabled={pending}
-            onClick={() => void enableFlow("standard")}
-          >
-            {pending ? "Working…" : "Use Standard"}
-          </Button>
-          <Dialog open={autoConfirmationOpen} onOpenChange={setAutoConfirmationOpen}>
-            <Button
-              size="sm"
-              variant={
-                settings.data.policy.enabled && settings.data.policy.flowMode === "auto"
-                  ? "secondary"
-                  : "outline"
-              }
-              disabled={pending || !settings.data.smartRouting.available}
-              onClick={() => setAutoConfirmationOpen(true)}
-            >
-              Use Auto
-            </Button>
-            <DialogPopup className="sm:max-w-lg">
-              <DialogHeader>
-                <DialogTitle>Enable Flow Auto?</DialogTitle>
-                <DialogDescription>
-                  Auto uses Dispatch-hosted Smart Routing. Dispatch covers the routing service;
-                  coding-model usage stays on your provider accounts.
-                </DialogDescription>
-              </DialogHeader>
-              <DialogPanel className="space-y-2 text-sm text-muted-foreground">
-                <p>
-                  Auto sends the task objective and minimal selected-model metadata to Dispatch's
-                  hosted router, which may use JEV for routing decisions.
-                </p>
-                <p>
-                  If hosted routing is unavailable later, Flow keeps Auto selected. Standard can
-                  take over when a Lead is configured; otherwise that task will ask you to add one.
-                </p>
-              </DialogPanel>
-              <DialogFooter>
-                <DialogClose render={<Button variant="outline" disabled={pending} />}>
-                  Cancel
-                </DialogClose>
-                <Button
-                  disabled={pending}
-                  onClick={() => {
-                    setAutoConfirmationOpen(false);
-                    void enableFlow("auto");
-                  }}
-                >
-                  Enable Auto
-                </Button>
-              </DialogFooter>
-            </DialogPopup>
-          </Dialog>
-        </div>
+    <section className="rounded-xl border border-border bg-background px-3 py-3">
+      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+        <p className="min-w-0 text-sm font-medium">{machineLabel}</p>
+        <span className="shrink-0 rounded-full bg-muted/50 px-2 py-0.5 text-xs font-medium text-foreground">
+          Flow {currentMode}
+        </span>
       </div>
 
-      {!settings.data.smartRouting.available ? (
-        <DispatchConnectAccountAccess>
-          {(account) => (
-            <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-md bg-muted/30 px-3 py-2">
-              <p className="min-w-0 flex-1 text-xs text-muted-foreground">
-                {smartRoutingReasonMessage(settings.data!.smartRouting.reason)}
-              </p>
-              {account.pending ? (
-                <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
-                  <Spinner className="size-3.5" /> Checking…
+      <fieldset className="mt-3 grid grid-cols-2 gap-2">
+        <legend className="sr-only">{machineLabel} Flow mode</legend>
+        <Button
+          size="sm"
+          variant={standardSelected ? "secondary" : "outline"}
+          aria-pressed={standardSelected}
+          disabled={pending}
+          onClick={() => void enableFlow("standard")}
+          className="h-auto min-h-14 w-full flex-col items-start justify-start gap-1.5 whitespace-normal rounded-lg px-3 py-2.5 text-left"
+        >
+          <span className="flex w-full items-center justify-between gap-2">
+            <span className="text-sm font-semibold">{pending ? "Working…" : "Use Standard"}</span>
+            {standardSelected ? (
+              <span className="inline-flex shrink-0 items-center gap-1 text-xs font-medium">
+                <CheckIcon className="size-3.5" /> Selected
+              </span>
+            ) : null}
+          </span>
+          <span
+            className={`text-xs leading-snug ${standardSelected ? "text-secondary-foreground/80" : "text-muted-foreground"}`}
+          >
+            Use your chosen Lead and Workers. No Dispatch account needed.
+          </span>
+        </Button>
+
+        <Dialog open={autoConfirmationOpen} onOpenChange={setAutoConfirmationOpen}>
+          <Button
+            size="sm"
+            variant={autoSelected ? "secondary" : "outline"}
+            aria-pressed={autoSelected}
+            aria-describedby={autoStatusId}
+            disabled={pending || !autoAvailable}
+            onClick={() => setAutoConfirmationOpen(true)}
+            className="h-auto min-h-14 w-full flex-col items-start justify-start gap-1.5 whitespace-normal rounded-lg px-3 py-2.5 text-left"
+          >
+            <span className="flex w-full items-center justify-between gap-2">
+              <span className="text-sm font-semibold">Use Auto</span>
+              {autoSelected ? (
+                <span className="inline-flex shrink-0 items-center gap-1 text-xs font-medium">
+                  <CheckIcon className="size-3.5" /> Selected
                 </span>
-              ) : !account.configured ? null : !account.signedIn ? (
-                <DispatchConnectAuthActions
-                  disabled={pending}
-                  onAuthenticated={async () => {
-                    account.refresh();
-                    if (!connectBaseUrl) return;
-                    const token = readDispatchConnectAccountToken(connectBaseUrl);
-                    if (token) await syncAutoSession(token);
-                  }}
-                />
-              ) : account.accountToken ? (
-                <Button
-                  size="xs"
-                  variant="outline"
-                  disabled={pending}
-                  onClick={() => void syncAutoSession(account.accountToken!)}
-                >
-                  Prepare Auto
-                </Button>
               ) : null}
-            </div>
-          )}
-        </DispatchConnectAccountAccess>
-      ) : (
-        <p className="mt-3 text-xs text-muted-foreground">
-          Auto is ready. Standard remains available without hosted routing.
+            </span>
+            <span
+              className={`text-xs leading-snug ${autoSelected ? "text-secondary-foreground/80" : "text-muted-foreground"}`}
+            >
+              Smart Routing chooses one Worker or a team.
+            </span>
+          </Button>
+          <DialogPopup className="sm:max-w-lg">
+            <DialogHeader>
+              <DialogTitle>Enable Flow Auto?</DialogTitle>
+              <DialogDescription>
+                Auto uses Dispatch-hosted Smart Routing. Dispatch covers the routing service;
+                coding-model usage stays on your provider accounts.
+              </DialogDescription>
+            </DialogHeader>
+            <DialogPanel className="space-y-2 text-sm text-muted-foreground">
+              <p>
+                Auto sends the task objective and minimal selected-model metadata to Dispatch's
+                hosted router, which may use JEV for routing decisions.
+              </p>
+              <p>
+                If hosted routing is unavailable later, Flow keeps Auto selected. Standard can take
+                over when a Lead is configured; otherwise that task will ask you to add one.
+              </p>
+            </DialogPanel>
+            <DialogFooter>
+              <DialogClose render={<Button variant="outline" disabled={pending} />}>
+                Cancel
+              </DialogClose>
+              <Button
+                disabled={pending}
+                onClick={() => {
+                  setAutoConfirmationOpen(false);
+                  void enableFlow("auto");
+                }}
+              >
+                Enable Auto
+              </Button>
+            </DialogFooter>
+          </DialogPopup>
+        </Dialog>
+      </fieldset>
+
+      <div
+        className={`mt-2.5 flex flex-wrap items-center justify-between gap-x-3 gap-y-2 ${autoAvailable ? "px-0.5" : "rounded-lg bg-muted/30 px-3 py-2.5"}`}
+      >
+        <p id={autoStatusId} className="min-w-0 flex-1 text-xs leading-snug text-muted-foreground">
+          {autoAvailable
+            ? "Auto is ready on this environment."
+            : smartRoutingReasonMessage(settings.data.smartRouting.reason)}
         </p>
-      )}
+        {!autoAvailable ? (
+          <DispatchConnectAccountAccess>
+            {(account) => (
+              <>
+                {account.pending ? (
+                  <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+                    <Spinner className="size-3.5" /> Checking…
+                  </span>
+                ) : !account.configured ? null : !account.signedIn ? (
+                  <DispatchConnectAuthActions
+                    disabled={pending}
+                    onAuthenticated={async () => {
+                      account.refresh();
+                      if (!connectBaseUrl) return;
+                      const token = readDispatchConnectAccountToken(connectBaseUrl);
+                      if (token) await syncAutoSession(token);
+                    }}
+                  />
+                ) : account.accountToken ? (
+                  <Button
+                    size="xs"
+                    variant="outline"
+                    disabled={pending}
+                    onClick={() => void syncAutoSession(account.accountToken!)}
+                  >
+                    Prepare Auto
+                  </Button>
+                ) : null}
+              </>
+            )}
+          </DispatchConnectAccountAccess>
+        ) : null}
+      </div>
+
       {message ? (
         <p className="mt-2 text-xs text-muted-foreground" role="status">
           {message}
