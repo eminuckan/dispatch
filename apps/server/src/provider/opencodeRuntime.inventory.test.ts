@@ -141,6 +141,7 @@ it.layer(testLayer)("OpenCodeRuntime inventory", (it) => {
             providerID: "opencode-go",
             name: "GPT-5.6 Sol",
             enabled: true,
+            capabilities: { input: ["text"] },
             variants: [{ id: "low" }, { id: "high" }],
           },
         ],
