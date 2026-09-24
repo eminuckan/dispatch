@@ -241,14 +241,18 @@ writers use the `DISPATCH_*` forms.
 
 ## macOS signing and notarization
 
-The reusable desktop workflow enables signed macOS packaging only when all of these secrets are
-present:
+The reusable desktop workflow requires all of these secrets for macOS releases. A missing value
+fails the job before it can publish an unsigned package:
 
 - `CSC_LINK`
 - `CSC_KEY_PASSWORD`
 - `APPLE_API_KEY`
 - `APPLE_API_KEY_ID`
 - `APPLE_API_ISSUER`
+
+After packaging, the job extracts the updater ZIP and checks the canonical bundle ID and version,
+Developer ID team `RA8AR5LGL2`, the complete code signature, Gatekeeper acceptance, and the stapled
+notarization ticket. The release job cannot publish when either macOS architecture fails this gate.
 
 The CLI archive imports the same `CSC_LINK` certificate, discovers its Developer ID identity, and
 writes that identity as `DISPATCH_CLI_MAC_SIGN_IDENTITY`. Without a Developer ID identity the macOS
@@ -312,8 +316,8 @@ Release when the core jobs succeed:
 - `stable` publishes a real stable-channel release. A manual stable promotes the latest nightly
   commit; a pushed version tag builds the exact tagged commit.
 
-Omitting signing credentials does not turn a release into a dry run. It only leaves the affected
-platform artifacts unsigned or ad-hoc signed as described above.
+Omitting macOS signing or notarization credentials fails the macOS release job. Other platforms
+retain their signing behavior described above.
 
 Before promoting a stable release, verify the latest nightly you intend to promote. After starting
 the stable workflow, confirm the `Resolve release commit` notice names the nightly tag and commit you
@@ -340,15 +344,12 @@ installed and stays dismissed after another restart, and finally switch to Stabl
 Stable version is older to confirm no downgrade is offered. The first migration from an old feedless
 Preview must be tested as a manual in-place application replacement instead.
 
-For an isolated macOS updater E2E test, do not rely on shell-only environment overrides. Squirrel
-relaunches the installed app through LaunchServices, so those overrides do not survive the restart.
-Prepare throwaway base and target app bundles with the same distinct test bundle identifier, embed the
-isolated state directory, Electron user-data directory, backend/feed ports, and mock-update settings in
-`LSEnvironment` in both bundles, and give both `app-update.yml` files a unique `updaterCacheDirName`.
-Re-sign both bundles after those fixture-only edits. Before downloading an update, launch the base app
-through LaunchServices without exported isolation variables and verify its process environment, helper
-`--user-data-dir`, backend port, and state path all resolve to the fixture. Keep live Dispatch state and
-profiles out of the fixture; this procedure is only for updater validation, not release packaging.
+For an isolated macOS updater E2E test, use the unmodified signed and notarized release bundles in a
+separate macOS user session or VM with its own Dispatch home. Squirrel relaunches through
+LaunchServices, so shell-only environment overrides do not isolate the restart. Do not edit and
+re-sign release bundles for this proof: that changes their signature requirement and invalidates the
+notarization evidence. Verify the process path, user-data directory, and Dispatch home before and
+after the updater restart. Keep the maintainer's live Dispatch state out of the test session.
 
 If validating a mirror, set `DISPATCH_RELEASE_BASE_URL` for the test process rather than changing the
 repository identity.

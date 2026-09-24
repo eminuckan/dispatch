@@ -295,8 +295,8 @@ jobs:
           set -euo pipefail
           umask 077
           if [[ -z "$CSC_LINK" || -z "$CSC_KEY_PASSWORD" ]]; then
-            echo "macOS signing disabled (missing CSC_LINK)."
-            exit 0
+            echo "macOS release requires CSC_LINK and CSC_KEY_PASSWORD." >&2
+            exit 1
           fi
           keychain="$RUNNER_TEMP/dispatch-signing.keychain-db"
           keychain_password="$(openssl rand -hex 16)"
@@ -338,6 +338,7 @@ jobs:
           AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME: ${{ secrets.AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME }}
           AZURE_TRUSTED_SIGNING_PUBLISHER_NAME: ${{ secrets.AZURE_TRUSTED_SIGNING_PUBLISHER_NAME }}
         run: |
+          set -euo pipefail
           umask 077
           args=(
             --platform "${{ inputs.platform }}"
@@ -369,7 +370,8 @@ jobs:
               # create another one and use the P12 password to unlock it.
               unset CSC_LINK CSC_KEY_PASSWORD
             else
-              echo "macOS signing disabled (missing one or more Apple signing secrets)."
+              echo "macOS release requires the Developer ID certificate and all Apple notarization secrets." >&2
+              exit 1
             fi
           elif [[ "${{ inputs.platform }}" == "win" ]]; then
             # Embed the Linux CLI archive built by the same-arch Linux job as
@@ -393,6 +395,30 @@ jobs:
           fi
 
           vp run dist:desktop:artifact "${args[@]}"
+
+      - name: Verify signed and notarized macOS update archive
+        if: inputs.platform == 'mac'
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          archives=(release/*.zip)
+          if (( ${#archives[@]} != 1 )); then
+            echo "Expected exactly one macOS updater ZIP, found ${#archives[@]}." >&2
+            exit 1
+          fi
+
+          extracted="$RUNNER_TEMP/dispatch-release-verification"
+          mkdir -p "$extracted"
+          ditto -x -k "${archives[0]}" "$extracted"
+          bundle="$extracted/Dispatch.app"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$bundle/Contents/Info.plist")" = 'com.eminuckan.dispatch'
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$bundle/Contents/Info.plist")" = '${{ inputs.version }}'
+          codesign --verify --deep --strict "$bundle"
+          team_id="$(codesign -dv --verbose=4 "$bundle" 2>&1 | sed -n 's/^TeamIdentifier=//p')"
+          test "$team_id" = 'RA8AR5LGL2'
+          spctl --assess --type exec --verbose=4 "$bundle"
+          xcrun stapler validate "$bundle"
 
       # The single-executable is built with a Node that supports --build-sea
       # (25.7+); the repo itself stays on the engines.node version. It always
