@@ -130,6 +130,22 @@ NodeTest.test(
     NodeAssert.equal(f.calls(), 1);
     NodeAssert.equal(f.seen[0]?.principal.accountId, "owner-from-database");
     NodeAssert.match(f.seen[0]!.ipHash, /^[a-f0-9]{64}$/);
+    for (const operation of ["effort", "workers"]) {
+      const staged = await fetch(
+        `${f.baseUrl}/v1/environments/registered-env/smart-routing/${operation}`,
+        {
+          method: "POST",
+          headers: {
+            authorization: "Bearer dce_valid-test-key",
+            "x-dispatch-connect-session": "account-test-session",
+            "content-type": "application/json",
+          },
+          body: "{}",
+        },
+      );
+      NodeAssert.equal(staged.status, 200);
+    }
+    NodeAssert.equal(f.calls(), 3);
   },
 );
 
@@ -205,7 +221,14 @@ NodeTest.test(
   async (t) => {
     const f = await fixture(t);
     for (const token of [null, "expired-session", "revoked-session", "foreign-test-session"]) {
-      for (const operation of ["capability", "execution", "profile", "recommendations"]) {
+      for (const operation of [
+        "capability",
+        "execution",
+        "profile",
+        "effort",
+        "workers",
+        "recommendations",
+      ]) {
         const response = await fetch(
           `${f.baseUrl}/v1/environments/registered-env/smart-routing/${operation}`,
           {

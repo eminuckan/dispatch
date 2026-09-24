@@ -4,6 +4,8 @@ import {
   TeamThreadInput,
   TeamThreadView,
   TeamStart,
+  TeamRoute,
+  TeamRouteResult,
   TeamControl,
   TeamRun,
   TeamRunId,
@@ -1398,6 +1400,7 @@ const WsSubscribeResourceTelemetryRpc = Rpc.make(WS_METHODS.subscribeResourceTel
 const TeamRpcError = Schema.Union([TeamError, EnvironmentAuthorizationError]);
 export const WsRpcGroup = RpcGroup.make(
   Rpc.make("team.start", { payload: TeamStart, success: TeamRun, error: TeamRpcError }),
+  Rpc.make("team.route", { payload: TeamRoute, success: TeamRouteResult, error: TeamRpcError }),
   Rpc.make("team.control", { payload: TeamControl, success: TeamRun, error: TeamRpcError }),
   Rpc.make("team.forThread", {
     payload: TeamThreadInput,

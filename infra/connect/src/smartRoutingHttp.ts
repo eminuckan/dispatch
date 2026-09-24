@@ -62,7 +62,7 @@ export function createSmartRoutingHttpHandler(input: {
     ip: string,
   ): Promise<boolean> => {
     const match = pathname.match(
-      /^\/v1\/environments\/([^/]+)\/smart-routing\/(capability|execution|profile|recommendations)$/,
+      /^\/v1\/environments\/([^/]+)\/smart-routing\/(capability|execution|profile|effort|workers|recommendations)$/,
     );
     if (!match) return false;
     try {

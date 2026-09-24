@@ -54,7 +54,6 @@ import { OrchestrationSettings } from "./OrchestrationSettings.ts";
 import { OrchestrationStore, make as makeStore } from "./OrchestrationStore.ts";
 import { FLOW_SUPERVISION_PROMPT_MARKER } from "./OrchestrationPrompts.ts";
 import { make } from "./TeamRuntime.ts";
-import { teamThreadView } from "./presentation.ts";
 
 const now = "2026-09-21T12:00:00.000Z";
 const head = "a".repeat(40);
@@ -181,8 +180,13 @@ function fixture(
     readonly advisorConfigured?: boolean;
     readonly advisorSource?: "policy" | "jev";
     readonly routeAdvisorSource?: "policy" | "jev";
+    readonly routeConfidence?: number;
     readonly profileAdvisorSource?: "policy" | "jev";
     readonly executionMode?: TeamRun["executionMode"];
+    readonly directProfiles?: ReadonlyArray<TeamModelProfile>;
+    readonly workerCount?: number;
+    readonly workerCountSource?: "jev" | "policy";
+    readonly selectedEffort?: string;
     readonly settingsPolicy?: TeamSettings["policy"];
     readonly existingThreads?: ReadonlyArray<ThreadId>;
     readonly threadActivities?: ReadonlyArray<OrchestrationThreadActivity>;
@@ -309,7 +313,7 @@ function fixture(
       return Effect.succeed({
         mode,
         source: options.routeAdvisorSource ?? options.advisorSource ?? ("policy" as const),
-        confidence: 1,
+        confidence: options.routeConfidence ?? 1,
         reason: mode === "direct" ? "Direct route" : "Orchestrated route",
       });
     },
@@ -330,11 +334,31 @@ function fixture(
             : "Policy order",
       });
     },
+    chooseEffort: () =>
+      Effect.succeed(
+        options.selectedEffort
+          ? { optionId: "reasoningEffort", value: options.selectedEffort }
+          : null,
+      ),
+    chooseWorkerCount: () =>
+      Effect.succeed({
+        workers: options.workerCount ?? 1,
+        source: options.workerCountSource ?? ("jev" as const),
+        reason: "Smart Routing selected a worker count.",
+      }),
   });
 
   const models = Layer.mock(OrchestrationModelCatalog)({
     runnableProfiles: (activePolicy, role) =>
       Effect.succeed(activePolicy.profiles.filter((profile) => profile[role])),
+    runnableDirectProfiles: (activePolicy) =>
+      Effect.succeed([...(options.directProfiles ?? activePolicy.profiles)]),
+    supportedEfforts: () =>
+      Effect.succeed(
+        options.selectedEffort
+          ? { optionId: "reasoningEffort", values: ["medium", "high", "max"] }
+          : null,
+      ),
     refreshProfile: (profile) =>
       Effect.succeed({
         usable: profile.id === leadProfile.id ? currentProfileAvailable : true,
@@ -581,249 +605,285 @@ it.effect(
   },
 );
 
-it.effect(
-  "uses a single Worker when Auto confidently routes the objective to direct execution",
-  () => {
-    const frontierLead: TeamModelProfile = {
-      ...leadProfile,
-      id: "frontier-lead",
-      label: "Frontier Lead",
-      selection: { instanceId: ProviderInstanceId.make("openai"), model: "astra" },
-      lead: true,
-      worker: false,
-      capability: "frontier",
-    };
-    const complexWorker: TeamModelProfile = {
-      ...failoverProfile,
-      id: "complex-worker",
-      label: "Complex Worker",
-      lead: false,
-      worker: true,
-      capability: "complex",
-    };
-    const generalWorker: TeamModelProfile = {
-      ...leadProfile,
-      id: "general-worker",
-      label: "General Worker",
-      selection: { instanceId: ProviderInstanceId.make("openai"), model: "luna" },
-      lead: false,
-      worker: true,
-      capability: "general",
-    };
-    const directPolicy: TeamSettings["policy"] = {
-      ...policy,
-      flowMode: "auto",
-      profiles: [frontierLead, complexWorker, generalWorker],
-    };
-    const f = fixture(null, true, {
-      advisorConfigured: true,
-      executionMode: "direct",
-      advisorSource: "jev",
-      settingsPolicy: directPolicy,
-    });
-
-    return Effect.gen(function* () {
-      const runtime = yield* make;
-      const run = yield* runtime.start({
-        commandId: "direct-start",
-        projectId,
-        runtimeMode: "full-access",
-        prompt: "Rename the local helper and update its focused test",
-        attachments: [],
-      });
-
-      expect(run.executionMode).toBe("direct");
-      expect(run.runtimeMode).toBe("full-access");
-      expect(run.policy).toEqual(directPolicy);
-      expect(run.lead).toMatchObject({ role: "lead", profileId: complexWorker.id, taskId: null });
-      expect(run.attempts[0]).toMatchObject({
-        role: "plan",
-        selection: complexWorker.selection,
-        owner: { profileId: complexWorker.id },
-      });
-      expect(f.executionModeCalls).toEqual([
-        {
-          objective: "Rename the local helper and update its focused test",
-          candidateProfileIds: [complexWorker.id, generalWorker.id],
-        },
-      ]);
-      expect(f.profileCalls[0]).toEqual({
-        purpose: "worker",
-        candidateProfileIds: [complexWorker.id, generalWorker.id],
-      });
-      expect(
-        run.attempts.some(
-          (candidate) => candidate.selection.model === frontierLead.selection.model,
-        ),
-      ).toBe(false);
-      const created = f.commands.find((command) => command.type === "thread.create");
-      const turn = f.commands.find((command) => command.type === "thread.turn.start");
-      expect(created?.type === "thread.create" && created.runtimeMode).toBe("full-access");
-      expect(turn?.type === "thread.turn.start" && turn.runtimeMode).toBe("full-access");
-    }).pipe(Effect.provide(f.layer));
-  },
-);
-
-it.effect("returns an existing Auto run without repeating hosted routing", () => {
-  const autoPolicy: TeamSettings["policy"] = { ...policy, flowMode: "auto" };
+it.effect("routes a single-model task through any available model without creating a team", () => {
+  const unassigned: TeamModelProfile = {
+    ...leadProfile,
+    id: "unassigned-direct-model",
+    label: "Available model outside Flow roles",
+    selection: { instanceId: ProviderInstanceId.make("openai"), model: "luna" },
+    lead: false,
+    worker: false,
+  };
   const f = fixture(null, true, {
     advisorConfigured: true,
     executionMode: "direct",
     advisorSource: "jev",
-    settingsPolicy: autoPolicy,
+    settingsPolicy: { ...policy, flowMode: "auto" },
+    directProfiles: [unassigned, leadProfile],
   });
-  const input = {
-    commandId: "duplicate-auto-start",
-    projectId,
-    runtimeMode: "approval-required",
-    prompt: "Update the focused runtime test",
-    attachments: [],
-  } as const;
-
   return Effect.gen(function* () {
     const runtime = yield* make;
-    const first = yield* runtime.start(input);
-    const second = yield* runtime.start(input);
-
-    expect(second.id).toBe(first.id);
-    expect(f.executionModeCalls).toHaveLength(1);
-    expect(f.profileCalls).toHaveLength(1);
+    const decision = yield* runtime.route({
+      projectId,
+      prompt: "Add a border to the button",
+    });
+    expect(decision).toMatchObject({
+      kind: "direct",
+      selection: unassigned.selection,
+    });
+    expect(f.executionModeCalls[0]?.candidateProfileIds).toEqual([unassigned.id, leadProfile.id]);
+    expect(f.profileCalls[0]).toEqual({
+      purpose: "worker",
+      candidateProfileIds: [unassigned.id, leadProfile.id],
+    });
+    expect(f.current()).toBeNull();
+    expect(f.commands).toEqual([]);
   }).pipe(Effect.provide(f.layer));
 });
 
-it.effect("keeps Auto when a routed objective has only one eligible execution profile", () => {
-  const workerOnly: TeamModelProfile = { ...leadProfile, lead: false, worker: true };
-  const singlePolicy: TeamSettings["policy"] = {
-    ...policy,
-    flowMode: "auto",
-    profiles: [workerOnly],
+it.effect("keeps fixed model options when Auto routes to an ordinary single-model turn", () => {
+  const fixed: TeamModelProfile = {
+    ...leadProfile,
+    id: "fixed-direct-model",
+    selection: {
+      instanceId: ProviderInstanceId.make("openai"),
+      model: "gpt-6-sol",
+      options: [
+        { id: "reasoningEffort", value: "low" },
+        { id: "serviceTier", value: "priority" },
+      ],
+    },
+    effortMode: "fixed",
+    lead: false,
+    worker: false,
   };
+  const f = fixture(null, true, {
+    advisorConfigured: true,
+    executionMode: "direct",
+    settingsPolicy: { ...policy, flowMode: "auto" },
+    directProfiles: [fixed],
+    selectedEffort: "high",
+  });
+  return Effect.gen(function* () {
+    const runtime = yield* make;
+    const decision = yield* runtime.route({ projectId, prompt: "Adjust a button border" });
+    expect(decision).toMatchObject({ kind: "direct", selection: fixed.selection });
+    expect(f.current()).toBeNull();
+  }).pipe(Effect.provide(f.layer));
+});
+
+it.effect("uses Standard when JEV chooses direct execution but cannot rank the models", () => {
   const f = fixture(null, true, {
     advisorConfigured: true,
     executionMode: "direct",
     routeAdvisorSource: "jev",
     profileAdvisorSource: "policy",
-    settingsPolicy: singlePolicy,
+    settingsPolicy: { ...policy, flowMode: "auto" },
   });
-
   return Effect.gen(function* () {
     const runtime = yield* make;
-    const run = yield* runtime.start({
-      commandId: "single-profile-auto-start",
-      projectId,
-      runtimeMode: "approval-required",
-      prompt: "Update the focused runtime test",
-      attachments: [],
-    });
-
-    expect(run.executionMode).toBe("direct");
-    expect(run.policy.flowMode).toBe("auto");
-    expect(run.lead.profileId).toBe(workerOnly.id);
-    expect(teamThreadView(run)?.notice).toBeNull();
-    expect(f.executionModeCalls).toHaveLength(1);
-    expect(f.profileCalls).toEqual([]);
+    const decision = yield* runtime.route({ projectId, prompt: "Design a complex interface" });
+    expect(decision).toMatchObject({ kind: "team", source: "policy" });
+    expect(f.current()).toBeNull();
   }).pipe(Effect.provide(f.layer));
 });
 
-it.effect("rejects Worker-only Auto when Smart Routing selects a managed team", () => {
+it.effect("routes a managed task only when a selected Lead is available", () => {
   const workerOnly: TeamModelProfile = { ...leadProfile, lead: false, worker: true };
-  const workerOnlyPolicy: TeamSettings["policy"] = {
-    ...policy,
-    flowMode: "auto",
-    profiles: [workerOnly],
-  };
   const f = fixture(null, true, {
     advisorConfigured: true,
     executionMode: "orchestrated",
     routeAdvisorSource: "jev",
-    settingsPolicy: workerOnlyPolicy,
+    settingsPolicy: { ...policy, flowMode: "auto", profiles: [workerOnly] },
   });
-
   return Effect.gen(function* () {
     const runtime = yield* make;
     const error = yield* runtime
-      .start({
-        commandId: "worker-only-managed-team",
+      .route({
         projectId,
-        runtimeMode: "approval-required",
         prompt: "Coordinate a multi-part change",
-        attachments: [],
       })
       .pipe(Effect.flip);
-
     expect(error.code).toBe("unavailable");
-    expect(error.message).toContain("selected a managed team");
     expect(error.message).toContain("Lead model");
-    expect(f.profileCalls).toEqual([]);
+    expect(f.current()).toBeNull();
   }).pipe(Effect.provide(f.layer));
 });
 
-it.effect("reports a missing Lead when Worker-only Auto falls back to Standard", () => {
-  const workerOnly: TeamModelProfile = { ...leadProfile, lead: false, worker: true };
-  const workerOnlyPolicy: TeamSettings["policy"] = {
-    ...policy,
-    flowMode: "auto",
-    profiles: [workerOnly],
-  };
+it.effect("starts an Auto team with Lead scope before worker count and directives", () => {
   const f = fixture(null, true, {
     advisorConfigured: true,
-    executionMode: "orchestrated",
-    routeAdvisorSource: "policy",
-    settingsPolicy: workerOnlyPolicy,
+    settingsPolicy: { ...policy, flowMode: "auto" },
   });
-
   return Effect.gen(function* () {
     const runtime = yield* make;
-    const error = yield* runtime
-      .start({
-        commandId: "worker-only-standard-fallback",
-        projectId,
-        runtimeMode: "approval-required",
-        prompt: "Handle the change",
-        attachments: [],
-      })
-      .pipe(Effect.flip);
+    const input = {
+      commandId: "scoped-auto-start",
+      projectId,
+      runtimeMode: "approval-required" as const,
+      prompt: "Refactor authentication across server and web",
+      attachments: [],
+    };
+    const first = yield* runtime.start(input);
+    const second = yield* runtime.start(input);
+    expect(first.executionMode).toBe("orchestrated");
+    expect(first.attempts[0]?.role).toBe("scope");
+    expect(first.attempts[0]?.prompt).toContain("Smart Routing will decide a worker count");
+    expect(second.id).toBe(first.id);
+    expect(f.executionModeCalls).toEqual([]);
+    expect(f.profileCalls[0]?.purpose).toBe("lead");
+  }).pipe(Effect.provide(f.layer));
+});
 
-    expect(error.code).toBe("unavailable");
-    expect(error.message).toContain("fell back to Standard");
-    expect(error.message).toContain("Lead model");
+it.effect("falls back to Standard team routing when JEV is unavailable", () => {
+  const f = fixture(null, true, {
+    settingsPolicy: { ...policy, flowMode: "auto" },
+  });
+  return Effect.gen(function* () {
+    const runtime = yield* make;
+    const route = yield* runtime.route({ projectId, prompt: "Fix the test" });
+    expect(route.kind).toBe("team");
+    expect(f.executionModeCalls).toEqual([]);
+  }).pipe(Effect.provide(f.layer));
+});
+
+it.effect("keeps a policy-routed team on Standard even when JEV is reachable", () => {
+  const f = fixture(null, true, {
+    advisorConfigured: true,
+    settingsPolicy: { ...policy, flowMode: "auto" },
+  });
+  return Effect.gen(function* () {
+    const runtime = yield* make;
+    const run = yield* runtime.start({
+      commandId: "policy-route-start",
+      projectId,
+      runtimeMode: "approval-required",
+      prompt: "Coordinate the change",
+      attachments: [],
+      routingSource: "policy",
+    });
+    expect(run.policy.flowMode).toBe("standard");
+    expect(run.attempts[0]?.role).toBe("plan");
     expect(f.profileCalls).toEqual([]);
   }).pipe(Effect.provide(f.layer));
 });
 
-it.effect(
-  "falls back to Standard when Auto execution succeeds but profile selection is uncertain",
-  () => {
-    const autoPolicy: TeamSettings["policy"] = { ...policy, flowMode: "auto" };
-    const f = fixture(null, true, {
-      advisorConfigured: true,
-      executionMode: "direct",
-      routeAdvisorSource: "jev",
-      profileAdvisorSource: "policy",
-      settingsPolicy: autoPolicy,
+it.effect("chooses worker count after Lead scope and only then requests directives", () => {
+  const autoPolicy: TeamSettings["policy"] = { ...policy, flowMode: "auto", maxActive: 4 };
+  const scope = attempt({
+    id: "lead-scope",
+    role: "scope",
+    owner: baseRun().lead,
+    status: "succeeded",
+    result: JSON.stringify({
+      summary: "Two independent modules need changes.",
+      independentAreas: ["Server contract", "Web client"],
+      risks: ["Keep the RPC compatible"],
+      acceptance: ["Both clients can complete the task"],
+    }),
+  });
+  const f = fixture(
+    baseRun({
+      policy: autoPolicy,
+      status: "planning",
+      acceptance: [],
+      attempts: [scope],
+    }),
+    true,
+    { advisorConfigured: true, workerCount: 2 },
+  );
+  return Effect.gen(function* () {
+    const runtime = yield* make;
+    yield* runtime.tick();
+    const run = f.current()!;
+    expect(run.workerTarget).toBe(2);
+    expect(run.tasks).toEqual([]);
+    expect(run.attempts.map((item) => item.role)).toEqual(["scope", "plan"]);
+    expect(run.attempts[1]?.prompt).toContain("up to 2 useful worker(s)");
+    expect(run.attempts[1]?.prompt).toContain("Two independent modules need changes.");
+  }).pipe(Effect.provide(f.layer));
+});
+
+it.effect("returns to Standard delegation when JEV cannot choose worker count", () => {
+  const scope = attempt({
+    id: "fallback-scope",
+    role: "scope",
+    owner: baseRun().lead,
+    status: "succeeded",
+    result: JSON.stringify({
+      summary: "Server and web can be worked on independently.",
+      independentAreas: ["Server", "Web"],
+      risks: [],
+      acceptance: ["Both areas work"],
+    }),
+  });
+  const f = fixture(
+    baseRun({
+      policy: { ...policy, flowMode: "auto", maxActive: 3 },
+      status: "planning",
+      acceptance: [],
+      attempts: [scope],
+    }),
+    true,
+    { advisorConfigured: true, workerCount: 2, workerCountSource: "policy" },
+  );
+  return Effect.gen(function* () {
+    const runtime = yield* make;
+    yield* runtime.tick();
+    const run = f.current()!;
+    expect(run.policy.flowMode).toBe("standard");
+    expect(run.workerTarget).toBe(2);
+    expect(run.attempts[1]?.role).toBe("plan");
+    expect(run.decisions).toContain(
+      "Smart Routing could not complete this decision. Flow continued with Standard using your saved model order.",
+    );
+  }).pipe(Effect.provide(f.layer));
+});
+
+it.effect("freezes the selected Worker effort on the directive and dispatched attempt", () => {
+  const taskPlan = attempt({
+    id: "directive-plan",
+    role: "plan",
+    owner: baseRun().lead,
+    status: "succeeded",
+    result: JSON.stringify({
+      acceptance: ["Feature works end to end"],
+      tasks: [
+        {
+          id: "web-task",
+          objective: "Implement the web portion",
+          acceptance: ["Focused web check passes"],
+          dependencies: [],
+          context: "Server contract is already defined.",
+        },
+      ],
+      rationale: "Delegate the independent web portion.",
+    }),
+  });
+  const f = fixture(
+    baseRun({
+      policy: { ...policy, flowMode: "auto" },
+      workerTarget: 1,
+      status: "planning",
+      attempts: [taskPlan],
+    }),
+    true,
+    { advisorConfigured: true, selectedEffort: "high" },
+  );
+  return Effect.gen(function* () {
+    const runtime = yield* make;
+    yield* runtime.tick();
+    const run = f.current()!;
+    expect(run.tasks[0]?.selection?.options).toContainEqual({
+      id: "reasoningEffort",
+      value: "high",
     });
-
-    return Effect.gen(function* () {
-      const runtime = yield* make;
-      const run = yield* runtime.start({
-        commandId: "profile-fallback-start",
-        projectId,
-        runtimeMode: "approval-required",
-        prompt: "Update the focused runtime test",
-        attachments: [],
-      });
-
-      expect(run.executionMode).toBe("orchestrated");
-      expect(run.policy.flowMode).toBe("standard");
-      expect(run.lead.profileId).toBe(leadProfile.id);
-      expect(run.decisions).toContain(
-        "Smart Routing was unavailable or uncertain. Flow continued with Standard using your saved model order.",
-      );
-      expect(f.executionModeCalls).toHaveLength(1);
-      expect(f.profileCalls).toHaveLength(1);
-    }).pipe(Effect.provide(f.layer));
-  },
-);
+    expect(run.attempts.find((item) => item.role === "work")?.selection.options).toContainEqual({
+      id: "reasoningEffort",
+      value: "high",
+    });
+  }).pipe(Effect.provide(f.layer));
+});
 
 it.effect(
   "uses the sole Lead profile without hosted profile inference after Auto routes to a team",
@@ -905,7 +965,7 @@ it.effect("falls back visibly to Standard when Auto has no safe Worker routing c
     expect(run.policy.flowMode).toBe("standard");
     expect(run.lead.profileId).toBe(frontierLead.id);
     expect(run.decisions).toContain(
-      "Smart Routing was unavailable or uncertain. Flow continued with Standard using your saved model order.",
+      "Smart Routing could not complete this decision. Flow continued with Standard using your saved model order.",
     );
     expect(f.executionModeCalls).toEqual([]);
     expect(f.profileCalls).toEqual([]);
@@ -1057,7 +1117,7 @@ it.effect(
   },
 );
 
-it.effect("stops hosted Worker selection after the first Auto profile fallback", () => {
+it.effect("uses saved Worker order after the first uncertain Auto profile decision", () => {
   const autoPolicy: TeamSettings["policy"] = { ...policy, flowMode: "auto" };
   const plan = attempt({
     id: "auto-plan-profile-fallback",
@@ -1103,10 +1163,10 @@ it.effect("stops hosted Worker selection after the first Auto profile fallback",
     yield* runtime.tick();
     const run = f.current()!;
 
-    expect(run.policy.flowMode).toBe("standard");
+    expect(run.policy.flowMode).toBe("auto");
     expect(run.tasks.map((task) => task.owner.profileId)).toEqual([leadProfile.id, leadProfile.id]);
     expect(run.decisions).toContain(
-      "Smart Routing was unavailable or uncertain. Flow continued with Standard using your saved model order.",
+      "Smart Routing could not rank the selected models. Flow used your saved model order.",
     );
     expect(f.profileCalls).toHaveLength(1);
   }).pipe(Effect.provide(f.layer));
@@ -1330,7 +1390,7 @@ it.effect(
       expect(run.status).toBe("awaiting-provider-decision");
       expect(run.policy.flowMode).toBe("standard");
       expect(run.decisions).toContain(
-        "Smart Routing was unavailable or uncertain. Flow continued with Standard using your saved model order.",
+        "Smart Routing could not complete this decision. Flow continued with Standard using your saved model order.",
       );
       expect(run.statusReason).toBe(
         "A provider limit was reached, but Dispatch cannot prove an equivalent automatic replacement because capability metadata is missing and Smart Routing did not return a confident decision. Choose another selected provider.",
@@ -1425,7 +1485,7 @@ it.effect(
 
       expect(run.policy.flowMode).toBe("standard");
       expect(run.decisions).toContain(
-        "Smart Routing was unavailable or uncertain. Flow continued with Standard using your saved model order.",
+        "Smart Routing could not complete this decision. Flow continued with Standard using your saved model order.",
       );
       expect(run.failovers[0]).toMatchObject({
         status: "applied",
@@ -1609,11 +1669,20 @@ it.effect("dispatches a newly reserved lead review in the same scheduler tick", 
     branch: `orchestration/runtime-run/task/${taskId}`,
     worktreePath: "/repo/.dispatch-worktrees/review-task",
     status: "running",
+    selection: {
+      instanceId: ProviderInstanceId.make("openai"),
+      model: "gpt-6-luna",
+      options: [{ id: "reasoningEffort", value: "max" }],
+    },
     attemptIds: [work.id],
     settlementId: null,
     result: null,
   };
-  const f = fixture(baseRun({ tasks: [task], attempts: [work] }));
+  const leadSelection = {
+    ...leadProfile.selection,
+    options: [{ id: "reasoningEffort", value: "high" }],
+  };
+  const f = fixture(baseRun({ leadSelection, tasks: [task], attempts: [work] }));
 
   return Effect.gen(function* () {
     const runtime = yield* make;
@@ -1622,6 +1691,7 @@ it.effect("dispatches a newly reserved lead review in the same scheduler tick", 
     const run = f.current()!;
     const review = run.attempts.find((candidate) => candidate.role === "review");
     expect(review).toMatchObject({ taskId, status: "running" });
+    expect(review?.selection).toEqual(leadSelection);
     expect(
       f.commands.some(
         (command) => command.type === "thread.turn.start" && command.threadId === leadThreadId,

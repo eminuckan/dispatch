@@ -108,6 +108,18 @@ NodeTest.test(
               confidence: 0.99,
               probabilities: { direct: 1, orchestrated: 0 },
             },
+            difficulty: {
+              type: "choice",
+              choice: "routine",
+              confidence: 0.99,
+              probabilities: { routine: 1, substantial: 0, frontier: 0 },
+            },
+            workload: {
+              type: "choice",
+              choice: "short",
+              confidence: 0.99,
+              probabilities: { short: 1, medium: 0, long: 0 },
+            },
           },
           usage: { input_tokens: 500 },
         });

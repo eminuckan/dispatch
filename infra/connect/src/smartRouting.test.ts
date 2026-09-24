@@ -36,6 +36,13 @@ const answer = (choice: string, choices: readonly string[], confidence = 0.95) =
   confidence,
   probabilities: Object.fromEntries(choices.map((key) => [key, key === choice ? 1 : 0])),
 });
+const executionAnswers = (mode: "direct" | "orchestrated", confidence = 0.95) => ({
+  mode: answer(mode, ["direct", "orchestrated"], confidence),
+  difficulty: answer("routine", ["routine", "substantial", "frontier"]),
+  workload: answer("short", ["short", "medium", "long"]),
+  decomposition: answer("one_stream", ["one_stream", "independent_streams"]),
+  risk: answer("bounded", ["bounded", "review_worthwhile"]),
+});
 
 NodeTest.test(
   "hosted routing uses the semantic provider even for security keywords and never invents a model allowlist",
@@ -46,16 +53,24 @@ NodeTest.test(
     NodeAssert.equal(body.state.candidates[0].model, "arbitrary-model-v7");
     NodeAssert.equal(body.state.candidates[0].id, "c0");
     NodeAssert.equal(body.state.objective, parsed.objective);
+    NodeAssert.deepEqual(Object.keys(body.questions), [
+      "mode",
+      "difficulty",
+      "workload",
+      "decomposition",
+      "risk",
+    ]);
     NodeAssert.deepEqual(
       decodeSmartRoutingResponse("execution", parsed, {
         model: SMART_ROUTING_MODEL,
-        answers: { mode: answer("direct", ["direct", "orchestrated"]) },
+        answers: executionAnswers("direct"),
       }),
       {
         mode: "direct",
         source: "jev",
         confidence: 0.95,
-        reason: "Smart Routing selected one worker for this objective.",
+        reason:
+          "Smart Routing assessed routine, short, one_stream, bounded; selected an ordinary single-model conversation.",
       },
     );
   },
@@ -101,11 +116,10 @@ NodeTest.test(
 );
 
 NodeTest.test(
-  "low confidence, malformed probabilities, unknown modes, wrong models and absent workers fail closed",
+  "malformed probabilities, unknown modes, wrong models and absent candidates fail closed",
   () => {
     const parsed = parseSmartRoutingInput("execution", input());
     for (const mode of [
-      answer("direct", ["direct", "orchestrated"], 0.79),
       answer("other", ["other", "orchestrated"]),
       {
         ...answer("direct", ["direct", "orchestrated"]),
@@ -118,7 +132,7 @@ NodeTest.test(
         (
           decodeSmartRoutingResponse("execution", parsed, {
             model: SMART_ROUTING_MODEL,
-            answers: { mode },
+            answers: { ...executionAnswers("direct"), mode },
           }) as { mode: string }
         ).mode,
         "orchestrated",
@@ -126,7 +140,7 @@ NodeTest.test(
     }
     const direct = {
       model: SMART_ROUTING_MODEL,
-      answers: { mode: answer("direct", ["direct", "orchestrated"]) },
+      answers: executionAnswers("direct"),
     };
     NodeAssert.equal(
       (
@@ -144,6 +158,60 @@ NodeTest.test(
       ).source,
       "policy",
     );
+  },
+);
+
+NodeTest.test(
+  "narrow task assessments make low-confidence but valid routing decisions usable",
+  () => {
+    const parsed = parseSmartRoutingInput("execution", input());
+    const managed = decodeSmartRoutingResponse("execution", parsed, {
+      model: SMART_ROUTING_MODEL,
+      answers: {
+        ...executionAnswers("orchestrated"),
+        workload: answer("long", ["short", "medium", "long"]),
+        mode: {
+          type: "choice",
+          choice: "orchestrated",
+          confidence: 0.26,
+          probabilities: { direct: 0.37, orchestrated: 0.63 },
+        },
+      },
+    });
+    NodeAssert.deepEqual(managed, {
+      mode: "orchestrated",
+      source: "jev",
+      confidence: 0.26,
+      reason: "Smart Routing assessed routine, long, one_stream, bounded; selected a managed team.",
+    });
+    const direct = decodeSmartRoutingResponse("execution", parsed, {
+      model: SMART_ROUTING_MODEL,
+      answers: {
+        ...executionAnswers("direct"),
+        mode: {
+          type: "choice",
+          choice: "direct",
+          confidence: 0.26,
+          probabilities: { direct: 0.63, orchestrated: 0.37 },
+        },
+      },
+    });
+    NodeAssert.equal("source" in direct && direct.source, "jev");
+    NodeAssert.equal("mode" in direct && direct.mode, "direct");
+    const crossCutting = decodeSmartRoutingResponse("execution", parsed, {
+      model: SMART_ROUTING_MODEL,
+      answers: {
+        ...executionAnswers("direct"),
+        workload: answer("long", ["short", "medium", "long"]),
+        decomposition: answer("independent_streams", ["one_stream", "independent_streams"]),
+      },
+    });
+    NodeAssert.equal("mode" in crossCutting && crossCutting.mode, "direct");
+    const needlessTeam = decodeSmartRoutingResponse("execution", parsed, {
+      model: SMART_ROUTING_MODEL,
+      answers: executionAnswers("orchestrated"),
+    });
+    NodeAssert.equal("mode" in needlessTeam && needlessTeam.mode, "direct");
   },
 );
 
@@ -177,6 +245,79 @@ NodeTest.test(
     );
   },
 );
+
+NodeTest.test(
+  "a valid close profile ranking is accepted without a blanket confidence cutoff",
+  () => {
+    const parsed = parseSmartRoutingInput(
+      "profile",
+      input({
+        purpose: "lead",
+        candidates: [candidate, { ...candidate, id: "second", model: "another-model" }],
+      }),
+    );
+    const decision = decodeSmartRoutingResponse("profile", parsed, {
+      model: SMART_ROUTING_MODEL,
+      answers: {
+        profile: {
+          type: "choice",
+          choice: "c1",
+          confidence: 0.06,
+          probabilities: { c0: 0.47, c1: 0.53 },
+        },
+      },
+    });
+    NodeAssert.equal("profileId" in decision && decision.profileId, "second");
+    NodeAssert.equal("source" in decision && decision.source, "jev");
+  },
+);
+
+NodeTest.test("effort selection stays within advertised provider values", () => {
+  const parsed = parseSmartRoutingInput(
+    "effort",
+    input({ effortChoices: ["low", "medium", "max"] }),
+  );
+  const request = JSON.parse(smartRoutingRequest("effort", parsed));
+  NodeAssert.deepEqual(Object.keys(request.questions.effort.criteria), ["low", "medium", "max"]);
+  NodeAssert.deepEqual(
+    decodeSmartRoutingResponse("effort", parsed, {
+      model: SMART_ROUTING_MODEL,
+      answers: { effort: answer("max", ["low", "medium", "max"], 0.21) },
+    }),
+    {
+      effort: "max",
+      source: "jev",
+      confidence: 0.21,
+      reason: "Smart Routing selected a supported effort for this task.",
+    },
+  );
+  const fallback = decodeSmartRoutingResponse("effort", parsed, {
+    model: SMART_ROUTING_MODEL,
+    answers: { effort: answer("ultra", ["ultra"]) },
+  });
+  NodeAssert.equal("effort" in fallback && fallback.effort, "medium");
+});
+
+NodeTest.test("worker count is bounded by concurrency and can be zero", () => {
+  const parsed = parseSmartRoutingInput(
+    "workers",
+    input({
+      scope: "Two independent modules can be changed in parallel.",
+      maxWorkers: 2,
+    }),
+  );
+  const request = JSON.parse(smartRoutingRequest("workers", parsed));
+  NodeAssert.deepEqual(Object.keys(request.questions.workers.criteria), ["w0", "w1", "w2"]);
+  const choice = decodeSmartRoutingResponse("workers", parsed, {
+    model: SMART_ROUTING_MODEL,
+    answers: { workers: answer("w2", ["w0", "w1", "w2"], 0.3) },
+  });
+  NodeAssert.equal("workers" in choice && choice.workers, 2);
+  NodeAssert.throws(
+    () => parseSmartRoutingInput("workers", input({ scope: "Area", maxWorkers: 5 })),
+    SmartRoutingError,
+  );
+});
 
 NodeTest.test(
   "recommendations bind every independent question to its candidate and require confident role and capability",

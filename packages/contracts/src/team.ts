@@ -32,6 +32,7 @@ export const TeamModelProfile = Schema.Struct({
   lead: Schema.Boolean,
   worker: Schema.Boolean,
   capability: Schema.optional(TeamCapability),
+  effortMode: Schema.optional(Schema.Literals(["auto", "fixed"])),
 });
 export type TeamModelProfile = typeof TeamModelProfile.Type;
 
@@ -113,6 +114,8 @@ export const TeamTask = Schema.Struct({
   ),
   dependencies: Schema.Array(Id).check(Schema.isMaxLength(50)),
   owner: TeamOwner,
+  /** Selected model and effort for this directive; absent in older runs. */
+  selection: Schema.optional(ModelSelection),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
   status: Schema.Literals([
@@ -150,7 +153,7 @@ export const TeamAttempt = Schema.Struct({
   commandId: Id,
   requestMessageId: MessageId,
   taskId: Schema.NullOr(Id),
-  role: Schema.Literals(["plan", "work", "review", "integrate"]),
+  role: Schema.Literals(["scope", "plan", "work", "review", "integrate"]),
   sequence: Count,
   owner: TeamOwner,
   selection: ModelSelection,
@@ -267,6 +270,10 @@ export const TeamRun = Schema.Struct({
   prompt: BoundedText,
   policy: TeamPolicy,
   lead: TeamOwner,
+  /** Selected Lead model and effort; absent in older runs. */
+  leadSelection: Schema.optional(ModelSelection),
+  /** JEV's useful worker count after Lead reconnaissance; absent in older runs. */
+  workerTarget: Schema.optional(Count),
   acceptance: Schema.Array(TrimmedNonEmptyString.check(Schema.isMaxLength(2_000))).check(
     Schema.isMaxLength(20),
   ),
@@ -304,11 +311,33 @@ export const TeamStart = Schema.Struct({
   projectId: ProjectId,
   runtimeMode: ManagedRuntimeMode,
   prompt: BoundedText,
+  /** A policy fallback from the preceding route call keeps this run on Standard. */
+  routingSource: Schema.optional(Schema.Literals(["jev", "policy"])),
   attachments: Schema.Array(ChatAttachment).check(
     Schema.isMaxLength(PROVIDER_SEND_TURN_MAX_ATTACHMENTS),
   ),
 });
 export type TeamStart = typeof TeamStart.Type;
+
+export const TeamRoute = Schema.Struct({
+  projectId: ProjectId,
+  prompt: BoundedText,
+});
+export type TeamRoute = typeof TeamRoute.Type;
+
+export const TeamRouteResult = Schema.Union([
+  Schema.Struct({
+    kind: Schema.Literal("direct"),
+    selection: ModelSelection,
+    reason: Schema.String.check(Schema.isMaxLength(1_000)),
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("team"),
+    source: Schema.Literals(["jev", "policy"]),
+    reason: Schema.String.check(Schema.isMaxLength(1_000)),
+  }),
+]);
+export type TeamRouteResult = typeof TeamRouteResult.Type;
 
 export const TeamRunId = Schema.Struct({ id: Id });
 export type TeamRunId = typeof TeamRunId.Type;

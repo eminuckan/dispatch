@@ -17,12 +17,7 @@ import { createModelSelection } from "@dispatch/shared/model";
 
 import { randomUUID } from "../../lib/utils";
 import { smartRoutingReasonMessage } from "../../flowPresentation";
-import {
-  hasAssignedFlowModel,
-  hasFlowLead,
-  hasRequiredFlowRole,
-  readyFlowProviders,
-} from "../../flowPolicy";
+import { hasFlowLead, hasRequiredFlowRole, readyFlowProviders } from "../../flowPolicy";
 import { deriveProviderInstanceEntries } from "../../providerInstances";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
@@ -121,6 +116,15 @@ function roleLabel(profile: Pick<TeamModelProfile, "lead" | "worker">): string {
   if (profile.lead) return "Lead";
   if (profile.worker) return "Worker";
   return "No role";
+}
+
+function effortMode(profile: TeamModelProfile): "auto" | "fixed" {
+  if (profile.effortMode) return profile.effortMode;
+  return (profile.selection.options ?? []).some(
+    (option) => option.id === "reasoningEffort" || option.id === "variant",
+  )
+    ? "fixed"
+    : "auto";
 }
 
 export function withTeamProfileModelOptions(
@@ -228,7 +232,6 @@ function TeamSettingsForm({
 
   const hasUnsavedEdits = JSON.stringify(policy) !== JSON.stringify(initial.policy);
   const hasLead = hasFlowLead(policy);
-  const hasAssignedModel = hasAssignedFlowModel(policy);
   const hasRequiredRole = hasRequiredFlowRole(policy);
   const hasUnassignedModel = policy.profiles.some((profile) => !profile.lead && !profile.worker);
   const policyValid = (!policy.enabled || hasRequiredRole) && !hasUnassignedModel;
@@ -245,11 +248,7 @@ function TeamSettingsForm({
 
   function setEnabled(enabled: boolean) {
     if (enabled && !hasRequiredRole) {
-      setMessage(
-        policy.flowMode === "auto"
-          ? "Choose at least one Lead or Worker model before enabling Flow Auto."
-          : "Choose at least one Lead model before enabling Flow Standard.",
-      );
+      setMessage("Choose at least one Lead model before enabling Flow Standard.");
       return;
     }
     setPolicy((current) => ({ ...current, enabled }));
@@ -397,9 +396,7 @@ function TeamSettingsForm({
           description={
             hasRequiredRole
               ? "Makes Flow available in the composer for this environment."
-              : policy.flowMode === "auto"
-                ? "Choose at least one Lead or Worker model before enabling Flow Auto."
-                : "Choose at least one Lead model before enabling Flow Standard."
+              : "Choose at least one Lead model before enabling Flow Standard."
           }
           control={
             <Switch
@@ -416,7 +413,7 @@ function TeamSettingsForm({
             policy.flowMode === "standard"
               ? "Standard uses your selected Lead and Worker models without a Dispatch Connect account."
               : initial.smartRouting.available
-                ? "Auto uses Dispatch-hosted Smart Routing to choose direct execution or a managed team. Worker-only setups can run direct work; managed-team or Standard fallback still needs a Lead."
+                ? "Auto assesses the task in stages. A single-model choice uses ordinary chat; a team choice selects a Lead, worker count, and a model and effort for each directive. Team and Standard fallback need a selected Lead."
                 : hasLead
                   ? "Auto stays selected and can fall back to Standard while Smart Routing is unavailable."
                   : "Auto stays selected, but Standard fallback cannot start until you add a Lead."
@@ -440,8 +437,9 @@ function TeamSettingsForm({
                 </DialogHeader>
                 <DialogPanel className="space-y-2 text-sm text-muted-foreground">
                   <p>
-                    Auto sends the task objective and minimal selected-model metadata to Dispatch's
-                    hosted router, which may use JEV to make the routing decision.
+                    Auto sends the task objective and available model metadata to Dispatch's hosted
+                    router. For teams it also sends the Lead's compact scope and worker directives
+                    to choose worker count, model, and effort.
                   </p>
                   <p>
                     Flow remains controlled by this environment. If hosted routing is unavailable,
@@ -551,6 +549,18 @@ function TeamSettingsForm({
               description={`${provider?.displayName ?? profile.selection.instanceId} · ${roleLabel(profile)}`}
               control={
                 <div className="flex min-w-0 items-center justify-end gap-1">
+                  <Choice
+                    label={`Effort mode for ${profile.label}`}
+                    value={effortMode(profile)}
+                    options={[
+                      { value: "auto", label: "Auto effort" },
+                      { value: "fixed", label: "Fixed effort" },
+                    ]}
+                    onChange={(value) =>
+                      updateProfile(profile.id, { effortMode: value as "auto" | "fixed" })
+                    }
+                    disabled={pending || unavailable}
+                  />
                   {!unavailable && provider && model ? (
                     <TraitsPicker
                       provider={provider.driver}
@@ -565,11 +575,20 @@ function TeamSettingsForm({
                       size="xs"
                       triggerVariant="ghost"
                       triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
-                      onModelOptionsChange={(options) =>
+                      onModelOptionsChange={(options) => {
+                        const previousEffort = (profile.selection.options ?? []).find(
+                          (option) => option.id === "reasoningEffort" || option.id === "variant",
+                        );
+                        const nextEffort = options?.find(
+                          (option) => option.id === "reasoningEffort" || option.id === "variant",
+                        );
                         updateProfile(profile.id, {
                           selection: withTeamProfileModelOptions(profile, options).selection,
-                        })
-                      }
+                          ...(nextEffort?.value !== previousEffort?.value
+                            ? { effortMode: "fixed" as const }
+                            : {}),
+                        });
+                      }}
                     />
                   ) : null}
                   <Button
@@ -809,9 +828,7 @@ function TeamSettingsForm({
           <p className="text-xs text-destructive">
             {hasUnassignedModel
               ? "Every selected model needs Lead, Worker, or both."
-              : policy.flowMode === "auto" && !hasAssignedModel
-                ? "Choose at least one Lead or Worker model before enabling Flow Auto."
-                : "Choose at least one Lead model before enabling Flow Standard."}
+              : "Choose at least one Lead model before enabling Flow Standard."}
           </p>
         ) : null}
         {message ? (

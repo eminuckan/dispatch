@@ -6,6 +6,7 @@ export function createTeamEnvironmentAtoms<R, E>(
 ) {
   return {
     start: createEnvironmentRpcCommand(runtime, { label: "team:start", tag: "team.start" }),
+    route: createEnvironmentRpcCommand(runtime, { label: "team:route", tag: "team.route" }),
     control: createEnvironmentRpcCommand(runtime, { label: "team:control", tag: "team.control" }),
     forThread: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "team:for-thread",

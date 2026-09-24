@@ -5,6 +5,7 @@ import * as Layer from "effect/Layer";
 
 import { ProviderRegistry } from "../provider/Services/ProviderRegistry.ts";
 import { ProviderService } from "../provider/Services/ProviderService.ts";
+import { modelRoutingPrior, supportedModelEfforts } from "./ModelRoutingCatalog.ts";
 
 const capabilityRank = { general: 0, complex: 1, frontier: 2 } as const;
 const directCapabilityRank = { general: 0, complex: 2, frontier: 3 } as const;
@@ -111,6 +112,60 @@ export const makeOrchestrationModelCatalog = Effect.gen(function* () {
     );
   });
 
+  const runnableDirectProfiles = Effect.fn("OrchestrationModelCatalog.runnableDirectProfiles")(
+    function* (policy: TeamPolicy) {
+      const snapshots = yield* registry.getProviders;
+      const configured = new Map(
+        policy.profiles.map((profile) => [
+          `${profile.selection.instanceId}\0${profile.selection.model}`,
+          profile,
+        ]),
+      );
+      const choices = snapshots.flatMap((provider) =>
+        provider.models
+          .filter(
+            (model) =>
+              !model.isLegacy &&
+              provider.supportsTextGeneration !== false &&
+              orchestrationModelUsable(provider, model.slug),
+          )
+          .map((model) => ({
+            provider,
+            model,
+            priority:
+              (configured.has(`${provider.instanceId}\0${model.slug}`) ? 4 : 0) +
+              (modelRoutingPrior(model.slug).costClass !== "unknown" ? 2 : 0) +
+              (model.isDefault ? 1 : 0),
+          })),
+      );
+      return choices
+        .toSorted((a, b) => b.priority - a.priority)
+        .map(({ provider, model }, index): TeamModelProfile => {
+          const saved = configured.get(`${provider.instanceId}\0${model.slug}`);
+          const prior = modelRoutingPrior(model.slug);
+          return {
+            id: `direct-${index}`,
+            label: `${provider.displayName ?? provider.instanceId} · ${model.name}`.slice(0, 100),
+            selection: saved?.selection ?? { instanceId: provider.instanceId, model: model.slug },
+            ...(saved?.effortMode ? { effortMode: saved.effortMode } : {}),
+            lead: false,
+            worker: false,
+            ...(prior.capability ? { capability: prior.capability } : {}),
+          };
+        });
+    },
+  );
+
+  const supportedEfforts = Effect.fn("OrchestrationModelCatalog.supportedEfforts")(function* (
+    profile: TeamModelProfile,
+  ) {
+    const snapshots = yield* registry.getProviders;
+    const model = snapshots
+      .find((provider) => provider.instanceId === profile.selection.instanceId)
+      ?.models.find((entry) => entry.slug === profile.selection.model);
+    return model ? supportedModelEfforts(model) : null;
+  });
+
   const refreshProfile = Effect.fn("OrchestrationModelCatalog.refreshProfile")(function* (
     profile: TeamModelProfile,
   ) {
@@ -140,7 +195,7 @@ export const makeOrchestrationModelCatalog = Effect.gen(function* () {
     };
   });
 
-  return { runnableProfiles, refreshProfile };
+  return { runnableProfiles, runnableDirectProfiles, supportedEfforts, refreshProfile };
 });
 
 export class OrchestrationModelCatalog extends Context.Service<

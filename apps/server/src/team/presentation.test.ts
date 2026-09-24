@@ -8,7 +8,12 @@ import {
   type TeamRun,
 } from "@dispatch/contracts";
 
-import { SMART_ROUTING_STANDARD_FALLBACK_NOTICE, teamThreadView } from "./presentation.ts";
+import {
+  SMART_ROUTING_CONSERVATIVE_NOTICE,
+  SMART_ROUTING_MODEL_ORDER_NOTICE,
+  SMART_ROUTING_STANDARD_FALLBACK_NOTICE,
+  teamThreadView,
+} from "./presentation.ts";
 
 import { TEAM_SUPERVISION_PROMPT_MARKER } from "@dispatch/shared/teamProtocolPresentation";
 
@@ -191,6 +196,18 @@ it("does not advertise a Standard fallback for an Auto run with a stale decision
   })!;
   expect(view.executionMode).toBe("direct");
   expect(view.notice).toBeNull();
+});
+
+it("shows the conservative managed route and saved model choice while Auto stays selected", () => {
+  const view = teamThreadView({
+    ...run,
+    policy: { ...run.policy, flowMode: "auto" },
+    statusReason: null,
+    decisions: [SMART_ROUTING_CONSERVATIVE_NOTICE, SMART_ROUTING_MODEL_ORDER_NOTICE],
+  })!;
+  expect(view.notice).toBe(
+    `${SMART_ROUTING_CONSERVATIVE_NOTICE} ${SMART_ROUTING_MODEL_ORDER_NOTICE}`,
+  );
 });
 
 it("keeps leadThreadId nullable and scopes the view to a worker thread before lead dispatch", () => {

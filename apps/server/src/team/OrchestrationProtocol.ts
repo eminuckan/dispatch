@@ -4,6 +4,14 @@ import * as Schema from "effect/Schema";
 const Criterion = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(2_000));
 const TaskId = Schema.String.check(Schema.isPattern(/^[a-z][a-z0-9_-]{0,63}$/));
 
+export const OrchestrationScope = Schema.Struct({
+  summary: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(4_000)),
+  independentAreas: Schema.Array(Criterion).check(Schema.isMaxLength(8)),
+  risks: Schema.Array(Criterion).check(Schema.isMaxLength(8)),
+  acceptance: Schema.Array(Criterion).check(Schema.isMinLength(1), Schema.isMaxLength(20)),
+});
+export type OrchestrationScope = typeof OrchestrationScope.Type;
+
 export const OrchestrationPlan = Schema.Struct({
   acceptance: Schema.Array(Criterion).check(Schema.isMinLength(1), Schema.isMaxLength(20)),
   tasks: Schema.Array(

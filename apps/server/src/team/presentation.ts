@@ -13,7 +13,11 @@ import {
 } from "@dispatch/shared/teamProtocolPresentation";
 
 export const SMART_ROUTING_STANDARD_FALLBACK_NOTICE =
-  "Smart Routing was unavailable or uncertain. Flow continued with Standard using your saved model order.";
+  "Smart Routing could not complete this decision. Flow continued with Standard using your saved model order.";
+export const SMART_ROUTING_CONSERVATIVE_NOTICE =
+  "Smart Routing could not confirm direct execution. Flow used a managed team.";
+export const SMART_ROUTING_MODEL_ORDER_NOTICE =
+  "Smart Routing could not rank the selected models. Flow used your saved model order.";
 
 function threadScope(run: TeamRun): ThreadId | null {
   if (run.lead.threadId) return run.lead.threadId;
@@ -63,6 +67,14 @@ function turnStatus(status: TeamAttempt["status"]): TeamThreadTurnView["status"]
 
 function turnSummary(attempt: TeamAttempt): string | null {
   if (attempt.result === null) return null;
+  if (attempt.role === "scope") {
+    try {
+      const parsed = JSON.parse(attempt.result) as { summary?: unknown };
+      return typeof parsed.summary === "string" ? parsed.summary : null;
+    } catch {
+      return null;
+    }
+  }
   if (
     attempt.role === "review" &&
     attempt.taskId === null &&
@@ -81,10 +93,15 @@ function turnSummary(attempt: TeamAttempt): string | null {
 
 function notice(run: TeamRun): string | null {
   if (run.statusReason) return run.statusReason;
-  return run.policy.flowMode === "standard" &&
+  if (
+    run.policy.flowMode === "standard" &&
     run.decisions.includes(SMART_ROUTING_STANDARD_FALLBACK_NOTICE)
-    ? SMART_ROUTING_STANDARD_FALLBACK_NOTICE
-    : null;
+  )
+    return SMART_ROUTING_STANDARD_FALLBACK_NOTICE;
+  const notices = [SMART_ROUTING_CONSERVATIVE_NOTICE, SMART_ROUTING_MODEL_ORDER_NOTICE].filter(
+    (message) => run.decisions.includes(message),
+  );
+  return notices.length > 0 ? notices.join(" ") : null;
 }
 
 export function teamThreadView(run: TeamRun | null): TeamThreadView | null {
@@ -113,7 +130,7 @@ export function teamThreadView(run: TeamRun | null): TeamThreadView | null {
     attempts: run.attempts,
     turns: run.attempts.map((attempt) => ({
       id: attempt.id,
-      role: attempt.role === "work" ? "worker" : attempt.role,
+      role: attempt.role === "work" ? "worker" : attempt.role === "scope" ? "plan" : attempt.role,
       taskId: attempt.taskId,
       threadId: attempt.owner.threadId,
       model: attempt.selection.model,

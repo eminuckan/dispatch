@@ -226,8 +226,31 @@ it.effect("lets only a confident hosted execution decision select direct mode", 
   }).pipe(Effect.provide(f.layer));
 });
 
+it.effect("accepts an uncertain managed route without approving direct execution", () => {
+  const f = fixture({
+    accountToken: "account-session",
+    respond: () => ({
+      body: {
+        mode: "orchestrated",
+        source: "jev",
+        confidence: 0.26,
+        reason: "Smart Routing could not confirm direct execution; using a managed team.",
+      },
+    }),
+  });
+  return Effect.gen(function* () {
+    const advisor = yield* make;
+    expect(
+      yield* advisor.routeExecution({
+        objective: "Apply the same dialog controls throughout the app.",
+        workers: [profile("worker")],
+      }),
+    ).toMatchObject({ mode: "orchestrated", source: "jev", confidence: 0.26 });
+  }).pipe(Effect.provide(f.layer));
+});
+
 it.effect(
-  "falls back to Standard when execution confidence is low or the request is oversized",
+  "accepts valid low-confidence execution and falls back when the request is oversized",
   () => {
     const lowConfidence = fixture({
       accountToken: "account-session",
@@ -252,7 +275,7 @@ it.effect(
         }),
         lowConfidence.layer,
       );
-      expect(low).toMatchObject({ mode: "orchestrated", source: "policy" });
+      expect(low).toMatchObject({ mode: "direct", source: "jev" });
 
       const tooLarge = yield* Effect.provide(
         Effect.gen(function* () {
@@ -273,6 +296,65 @@ it.effect(
     });
   },
 );
+
+it.effect("uses the highest advertised effort for economy models without a hosted call", () => {
+  const f = fixture({ accountToken: "account-session" });
+  return Effect.gen(function* () {
+    const advisor = yield* make;
+    const effort = yield* advisor.chooseEffort({
+      objective: "Implement a focused change",
+      profile: profile("luna", { selection: { instanceId, model: "gpt-6-luna" } }),
+      choices: { optionId: "reasoningEffort", values: ["low", "high", "max"] },
+    });
+    expect(effort).toEqual({ optionId: "reasoningEffort", value: "max" });
+    expect(f.requests).toHaveLength(0);
+  }).pipe(Effect.provide(f.layer));
+});
+
+it.effect("asks JEV for an adaptable premium model's supported effort", () => {
+  const f = fixture({
+    accountToken: "account-session",
+    respond: () => ({
+      body: { effort: "high", source: "jev", confidence: 0.35, reason: "Task needs high effort" },
+    }),
+  });
+  return Effect.gen(function* () {
+    const advisor = yield* make;
+    const effort = yield* advisor.chooseEffort({
+      objective: "Design a difficult integration",
+      profile: profile("sol", { selection: { instanceId, model: "gpt-6-sol" } }),
+      choices: { optionId: "reasoningEffort", values: ["medium", "high", "max"] },
+    });
+    expect(effort).toEqual({ optionId: "reasoningEffort", value: "high" });
+    expect(f.requests[0]?.url).toContain("/smart-routing/effort");
+    expect(requestJson(f.requests[0]!).effortChoices).toEqual(["medium", "high", "max"]);
+  }).pipe(Effect.provide(f.layer));
+});
+
+it.effect("keeps Standard worker capacity when hosted count selection falls back", () => {
+  const f = fixture({
+    accountToken: "account-session",
+    respond: () => ({
+      body: {
+        workers: 0,
+        source: "policy",
+        confidence: 1,
+        reason: "No valid worker count was selected.",
+      },
+    }),
+  });
+  return Effect.gen(function* () {
+    const advisor = yield* make;
+    const result = yield* advisor.chooseWorkerCount({
+      objective: "Implement the API and client",
+      scope: "Two independent areas",
+      lead: profile("lead"),
+      maxWorkers: 2,
+    });
+    expect(result).toMatchObject({ workers: 2, source: "policy" });
+    expect(f.requests[0]?.url).toContain("/smart-routing/workers");
+  }).pipe(Effect.provide(f.layer));
+});
 
 it.effect("clears the account session after hosted authentication failure", () => {
   const f = fixture({

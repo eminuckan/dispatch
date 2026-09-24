@@ -7323,6 +7323,7 @@ export default function ChatView(props: ChatViewProps) {
   const onSend = async (
     e?: { preventDefault: () => void },
     submissionIntent: ComposerSubmissionIntent = "foreground",
+    routedSelection?: ModelSelection,
     directAnnotation?: {
       annotation: PreviewAnnotationPayload;
       image: ComposerImageAttachment | null;
@@ -7410,7 +7411,18 @@ export default function ChatView(props: ChatViewProps) {
       return;
     }
     const sendCtx = composerRef.current?.getSendContext();
-    if (!sendCtx?.providerAvailable) {
+    const routedProvider = routedSelection
+      ? providerInstanceEntries.find((entry) => entry.instanceId === routedSelection.instanceId)
+      : null;
+    if (
+      !sendCtx ||
+      (routedSelection
+        ? !routedProvider?.enabled ||
+          !routedProvider.isAvailable ||
+          routedProvider.status !== "ready" ||
+          !routedProvider.models.some((model) => model.slug === routedSelection.model)
+        : !sendCtx.providerAvailable)
+    ) {
       notifyDirectAnnotationAttached();
       return;
     }
@@ -7446,15 +7458,32 @@ export default function ChatView(props: ChatViewProps) {
       previewAnnotations: sendContextPreviewAnnotations,
       reviewComments: composerReviewComments,
     } = queuedMessage ?? sendCtx;
-    const {
-      selectedProvider: ctxSelectedProvider,
-      selectedModel: ctxSelectedModel,
-      selectedProviderModels: ctxSelectedProviderModels,
-      selectedPromptEffort: ctxSelectedPromptEffort,
-      selectedModelSelection: ctxSelectedModelSelection,
-      interactionMode: sendInteractionMode,
-      interactionModeEnabled: sendInteractionModeEnabled,
-    } = sendCtx;
+    const routedProviderState =
+      routedSelection && routedProvider
+        ? getComposerProviderState({
+            provider: routedProvider.driverKind,
+            model: routedSelection.model,
+            models: routedProvider.models,
+            modelOptions: routedSelection.options,
+            promptInjectionState: getComposerPromptInjectionState(promptRef.current),
+            planModeEnabled: settings.planModeEnabled,
+          })
+        : null;
+    const ctxSelectedProvider = routedProvider?.driverKind ?? sendCtx.selectedProvider;
+    const ctxSelectedModel = routedSelection?.model ?? sendCtx.selectedModel;
+    const ctxSelectedProviderModels = routedProvider?.models ?? sendCtx.selectedProviderModels;
+    const ctxSelectedPromptEffort =
+      routedProviderState?.promptEffort ?? sendCtx.selectedPromptEffort;
+    const ctxSelectedModelSelection =
+      routedSelection && routedProviderState
+        ? createModelSelection(
+            routedSelection.instanceId,
+            routedSelection.model,
+            routedProviderState.modelOptionsForDispatch,
+          )
+        : sendCtx.selectedModelSelection;
+    const sendInteractionMode = sendCtx.interactionMode;
+    const sendInteractionModeEnabled = sendCtx.interactionModeEnabled;
     const annotationImageAlreadyAttached =
       directAnnotation?.image !== undefined &&
       sendContextImages.some((image) => image.id === directAnnotation.image?.id);
@@ -8656,7 +8685,7 @@ export default function ChatView(props: ChatViewProps) {
   // after it was queued, or the turn ended. Only one leaves per boundary; the
   // take inside onSend re-anchors the rest.
   const sendQueuedMessage = useEffectEvent((message: QueuedComposerMessage) => {
-    void onSend(undefined, message.submissionIntent, undefined, message);
+    void onSend(undefined, message.submissionIntent, undefined, undefined, message);
   });
   const nextQueuedMessage = queuedMessages[0] ?? null;
   const latestToolActivityId = useMemo(
@@ -8703,7 +8732,7 @@ export default function ChatView(props: ChatViewProps) {
     steer: (id) => {
       const message = queuedMessages.find((entry) => entry.id === id);
       if (!message || sendInFlightRef.current || queueBlockedByPendingRequest) return;
-      void onSend(undefined, message.submissionIntent, undefined, message);
+      void onSend(undefined, message.submissionIntent, undefined, undefined, message);
     },
     remove: (id) => {
       if (!activeThreadKey) return;
@@ -9632,7 +9661,7 @@ export default function ChatView(props: ChatViewProps) {
           configuredUrls={configuredPreviewUrls}
           visible={rightPanelOpen}
           onSendAnnotation={(annotation, image) => {
-            void onSend(undefined, "foreground", { annotation, image });
+            void onSend(undefined, "foreground", undefined, { annotation, image });
           }}
         />
       </Suspense>

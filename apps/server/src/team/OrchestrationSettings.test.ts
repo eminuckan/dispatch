@@ -154,7 +154,7 @@ it.effect("does not trust persisted Smart Routing availability after restart", (
   });
 });
 
-it.effect("allows Worker-only Auto but still requires a Lead for Standard", () => {
+it.effect("allows Auto without profiles but still requires a Lead for Standard", () => {
   const f = settingsFixture({ configured: true, recommend: (profiles) => profiles });
   const workerOnly: TeamModelProfile = { ...savedProfile, lead: false, worker: true };
   return Effect.gen(function* () {
@@ -166,6 +166,13 @@ it.effect("allows Worker-only Auto but still requires a Lead for Standard", () =
     });
     expect(auto.policy.flowMode).toBe("auto");
     expect(auto.policy.profiles[0]).toMatchObject({ lead: false, worker: true });
+
+    const unassignedAuto = yield* service.saveSettings({
+      ...stored.policy,
+      flowMode: "auto",
+      profiles: [],
+    });
+    expect(unassignedAuto.policy.profiles).toEqual([]);
 
     const error = yield* service
       .saveSettings({
@@ -251,7 +258,9 @@ it.effect("reports catalog source when Smart Routing has no confident changes", 
     const service = yield* make;
     const result = yield* service.recommendModels();
     expect(result.source).toBe("catalog");
-    expect(result.notes.join(" ")).toContain("did not return a confident recommendation");
+    expect(result.notes.join(" ")).toContain(
+      "Choose Lead and Worker models manually for unknown models",
+    );
   }).pipe(Effect.provide(f.layer));
 });
 

@@ -16,6 +16,7 @@ import * as Schema from "effect/Schema";
 import { ProviderRegistry } from "../provider/Services/ProviderRegistry.ts";
 import { ProviderService } from "../provider/Services/ProviderService.ts";
 import { OrchestrationAdvisor } from "./OrchestrationAdvisor.ts";
+import { suggestedTeamRole } from "./ModelRoutingCatalog.ts";
 import { OrchestrationStore } from "./OrchestrationStore.ts";
 
 const defaultOrchestrationPolicy: TeamPolicy = {
@@ -27,6 +28,7 @@ const defaultOrchestrationPolicy: TeamPolicy = {
   maxAttempts: 2,
   providerLimitBehavior: "ask",
 };
+const isTeamError = Schema.is(TeamError);
 
 function validatePolicy(policy: TeamPolicy): void {
   const ids = new Set<string>();
@@ -41,16 +43,10 @@ function validatePolicy(policy: TeamPolicy): void {
       });
   }
   const hasLead = policy.profiles.some((profile) => profile.lead);
-  const hasWorker = policy.profiles.some((profile) => profile.worker);
   if (policy.enabled && policy.flowMode === "standard" && !hasLead)
     throw new TeamError({
       code: "invalid",
       message: "Choose at least one Lead model before enabling Flow Standard.",
-    });
-  if (policy.enabled && policy.flowMode === "auto" && !hasLead && !hasWorker)
-    throw new TeamError({
-      code: "invalid",
-      message: "Choose at least one Lead or Worker model before enabling Flow Auto.",
     });
 }
 
@@ -110,7 +106,7 @@ export const make = Effect.gen(function* () {
     yield* Effect.try({
       try: () => validatePolicy(policy),
       catch: (error) =>
-        Schema.is(TeamError)(error)
+        isTeamError(error)
           ? error
           : new TeamError({ code: "invalid", message: "Invalid Flow settings." }),
     });
@@ -200,8 +196,7 @@ export const make = Effect.gen(function* () {
             id: `model-${provider.instanceId}-${profiles.length}`,
             label: `${provider.displayName ?? provider.instanceId} · ${model.name}`,
             selection: { instanceId: provider.instanceId, model: model.slug },
-            lead: false,
-            worker: false,
+            ...(suggestedTeamRole(model.slug) ?? { lead: false, worker: false }),
           },
         );
         if (profiles.length >= 40) break;
@@ -209,9 +204,7 @@ export const make = Effect.gen(function* () {
       if (profiles.length >= 40) break;
     }
 
-    // Hosted enrichment is deliberately advisory. Until it has a confident answer,
-    // catalog entries stay unassigned so a missing advisor can never silently
-    // authorize a model for managed execution.
+    // Recommendations remain advisory; saved Lead and Worker choices are never rewritten.
     const smartRoutingAvailable =
       current.policy.flowMode === "auto" && current.smartRouting.available;
     const advised = smartRoutingAvailable
@@ -242,9 +235,7 @@ export const make = Effect.gen(function* () {
       notes: [
         smartRoutingAvailable && recommendationApplied
           ? "Smart Routing recommendations are starting points; your saved Lead and Worker choices stay authoritative."
-          : smartRoutingAvailable
-            ? "Smart Routing did not return a confident recommendation. Choose Lead and Worker models manually or refresh later."
-            : "Choose Lead and Worker models manually for Flow Standard. Connect your account to unlock Smart Routing recommendations.",
+          : "Known model groups use catalog recommendations. Choose Lead and Worker models manually for unknown models.",
       ],
     } satisfies TeamModelRecommendations;
   });

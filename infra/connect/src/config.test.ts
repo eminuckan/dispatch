@@ -100,6 +100,7 @@ NodeTest.test(
     const routing = loadConfig({ ...env, CONNECT_JEV_API_KEY: "test-key" }).smartRouting!;
     NodeAssert.equal(routing.monthlyBudgetNanos, 25_000_000_000);
     NodeAssert.equal(routing.dailyBudgetNanos, 2_000_000_000);
+    NodeAssert.equal(routing.accountBurstRequests, 16);
     NodeAssert.equal(routing.maxConcurrentPerAccount, 2);
     NodeAssert.equal(routing.requestCostNanos, 65_536 * 42);
     NodeAssert.equal(

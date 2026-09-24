@@ -13,6 +13,7 @@ import {
   type TeamModelProfile,
   type TeamOwner,
   type TeamProviderDecision,
+  type TeamRoute,
   type TeamRun,
   type TeamSettlement,
   type TeamStart,
@@ -50,12 +51,14 @@ import { ProcessRunner, layer as ProcessRunnerLive } from "../processRunner.ts";
 import { ProviderService } from "../provider/Services/ProviderService.ts";
 import { forkParked } from "../serverActivation.ts";
 import { OrchestrationAdvisor } from "./OrchestrationAdvisor.ts";
+import { profileUsesAutoEffort, selectionWithEffort } from "./ModelRoutingCatalog.ts";
 import { verificationDecision } from "./OrchestrationEvidence.ts";
 import { equivalentProfileOrder, OrchestrationModelCatalog } from "./OrchestrationModels.ts";
 import {
   integrationCorrectionPrompt,
   integrationPrompt,
   planningPrompt,
+  scopePrompt,
   providerHandoffPrompt,
   reviewPrompt,
   settlementConflictPrompt,
@@ -67,6 +70,7 @@ import {
 import {
   IntegrationResult,
   OrchestrationPlan,
+  OrchestrationScope,
   parseProtocol,
   readyTasks,
   ReviewResult,
@@ -76,7 +80,11 @@ import {
 } from "./OrchestrationProtocol.ts";
 import { OrchestrationSettings } from "./OrchestrationSettings.ts";
 import { OrchestrationStore } from "./OrchestrationStore.ts";
-import { SMART_ROUTING_STANDARD_FALLBACK_NOTICE, teamThreadView } from "./presentation.ts";
+import {
+  SMART_ROUTING_MODEL_ORDER_NOTICE,
+  SMART_ROUTING_STANDARD_FALLBACK_NOTICE,
+  teamThreadView,
+} from "./presentation.ts";
 
 const isTeamError = Schema.is(TeamError);
 const isPreviouslyRejected = Schema.is(OrchestrationCommandPreviouslyRejectedError);
@@ -204,7 +212,10 @@ function makeAttempt(input: {
     role: input.role,
     sequence,
     owner: input.owner,
-    selection: profile.selection,
+    selection:
+      (input.owner.role === "lead"
+        ? input.run.leadSelection
+        : input.run.tasks.find((task) => task.id === input.taskId)?.selection) ?? profile.selection,
     prompt: input.prompt,
     attachments: [],
     status: "reserved",
@@ -1310,14 +1321,29 @@ export const make = Effect.gen(function* () {
       profileId: nextProfile.id,
       threadId: nextThreadId,
     };
-    const replacement = makeAttempt({
-      run: { ...run, lead: failed.owner.role === "lead" ? nextOwner : run.lead },
-      owner: nextOwner,
-      role: failed.role,
-      taskId: failed.taskId,
-      prompt: action === "switch" ? providerHandoffPrompt(run, failed) : failed.prompt,
-      createdAt: decidedAt,
-    });
+    const nextEffort =
+      action === "switch" && run.policy.flowMode === "auto" && profileUsesAutoEffort(nextProfile)
+        ? yield* advisor.chooseEffort({
+            objective: failed.prompt,
+            profile: nextProfile,
+            choices: yield* models.supportedEfforts(nextProfile),
+          })
+        : null;
+    const nextSelection =
+      action === "retry"
+        ? failed.selection
+        : selectionWithEffort(nextProfile.selection, nextEffort);
+    const replacement = {
+      ...makeAttempt({
+        run: { ...run, lead: failed.owner.role === "lead" ? nextOwner : run.lead },
+        owner: nextOwner,
+        role: failed.role,
+        taskId: failed.taskId,
+        prompt: action === "switch" ? providerHandoffPrompt(run, failed) : failed.prompt,
+        createdAt: decidedAt,
+      }),
+      selection: nextSelection,
+    };
     const appliedFailover = {
       ...failover,
       status: "applied" as const,
@@ -1330,8 +1356,9 @@ export const make = Effect.gen(function* () {
       (current) => ({
         ...current,
         lead: failed.owner.role === "lead" ? nextOwner : current.lead,
+        ...(failed.owner.role === "lead" ? { leadSelection: nextSelection } : {}),
         status:
-          failed.role === "plan"
+          failed.role === "plan" || failed.role === "scope"
             ? "planning"
             : failed.role === "integrate"
               ? failed.taskId === null
@@ -1347,6 +1374,7 @@ export const make = Effect.gen(function* () {
                   ? {
                       ...task,
                       owner: failed.owner.role === "worker" ? nextOwner : task.owner,
+                      ...(failed.owner.role === "worker" ? { selection: nextSelection } : {}),
                       status: failed.role === "work" ? "running" : task.status,
                       attemptIds: [...task.attemptIds, replacement.id],
                     }
@@ -1464,6 +1492,8 @@ export const make = Effect.gen(function* () {
     });
     if (run.executionMode === "orchestrated")
       yield* Effect.try({ try: () => validatePlanGraph(plan), catch: mapError });
+    if (run.workerTarget !== undefined && plan.tasks.length > run.workerTarget)
+      return yield* invalid("Lead proposed more worker tasks than Smart Routing selected.");
     const proposals =
       run.executionMode === "direct" || run.policy.maxActive === 1 ? [] : plan.tasks;
     const workers = proposals.length ? yield* models.runnableProfiles(run.policy, "worker") : [];
@@ -1473,7 +1503,7 @@ export const make = Effect.gen(function* () {
       );
     const tasks: TeamTask[] = [];
     let useSmartRouting = run.policy.flowMode === "auto" && workers.length > 1;
-    let smartRoutingFallback = false;
+    let modelOrderFallback = false;
     for (const proposal of proposals) {
       const preferred = workers.find((profile) => profile.id === proposal.preferredProfileId);
       const decision = useSmartRouting
@@ -1495,12 +1525,24 @@ export const make = Effect.gen(function* () {
           };
       if (useSmartRouting && decision.source !== "jev") {
         useSmartRouting = false;
-        smartRoutingFallback = true;
+        modelOrderFallback = true;
       }
       const profile =
         useSmartRouting && decision.source === "jev"
           ? (workers.find((candidate) => candidate.id === decision.profileId) ?? workers[0]!)
           : workers[0]!;
+      const effort =
+        run.policy.flowMode === "auto" && profileUsesAutoEffort(profile)
+          ? yield* advisor.chooseEffort({
+              objective: encodeJson({
+                objective: proposal.objective,
+                acceptance: proposal.acceptance,
+                context: proposal.context,
+              }),
+              profile,
+              choices: yield* models.supportedEfforts(profile),
+            })
+          : null;
       const threadId = ThreadId.make(`team-${run.id}-worker-${NodeCrypto.randomUUID()}`);
       tasks.push({
         id: proposal.id,
@@ -1509,6 +1551,7 @@ export const make = Effect.gen(function* () {
         acceptance: [...proposal.acceptance],
         dependencies: [...proposal.dependencies],
         owner: { role: "worker", profileId: profile.id, threadId, taskId: proposal.id },
+        ...(effort ? { selection: selectionWithEffort(profile.selection, effort) } : {}),
         branch: null,
         worktreePath: null,
         status: "pending",
@@ -1522,7 +1565,6 @@ export const make = Effect.gen(function* () {
       run.revision,
       (current) => ({
         ...current,
-        policy: smartRoutingFallback ? { ...current.policy, flowMode: "standard" } : current.policy,
         acceptance: [...plan.acceptance],
         decisions: [
           ...current.decisions,
@@ -1531,9 +1573,8 @@ export const make = Effect.gen(function* () {
             : run.policy.maxActive === 1 && plan.tasks.length > 0
               ? `${plan.rationale} Dispatch enforced Lead-only execution because maxActive is 1; delegated tasks were not scheduled.`
               : plan.rationale,
-          ...(smartRoutingFallback &&
-          !current.decisions.includes(SMART_ROUTING_STANDARD_FALLBACK_NOTICE)
-            ? [SMART_ROUTING_STANDARD_FALLBACK_NOTICE]
+          ...(modelOrderFallback && !current.decisions.includes(SMART_ROUTING_MODEL_ORDER_NOTICE)
+            ? [SMART_ROUTING_MODEL_ORDER_NOTICE]
             : []),
         ],
         tasks,
@@ -2437,8 +2478,55 @@ export const make = Effect.gen(function* () {
     }
 
     if (run.status === "planning") {
+      const scope = run.attempts.findLast((attempt) => attempt.role === "scope");
       const plan = run.attempts.findLast((attempt) => attempt.role === "plan");
-      if (plan?.status === "succeeded") run = yield* installPlan(run, plan);
+      if (!plan && scope?.status === "succeeded") {
+        const scoped = yield* Effect.try({
+          try: () => parseProtocol(OrchestrationScope, scope.result ?? ""),
+          catch: () => invalid("Lead returned an invalid Flow scope."),
+        });
+        const leadProfile = profileFor(run, run.lead.profileId);
+        const maxWorkers = Math.max(0, run.policy.maxActive - 1);
+        const count = yield* advisor.chooseWorkerCount({
+          objective: run.prompt,
+          scope: encodeJson(scoped),
+          lead: leadProfile,
+          maxWorkers,
+        });
+        const standardFallback = count.source !== "jev" && maxWorkers > 0;
+        const createdAt = yield* nowIso;
+        const nextRun = {
+          ...run,
+          workerTarget: count.workers,
+          policy: standardFallback ? { ...run.policy, flowMode: "standard" as const } : run.policy,
+        };
+        const nextPlan = makeAttempt({
+          run: nextRun,
+          owner: run.lead,
+          role: "plan",
+          taskId: null,
+          prompt: planningPrompt(nextRun, encodeJson(scoped)),
+          createdAt,
+        });
+        run = yield* store.update(
+          run.id,
+          run.revision,
+          (current) => ({
+            ...current,
+            workerTarget: count.workers,
+            ...(standardFallback
+              ? { policy: { ...current.policy, flowMode: "standard" as const } }
+              : {}),
+            decisions: [
+              ...current.decisions,
+              count.reason,
+              ...(standardFallback ? [SMART_ROUTING_STANDARD_FALLBACK_NOTICE] : []),
+            ],
+            attempts: [...current.attempts, nextPlan],
+          }),
+          "worker-count-selected",
+        );
+      } else if (plan?.status === "succeeded") run = yield* installPlan(run, plan);
       else return run;
     }
 
@@ -2479,6 +2567,72 @@ export const make = Effect.gen(function* () {
     return run;
   }, schedulerLock.withPermits(1));
 
+  const route = Effect.fn("TeamRuntime.route")(function* (input: TeamRoute) {
+    const settings = yield* settingsService.settings;
+    if (!settings.policy.enabled) return yield* invalid("Enable Flow before routing a task.");
+    if (!input.prompt.trim()) return yield* invalid("Flow requires an objective.");
+    const project = yield* projection
+      .getProjectShellById(input.projectId)
+      .pipe(Effect.mapError(mapError));
+    if (Option.isNone(project))
+      return yield* new TeamError({ code: "not-found", message: "Project not found." });
+    if (settings.policy.flowMode === "standard" || !settings.smartRouting.available)
+      return {
+        kind: "team" as const,
+        source: "policy" as const,
+        reason:
+          settings.policy.flowMode === "standard"
+            ? "Flow Standard uses a managed team."
+            : "Smart Routing is unavailable; Flow Standard will run a managed team.",
+      };
+    const candidates = yield* models.runnableDirectProfiles(settings.policy);
+    if (candidates.length === 0)
+      return yield* unavailable("No available model can run this objective.");
+    const decision = yield* advisor.routeExecution({
+      objective: input.prompt.trim(),
+      workers: candidates,
+    });
+    if (decision.mode === "orchestrated") {
+      const leads = yield* models.runnableProfiles(settings.policy, "lead");
+      if (leads.length === 0)
+        return yield* unavailable(
+          "Smart Routing chose a team, but no selected Lead model is available.",
+        );
+      return { kind: "team" as const, source: decision.source, reason: decision.reason };
+    }
+    const choice = yield* advisor.chooseProfile({
+      purpose: "worker",
+      objective: input.prompt.trim(),
+      candidates,
+    });
+    if (choice.source !== "jev" && candidates.length > 1) {
+      const leads = yield* models.runnableProfiles(settings.policy, "lead");
+      if (leads.length === 0)
+        return yield* unavailable(
+          "Smart Routing could not select a model, and Standard needs a selected Lead.",
+        );
+      return {
+        kind: "team" as const,
+        source: "policy" as const,
+        reason: "Smart Routing could not select a single model; using Flow Standard.",
+      };
+    }
+    const profile =
+      candidates.find((candidate) => candidate.id === choice.profileId) ?? candidates[0]!;
+    const effort = profileUsesAutoEffort(profile)
+      ? yield* advisor.chooseEffort({
+          objective: input.prompt.trim(),
+          profile,
+          choices: yield* models.supportedEfforts(profile),
+        })
+      : null;
+    return {
+      kind: "direct" as const,
+      selection: selectionWithEffort(profile.selection, effort),
+      reason: `${decision.reason} ${choice.reason}`.slice(0, 1_000),
+    };
+  });
+
   const start = Effect.fn("TeamRuntime.start")(function* (input: TeamStart) {
     const existing = (yield* store.list).find((run) => run.commandId === input.commandId);
     if (existing) {
@@ -2498,73 +2652,6 @@ export const make = Effect.gen(function* () {
     if (!settings.policy.enabled)
       return yield* invalid("Enable Flow before starting a managed run.");
     if (!input.prompt.trim()) return yield* invalid("Flow requires an objective.");
-    const [leadCandidates, workerCandidates] = yield* Effect.all([
-      models.runnableProfiles(settings.policy, "lead"),
-      models.runnableProfiles(settings.policy, "worker"),
-    ]);
-    const directCandidates = workerCandidates;
-    const route =
-      settings.policy.flowMode === "standard"
-        ? {
-            mode: "orchestrated" as const,
-            source: "policy" as const,
-            confidence: 1,
-            reason: "Standard Flow uses the saved Lead and Worker model order.",
-          }
-        : !settings.smartRouting.available
-          ? {
-              mode: "orchestrated" as const,
-              source: "policy" as const,
-              confidence: 1,
-              reason: "Smart Routing is unavailable; using Flow Standard.",
-            }
-          : directCandidates.length === 0
-            ? {
-                mode: "orchestrated" as const,
-                source: "policy" as const,
-                confidence: 1,
-                reason: "No available worker can execute the objective directly.",
-              }
-            : yield* advisor.routeExecution({
-                objective: input.prompt,
-                workers: directCandidates,
-              });
-    const routedExecutionMode = route.mode;
-    const routedCandidates = routedExecutionMode === "direct" ? directCandidates : leadCandidates;
-    if (routedCandidates.length === 0)
-      return yield* unavailable(
-        routedExecutionMode === "direct"
-          ? "No selected Worker model is currently safe and available for direct execution."
-          : settings.policy.flowMode === "auto"
-            ? route.source === "jev"
-              ? "Flow Auto selected a managed team, but no selected Lead model is currently safe and available."
-              : "Flow Auto fell back to Standard, but no selected Lead model is currently safe and available."
-            : "No selected Lead model is currently safe and available for Flow Standard.",
-      );
-    const useHostedProfile =
-      settings.policy.flowMode === "auto" && route.source === "jev" && routedCandidates.length > 1;
-    const decision = useHostedProfile
-      ? yield* advisor.chooseProfile({
-          purpose: routedExecutionMode === "direct" ? "worker" : "lead",
-          objective: input.prompt,
-          candidates: routedCandidates,
-        })
-      : {
-          profileId: routedCandidates[0]!.id,
-          source: "policy" as const,
-          confidence: 1,
-          reason: "Selected from the saved model order.",
-        };
-    const profileFallback = useHostedProfile && decision.source !== "jev";
-    if (profileFallback && leadCandidates.length === 0)
-      return yield* unavailable(
-        "Smart Routing could not choose a profile, and no selected Lead model is currently safe and available for Flow Standard.",
-      );
-    const executionMode = profileFallback ? ("orchestrated" as const) : routedExecutionMode;
-    const candidates = profileFallback ? leadCandidates : routedCandidates;
-    const leadProfile = profileFallback
-      ? candidates[0]!
-      : (candidates.find((candidate) => candidate.id === decision.profileId) ?? candidates[0]!);
     const project = yield* projection
       .getProjectShellById(input.projectId)
       .pipe(Effect.mapError(mapError));
@@ -2578,6 +2665,40 @@ export const make = Effect.gen(function* () {
     });
     if (head.code !== 0 || !/^[a-f0-9]{40,64}$/.test(head.stdout.trim()))
       return yield* invalid("Flow requires a Git repository with an initial commit.");
+    const routedCandidates = yield* models.runnableProfiles(settings.policy, "lead");
+    if (routedCandidates.length === 0)
+      return yield* unavailable(
+        "No selected Lead model is currently safe and available for a managed Flow team.",
+      );
+    const smartRoutingAvailable =
+      settings.policy.flowMode === "auto" &&
+      settings.smartRouting.available &&
+      input.routingSource !== "policy";
+    const useHostedProfile = smartRoutingAvailable && routedCandidates.length > 1;
+    const decision = useHostedProfile
+      ? yield* advisor.chooseProfile({
+          purpose: "lead",
+          objective: input.prompt,
+          candidates: routedCandidates,
+        })
+      : {
+          profileId: routedCandidates[0]!.id,
+          source: "policy" as const,
+          confidence: 1,
+          reason: "Selected from the saved model order.",
+        };
+    const modelOrderFallback = useHostedProfile && decision.source !== "jev";
+    const leadProfile =
+      routedCandidates.find((candidate) => candidate.id === decision.profileId) ??
+      routedCandidates[0]!;
+    const leadEffort =
+      smartRoutingAvailable && profileUsesAutoEffort(leadProfile)
+        ? yield* advisor.chooseEffort({
+            objective: input.prompt,
+            profile: leadProfile,
+            choices: yield* models.supportedEfforts(leadProfile),
+          })
+        : null;
     const id = NodeCrypto.randomUUID();
     const leadThreadId = ThreadId.make(`team-${id}-lead`);
     const retained = yield* retainPendingAttachmentsForOwner({
@@ -2597,20 +2718,26 @@ export const make = Effect.gen(function* () {
       commandId: input.commandId,
       projectId: input.projectId,
       revision: 0,
-      executionMode,
+      executionMode: "orchestrated",
       runtimeMode: input.runtimeMode,
       prompt: input.prompt.trim(),
       policy:
-        settings.policy.flowMode === "auto" && (route.source !== "jev" || profileFallback)
+        settings.policy.flowMode === "auto" && !smartRoutingAvailable
           ? { ...settings.policy, flowMode: "standard" }
           : settings.policy,
       lead,
+      ...(leadEffort
+        ? { leadSelection: selectionWithEffort(leadProfile.selection, leadEffort) }
+        : {}),
       acceptance: [],
       decisions: [
-        route.reason,
-        settings.policy.flowMode === "auto" && (route.source !== "jev" || profileFallback)
+        settings.policy.flowMode === "auto" && !smartRoutingAvailable
+          ? "Smart Routing is unavailable; using Flow Standard."
+          : "Flow will use a managed team.",
+        settings.policy.flowMode === "auto" && !smartRoutingAvailable
           ? SMART_ROUTING_STANDARD_FALLBACK_NOTICE
           : decision.reason,
+        ...(modelOrderFallback ? [SMART_ROUTING_MODEL_ORDER_NOTICE] : []),
       ],
       status: "planning",
       statusReason: null,
@@ -2633,9 +2760,9 @@ export const make = Effect.gen(function* () {
     const plan = makeAttempt({
       run: seed,
       owner: lead,
-      role: "plan",
+      role: smartRoutingAvailable ? "scope" : "plan",
       taskId: null,
-      prompt: planningPrompt(seed),
+      prompt: smartRoutingAvailable ? scopePrompt(seed) : planningPrompt(seed),
       createdAt,
     });
     const created = yield* store
@@ -2933,6 +3060,7 @@ export const make = Effect.gen(function* () {
   });
 
   return {
+    route,
     start,
     control,
     providerDecision,

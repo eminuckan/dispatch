@@ -1390,7 +1390,11 @@ export interface ChatComposerProps {
 
   // Callbacks
   onCompactContext: () => void;
-  onSend: (e?: { preventDefault: () => void }, intent?: ComposerSubmissionIntent) => void;
+  onSend: (
+    e?: { preventDefault: () => void },
+    intent?: ComposerSubmissionIntent,
+    routedSelection?: ModelSelection,
+  ) => void;
   onInterrupt: () => void;
   onImplementPlanInNewThread: () => void;
   onRespondToApproval: (
@@ -3769,8 +3773,29 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           );
           const teamTarget = composerDraftTarget;
           const teamTargetKey = composerTargetKey(teamTarget);
-          void teamRouting.submit().then((started) => {
-            if (!started) return;
+          void teamRouting.submit().then((result) => {
+            if (!result) return;
+            if (composerDraftTargetKeyRef.current !== teamTargetKey) return;
+            if (result.kind === "direct") {
+              const currentDraft = getComposerDraft(teamTarget);
+              if (
+                !clearStartedTeamDraftIfUnchanged({
+                  currentDraft,
+                  promptSnapshot: teamPromptSnapshot,
+                  attachmentIds: teamAttachmentIds,
+                  clear: () => {},
+                })
+              ) {
+                toastManager.add({
+                  type: "info",
+                  title: "Draft changed while routing",
+                  description: "Send again to route the current draft.",
+                });
+                return;
+              }
+              onSend(undefined, intent, result.selection);
+              return;
+            }
             const currentDraft = getComposerDraft(teamTarget);
             if (
               !clearStartedTeamDraftIfUnchanged({
@@ -3781,7 +3806,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               })
             )
               return;
-            if (composerDraftTargetKeyRef.current !== teamTargetKey) return;
             promptRef.current = "";
             composerImagesRef.current = [];
             composerFilesRef.current = [];
@@ -3820,8 +3844,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       clearComposerDraftPromptAndImages,
       composerDraftTarget,
       composerFiles,
+      composerFilesRef,
       composerImages,
+      composerImagesRef,
       composerDraftTargetKeyRef,
+      composerRef,
       getComposerDraft,
       isSendDisabled,
       noProviderAvailable,

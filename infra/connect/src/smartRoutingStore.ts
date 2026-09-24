@@ -36,7 +36,7 @@ CREATE TABLE IF NOT EXISTS connect_routing_requests (
   account_id text NOT NULL,
   request_id uuid NOT NULL,
   environment_id text NOT NULL,
-  operation text NOT NULL CHECK (operation IN ('execution','profile','recommendations')),
+  operation text NOT NULL CONSTRAINT connect_routing_requests_operation_check CHECK (operation IN ('execution','profile','effort','workers','recommendations')),
   digest text NOT NULL,
   reserved_nanos bigint NOT NULL,
   charged_buckets jsonb NOT NULL,
@@ -51,6 +51,18 @@ CREATE TABLE IF NOT EXISTS connect_routing_requests (
 CREATE INDEX IF NOT EXISTS connect_routing_requests_pending_idx ON connect_routing_requests(account_id, lease_expires_at) WHERE status = 'pending';
 CREATE INDEX IF NOT EXISTS connect_routing_requests_created_idx ON connect_routing_requests(created_at);
 CREATE INDEX IF NOT EXISTS connect_routing_requests_account_created_idx ON connect_routing_requests(account_id, created_at);
+DO $$ BEGIN
+  IF EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'connect_routing_requests'::regclass
+      AND conname = 'connect_routing_requests_operation_check'
+      AND pg_get_constraintdef(oid) NOT LIKE '%workers%'
+  ) THEN
+    ALTER TABLE connect_routing_requests DROP CONSTRAINT connect_routing_requests_operation_check;
+    ALTER TABLE connect_routing_requests ADD CONSTRAINT connect_routing_requests_operation_check
+      CHECK (operation IN ('execution','profile','effort','workers','recommendations'));
+  END IF;
+END $$;
 ALTER TABLE connect_routing_accounts ADD COLUMN IF NOT EXISTS daily_requests bigint CHECK (daily_requests >= 0);
 ALTER TABLE connect_routing_accounts ADD COLUMN IF NOT EXISTS monthly_requests bigint CHECK (monthly_requests >= 0);
 ALTER TABLE connect_routing_requests ADD COLUMN IF NOT EXISTS completed_at timestamptz;

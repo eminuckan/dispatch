@@ -70,33 +70,39 @@ Leaving reasoning level or service tier unset uses the provider's own configurat
 ## Dispatch Flow and managed teams (experimental)
 
 Dispatch Flow is optional. You can choose it during onboarding or configure it later in
-**Dispatch Flow** in the sidebar or **Settings → Flow**. Select which provider models Dispatch may use as **Lead**, **Worker**,
-or both, then choose a Flow mode. Your saved model choices remain the authority for managed
-runs, including provider-supported options such as reasoning effort or model variants.
+**Dispatch Flow** in the sidebar or **Settings → Flow**. Choose a Flow mode. For managed teams,
+select which provider models Dispatch may use as **Lead**, **Worker**, or both. Those role choices
+do not limit Auto's single-model selection. Set **Auto effort** to let routing choose a provider-supported reasoning level per task,
+or **Fixed effort** to keep the selected level.
 
 **Standard** needs no Dispatch Connect account and does not use Dispatch's hosted routing
 service. It runs with the Lead and Worker models you selected on that environment.
 
 **Auto** requires a signed-in Dispatch Connect account and a linked environment. It uses
-Dispatch-hosted Smart Routing to choose direct execution or a managed team from your selected
-models. For routing, Dispatch sends the task objective and minimal selected-model metadata to
-the hosted service, which may use JEV. Dispatch covers that routing service; your coding-model
-usage still runs through your own provider accounts. If Smart Routing becomes unavailable,
-Flow keeps Auto selected, shows the fallback, and runs that task with Standard instead.
+Dispatch-hosted Smart Routing to assess task difficulty, workload, opportunities to delegate,
+and review value. For a single-model task it chooses from all available provider models,
+regardless of Lead or Worker role, selects a supported effort, and sends through ordinary chat.
+For a team it selects a Lead and effort, asks the Lead for a compact repository scope, chooses a
+useful worker count, then has the Lead write concrete directives. Each directive receives its
+own Worker model and effort. The team uses only models enabled for those roles. Dispatch sends
+the task objective, available model metadata, the compact scope, and worker directives to the
+hosted router, which may use JEV. Dispatch covers routing; coding-model usage remains on your
+provider accounts. If the initial hosted decision is unavailable, the task uses Standard with
+your saved model order and shows the fallback. Later unavailable decisions use bounded defaults
+or Standard, depending on the stage. Standard and managed teams require a selected Lead.
 
 Flow is offered for new drafts rather than converting an already-started conversation. The
 composer shows **Flow · Standard** or **Flow · Auto** according to the environment setting.
 Turning Flow on applies it to that draft. Selecting a model manually turns Flow off for the
 draft and sends through the selected model normally.
 
-Managed runs use isolated worktrees based on committed repository state, leaving your
-original checkout untouched. Auto may keep bounded work on one selected executor or use a
-managed Lead and Workers when routing calls for it. Dispatch keeps durable messages and
+Managed teams use isolated worktrees based on committed repository state, leaving your
+original checkout untouched. Dispatch keeps durable messages and
 attempt history across retries or reloads. Worker results are reviewed before integration,
 and every run is verified against persisted acceptance criteria before it can complete.
 Completion does not push or merge the managed worktree into your original checkout.
 
-Open **Agents** in the right panel to inspect the direct executor or managed Lead, Workers,
+Open **Agents** in the right panel to inspect the managed Lead, Workers,
 task state, attempts, messages, settlements, and blockers. **Pause** prevents new managed work
 from starting while current work settles; **Cancel** requests interruption.
 

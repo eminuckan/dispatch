@@ -23,6 +23,7 @@ import {
 
 const mocks = vi.hoisted(() => ({
   start: vi.fn(),
+  route: vi.fn(),
   navigate: vi.fn(),
   openPanel: vi.fn(),
   waitForThreadShell: vi.fn(),
@@ -35,7 +36,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("@effect/atom-react", () => ({
-  useAtomValue: () => ({ teamRouting: mocks.teamRoutingCapable }),
+  useAtomValue: () => ({ teamRouting: mocks.teamRoutingCapable, teamRoutingV2: true }),
 }));
 vi.mock("@dispatch/client-runtime/state/runtime", () => ({
   squashAtomCommandFailure: (failure: { cause?: unknown }) => failure.cause ?? new Error("failed"),
@@ -50,11 +51,12 @@ vi.mock("../../rightPanelStore", () => ({
 vi.mock("../../state/team", () => ({
   teamEnvironment: {
     start: "start",
+    route: "route",
     settings: () => "settings",
   },
 }));
 vi.mock("../../state/use-atom-command", () => ({
-  useAtomCommand: () => mocks.start,
+  useAtomCommand: (command: string) => (command === "route" ? mocks.route : mocks.start),
 }));
 vi.mock("../../state/query", () => ({
   useEnvironmentQuery: () => ({
@@ -178,7 +180,7 @@ async function mountAndEnable(props: Parameters<typeof Harness>[0] = {}) {
 async function submitRouting(): Promise<boolean> {
   let started = false;
   await act(async () => {
-    started = await latest!.submit();
+    started = Boolean(await latest!.submit());
   });
   return started;
 }
@@ -187,6 +189,7 @@ beforeEach(() => {
   latest = null;
   mocks.settingsData = configuredSettings;
   mocks.start.mockReset();
+  mocks.route.mockReset();
   mocks.navigate.mockReset();
   mocks.openPanel.mockReset();
   mocks.waitForThreadShell.mockReset().mockResolvedValue(true);
@@ -221,11 +224,7 @@ describe("team routing readiness", () => {
         policy: {
           ...configuredSettings.policy,
           flowMode: "auto",
-          profiles: configuredSettings.policy.profiles.map((profile) => ({
-            ...profile,
-            lead: false,
-            worker: true,
-          })),
+          profiles: [],
         },
       }),
     ).toBe(true);
@@ -408,8 +407,8 @@ describe("team routing readiness", () => {
     expect(latest?.ready).toBe(true);
     expect(latest?.smartRouting).toBe(true);
     expect(latest?.autoManagedNeedsLead).toBe(true);
-    expect(latest?.autoLeadNotice).toContain("Worker-only Auto can run direct work");
-    expect(latest?.summary).toContain("managed-team decisions require a selected Lead");
+    expect(latest?.autoLeadNotice).toContain("single-model task can use any available model");
+    expect(latest?.summary).toContain("managed teams require a selected Lead");
   });
 });
 
@@ -419,6 +418,48 @@ afterEach(async () => {
 });
 
 describe("team routing attachments", () => {
+  it("returns an Auto direct model for the ordinary send path without starting a team", async () => {
+    mocks.settingsData = {
+      ...configuredSettings,
+      smartRouting: { available: true, reason: null },
+      policy: { ...configuredSettings.policy, flowMode: "auto" },
+    };
+    const selection = { instanceId: ProviderInstanceId.make("codex"), model: "luna" };
+    mocks.route.mockResolvedValue({
+      _tag: "Success",
+      value: { kind: "direct", selection, reason: "Single model" },
+    });
+    await mountAndEnable({ hasAttachments: true, attachments: [attachment] });
+    let result: Awaited<ReturnType<RoutingState["submit"]>> = false;
+    await act(async () => {
+      result = await latest!.submit();
+    });
+    expect(result).toMatchObject({ kind: "direct", selection });
+    expect(mocks.start).not.toHaveBeenCalled();
+    expect(mocks.startAttachmentUpload).not.toHaveBeenCalled();
+    expect(mocks.forgetDraftAttachmentUploads).not.toHaveBeenCalled();
+  });
+
+  it("starts a managed Auto team only after the route chooses a team", async () => {
+    mocks.settingsData = {
+      ...configuredSettings,
+      smartRouting: { available: true, reason: null },
+      policy: { ...configuredSettings.policy, flowMode: "auto" },
+    };
+    mocks.route.mockResolvedValue({
+      _tag: "Success",
+      value: { kind: "team", source: "jev", reason: "Delegation" },
+    });
+    mocks.start.mockResolvedValue({
+      _tag: "Success",
+      value: { lead: { threadId: ThreadId.make("team-lead") } },
+    });
+    await mountAndEnable();
+    expect(await submitRouting()).toBe(true);
+    expect(mocks.route).toHaveBeenCalledTimes(1);
+    expect(mocks.start).toHaveBeenCalledTimes(1);
+  });
+
   it("starts an attachment-only draft directly with the bootstrap prompt", async () => {
     const returnedLeadThreadId = ThreadId.make("returned-team-lead");
     mocks.start.mockResolvedValue({

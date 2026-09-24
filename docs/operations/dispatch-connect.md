@@ -96,11 +96,15 @@ on the environment; signing out clears it. This does not create an environment p
 local RPC/tool permissions. Existing environment credentials used for transport continue to have their
 separate lifecycle.
 
-The hosted API accepts only execution, profile, and recommendation operations. It builds the JEV
-questions itself, validates candidate IDs and responses, bounds the complete upstream UTF-8 request and
-response to 24,000 bytes each, and makes at most one four-second upstream attempt per admitted request.
-An ambiguous or unavailable result returns a visible Standard fallback. No semantic keyword classifier
-or second routing model runs during fallback.
+The hosted API accepts execution assessment, model selection, effort, worker-count, and
+recommendation operations. It builds narrow JEV questions itself, validates candidate IDs and
+provider-supported effort choices, bounds the complete upstream UTF-8 request and response to
+24,000 bytes each, and makes at most one four-second upstream attempt per admitted request.
+Valid probability distributions remain usable even when a single confidence score is low.
+Malformed or unavailable decisions fall back to Standard for the initial route or to saved
+model order and bounded defaults at later stages. The Lead's compact scope and worker
+directives are sent to Connect for team decisions; neither a local keyword classifier nor a
+second routing model runs during fallback.
 
 ### Spending and traffic limits
 
@@ -126,7 +130,7 @@ context ceiling, and account terms before changing the model or deploying after 
 This accounting caps calls through this service at the configured rate assumption; it is not a promise
 about taxes, other API keys, a compromised operator key, or unrelated usage on the TypeSafe account.
 
-The other configurable defaults are six requests per rolling ten seconds, 30 per minute, 300 per rolling
+The other configurable defaults are 16 requests per rolling ten seconds, 30 per minute, 300 per rolling
 hour per account, 20 per minute per environment, and 20 active environments per account in the preceding
 30 days. Account/global concurrency defaults to two/32. IP limits are auxiliary and deliberately broader:
 120 per minute and 5,000 per day; IPv6 addresses share a /64 bucket. Signup/sign-in throttling uses Better

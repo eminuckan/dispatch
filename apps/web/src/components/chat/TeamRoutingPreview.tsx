@@ -13,6 +13,7 @@ import type {
   ProjectId,
   RuntimeMode,
   TeamSettings,
+  ModelSelection,
 } from "@dispatch/contracts";
 import { teamEnvironment } from "../../state/team";
 import { useEnvironmentQuery } from "../../state/query";
@@ -115,6 +116,7 @@ export function useTeamRoutingState({
   const available = config?.teamRouting === true;
   const navigate = useNavigate();
   const start = useAtomCommand(teamEnvironment.start, { reportFailure: false });
+  const route = useAtomCommand(teamEnvironment.route, { reportFailure: false });
   const starting = useRef(false);
   const [pending, setPending] = useState(false);
   const [startError, setStartError] = useState<string | null>(null);
@@ -128,6 +130,7 @@ export function useTeamRoutingState({
   const promptForRouting =
     prompt.trim() || (hasAttachments ? ATTACHMENT_ONLY_BOOTSTRAP_PROMPT : "");
   const flowMode = settings.data?.policy.flowMode ?? "standard";
+  const routeSupported = config?.teamRoutingV2 === true;
   const smartRouting = flowMode === "auto" && settings.data?.smartRouting.available === true;
   const hasLead = settings.data ? hasFlowLead(settings.data.policy) : false;
   const autoFallbackNeedsLead = flowMode === "auto" && !smartRouting && !hasLead;
@@ -135,15 +138,15 @@ export function useTeamRoutingState({
   const fallbackNotice = orchestration ? flowAutoFallbackNotice(settings.data) : null;
   const autoLeadNotice =
     orchestration && autoManagedNeedsLead
-      ? "Worker-only Auto can run direct work. If Smart Routing chooses a managed team, add a Lead before that task can start."
+      ? "A single-model task can use any available model. Add a Lead before a managed team can start."
       : null;
   const modeLabel = flowMode === "auto" ? "Flow · Auto" : "Flow · Standard";
   const summary =
     flowMode === "auto"
       ? smartRouting
         ? autoManagedNeedsLead
-          ? "Worker-only Auto is ready for direct execution; managed-team decisions require a selected Lead"
-          : "Smart Routing chooses direct execution or a managed team from your selected models"
+          ? "Single-model routing can use any available model; managed teams require a selected Lead"
+          : "Smart Routing assesses the task, then selects one model or a Lead and task-specific workers"
         : autoFallbackNeedsLead
           ? "Auto is unavailable; Standard fallback needs a selected Lead before this task can start"
           : "Auto is unavailable, so this run will use Standard with your selected models"
@@ -156,14 +159,18 @@ export function useTeamRoutingState({
   }
   const blocked = pending
     ? "Starting team"
-    : hasUnsupportedContext
-      ? "Remove terminal, preview, or review context to start Flow"
-      : !promptForRouting && !hasAttachments
-        ? "Add a prompt or attachment"
-        : composing
-          ? "Finish typing to start Flow"
-          : null;
-  async function submit(): Promise<boolean> {
+    : flowMode === "auto" && !routeSupported
+      ? "Update this environment to use Flow Auto routing"
+      : hasUnsupportedContext
+        ? "Remove terminal, preview, or review context to start Flow"
+        : !promptForRouting && !hasAttachments
+          ? "Add a prompt or attachment"
+          : composing
+            ? "Finish typing to start Flow"
+            : null;
+  async function submit(): Promise<
+    false | { kind: "team" } | { kind: "direct"; selection: ModelSelection }
+  > {
     if (!orchestration || blocked || !projectId || starting.current) return false;
     starting.current = true;
     setPending(true);
@@ -178,6 +185,20 @@ export function useTeamRoutingState({
       ]);
       if (command.current?.key !== key) command.current = { key, id: randomUUID() };
       const commandId = command.current.id;
+      let routingSource: "jev" | "policy" | undefined;
+      if (flowMode === "auto") {
+        const routed = await route({
+          environmentId,
+          input: { projectId, prompt: promptForRouting },
+        });
+        if (routed._tag === "Failure") {
+          const error = squashAtomCommandFailure(routed);
+          setStartError(error instanceof Error ? error.message : "Could not route this task.");
+          return false;
+        }
+        if (routed.value.kind === "direct") return routed.value;
+        routingSource = routed.value.source;
+      }
       let uploadedAttachments: ChatAttachment[] = [];
       if (attachments.length > 0) {
         if (!attachmentUploadsCapabilityKnown || !supportsAttachmentUploads) {
@@ -206,6 +227,7 @@ export function useTeamRoutingState({
           projectId,
           runtimeMode,
           prompt: promptForRouting,
+          ...(routingSource ? { routingSource } : {}),
           attachments: uploadedAttachments,
         },
       });
@@ -223,7 +245,7 @@ export function useTeamRoutingState({
             setStartError(
               "Team started, but its lead thread is still syncing. Try opening it again.",
             );
-            return true;
+            return { kind: "team" };
           }
           useRightPanelStore.getState().open({ environmentId, threadId }, "agents");
           await navigate({ to: "/$environmentId/$threadId", params: { environmentId, threadId } });
@@ -231,10 +253,10 @@ export function useTeamRoutingState({
           setStartError(
             "Team started, but its lead thread is still syncing. Try opening it again.",
           );
-          return true;
+          return { kind: "team" };
         }
       }
-      return true;
+      return { kind: "team" };
     } catch (error) {
       setStartError(error instanceof Error ? error.message : "Could not start Flow.");
       return false;

@@ -27,6 +27,7 @@ import {
   readDispatchConnectEnvironmentConnection,
 } from "../auth/DispatchConnectEnvironment.ts";
 import { ServerSecretStore } from "../auth/ServerSecretStore.ts";
+import { highestSupportedEffort, modelRoutingPrior } from "./ModelRoutingCatalog.ts";
 
 const MAX_REQUEST_BYTES = 24_000;
 const LEGACY_JEV_SECRET = "team-jev-api-key";
@@ -39,6 +40,7 @@ type PersistedSmartRoutingSession = typeof PersistedSmartRoutingSession.Type;
 const PersistedSmartRoutingSessionJson = Schema.fromJsonString(PersistedSmartRoutingSession);
 const encodeSmartRoutingSession = Schema.encodeEffect(PersistedSmartRoutingSessionJson);
 const decodeSmartRoutingSession = Schema.decodeUnknownEffect(PersistedSmartRoutingSessionJson);
+const isTeamError = Schema.is(TeamError);
 const Probability = Schema.Finite.check(Schema.isBetween({ minimum: 0, maximum: 1 }));
 const DecisionFields = {
   source: Schema.Literals(["jev", "policy"]),
@@ -47,6 +49,8 @@ const DecisionFields = {
 };
 const ModeDecision = Schema.Struct({ mode: TeamExecutionMode, ...DecisionFields });
 const ProfileDecision = Schema.Struct({ profileId: Schema.String, ...DecisionFields });
+const EffortDecision = Schema.Struct({ effort: Schema.String, ...DecisionFields });
+const WorkerCountDecision = Schema.Struct({ workers: Schema.Int, ...DecisionFields });
 const Recommendations = Schema.Struct({
   profiles: Schema.Array(
     Schema.Struct({
@@ -61,6 +65,12 @@ const Capability = Schema.Struct({
   available: Schema.Boolean,
   reason: Schema.NullOr(Schema.String),
 });
+const decodeCapability = Schema.decodeUnknownEffect(Capability);
+const decodeModeDecision = Schema.decodeUnknownEffect(ModeDecision);
+const decodeProfileDecision = Schema.decodeUnknownEffect(ProfileDecision);
+const decodeEffortDecision = Schema.decodeUnknownEffect(EffortDecision);
+const decodeWorkerCountDecision = Schema.decodeUnknownEffect(WorkerCountDecision);
+const decodeRecommendations = Schema.decodeUnknownEffect(Recommendations);
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const decodeJson = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
 const textEncoder = new TextEncoder();
@@ -97,14 +107,57 @@ export interface OrchestrationExecutionModeDecision {
 }
 
 function candidateState(profile: TeamModelProfile) {
+  const prior = modelRoutingPrior(profile.selection.model);
   return {
     id: profile.id,
     label: profile.label,
     providerInstanceId: profile.selection.instanceId,
     model: profile.selection.model,
-    capability: profile.capability ?? null,
-    options: profile.selection.options ?? [],
+    capability: profile.capability ?? prior.capability,
+    options: (profile.selection.options ?? [])
+      .filter(
+        (option) =>
+          ["reasoningEffort", "variant", "serviceTier"].includes(option.id) &&
+          option.id.length <= 64 &&
+          (typeof option.value === "boolean" || option.value.length <= 128),
+      )
+      .slice(0, 3),
+    costClass: prior.costClass,
+    effortStrategy: prior.effortStrategy,
   };
+}
+
+function routingObjective(value: string): string {
+  if (value.length <= 8_000) return value;
+  return `${value.slice(0, 4_000)}\n...[middle omitted for routing]...\n${value.slice(-3_950)}`;
+}
+
+function routeRepresentatives(
+  profiles: ReadonlyArray<TeamModelProfile>,
+): ReadonlyArray<TeamModelProfile> {
+  const selected: TeamModelProfile[] = [];
+  for (const costClass of ["economy", "balanced", "premium", "scarce", "unknown"] as const) {
+    const candidate = profiles.find(
+      (profile) => modelRoutingPrior(profile.selection.model).costClass === costClass,
+    );
+    if (candidate) selected.push(candidate);
+  }
+  const seen = new Map<string, number>();
+  for (const profile of selected) {
+    const prior = modelRoutingPrior(profile.selection.model);
+    const key = `${prior.costClass}:${profile.capability ?? prior.capability ?? "unknown"}`;
+    seen.set(key, (seen.get(key) ?? 0) + 1);
+  }
+  for (const profile of profiles) {
+    if (selected.includes(profile) || selected.length >= 12) continue;
+    const prior = modelRoutingPrior(profile.selection.model);
+    const key = `${prior.costClass}:${profile.capability ?? prior.capability ?? "unknown"}`;
+    const count = seen.get(key) ?? 0;
+    if (count >= 2) continue;
+    seen.set(key, count + 1);
+    selected.push(profile);
+  }
+  return selected;
 }
 
 function responseError(value: unknown): string | null {
@@ -214,7 +267,7 @@ export const make = Effect.gen(function* () {
         textEncoder.encode(encoded),
       );
     },
-    Effect.mapError((error) => (Schema.is(TeamError)(error) ? error : sessionPersistenceError())),
+    Effect.mapError((error) => (isTeamError(error) ? error : sessionPersistenceError())),
   );
 
   const routingContext = Effect.gen(function* () {
@@ -249,7 +302,7 @@ export const make = Effect.gen(function* () {
   );
 
   const request = Effect.fnUntraced(function* (
-    operation: "capability" | "execution" | "profile" | "recommendations",
+    operation: "capability" | "execution" | "profile" | "effort" | "workers" | "recommendations",
     body?: Record<string, unknown>,
   ) {
     const context = yield* routingContext;
@@ -304,9 +357,7 @@ export const make = Effect.gen(function* () {
 
   const status: Effect.Effect<TeamSmartRoutingStatus> = Effect.gen(function* () {
     const result = yield* request("capability");
-    const capability = yield* Schema.decodeUnknownEffect(Capability)(result.value).pipe(
-      Effect.option,
-    );
+    const capability = yield* decodeCapability(result.value).pipe(Effect.option);
     if (result.status === 200 && Option.isSome(capability)) return capability.value;
     return { available: false, reason: result.reason ?? "smart_routing_unavailable" };
   });
@@ -324,16 +375,14 @@ export const make = Effect.gen(function* () {
     };
     if (input.workers.length === 0) return fallback;
     const result = yield* request("execution", {
-      objective: input.objective,
-      candidates: input.workers.map(candidateState),
+      objective: routingObjective(input.objective),
+      candidates: routeRepresentatives(input.workers).map(candidateState),
     });
-    const decision = yield* Schema.decodeUnknownEffect(ModeDecision)(result.value).pipe(
-      Effect.option,
-    );
+    const decision = yield* decodeModeDecision(result.value).pipe(Effect.option);
     return result.status === 200 &&
       Option.isSome(decision) &&
       decision.value.source === "jev" &&
-      decision.value.confidence >= 0.8
+      (decision.value.mode === "orchestrated" || decision.value.mode === "direct")
       ? decision.value
       : fallback;
   });
@@ -345,6 +394,25 @@ export const make = Effect.gen(function* () {
     readonly preferredProfileId?: string | null;
     readonly context?: unknown;
   }): Effect.fn.Return<OrchestrationAdvisorDecision> {
+    if (input.candidates.length > 12) {
+      const finalists: TeamModelProfile[] = [];
+      let incomplete = false;
+      for (let offset = 0; offset < input.candidates.length; offset += 12) {
+        const batch = input.candidates.slice(offset, offset + 12);
+        const winner = yield* chooseProfile({ ...input, candidates: batch });
+        if (winner.source !== "jev" && batch.length > 1) incomplete = true;
+        finalists.push(batch.find((candidate) => candidate.id === winner.profileId) ?? batch[0]!);
+      }
+      const final = yield* chooseProfile({ ...input, candidates: finalists });
+      return incomplete
+        ? {
+            profileId: input.candidates[0]!.id,
+            source: "policy" as const,
+            confidence: 1,
+            reason: "Smart Routing could not compare every eligible model.",
+          }
+        : final;
+    }
     const preferred =
       input.candidates.find((profile) => profile.id === input.preferredProfileId) ??
       input.candidates[0];
@@ -362,7 +430,7 @@ export const make = Effect.gen(function* () {
         : null;
     const result = yield* request("profile", {
       purpose: input.purpose,
-      objective: input.objective,
+      objective: routingObjective(input.objective),
       candidates: input.candidates.map(candidateState),
       preferredProfileId: input.preferredProfileId ?? null,
       ...(context
@@ -376,16 +444,73 @@ export const make = Effect.gen(function* () {
           }
         : {}),
     });
-    const decision = yield* Schema.decodeUnknownEffect(ProfileDecision)(result.value).pipe(
-      Effect.option,
-    );
+    const decision = yield* decodeProfileDecision(result.value).pipe(Effect.option);
     return result.status === 200 &&
       Option.isSome(decision) &&
       decision.value.source === "jev" &&
-      decision.value.confidence >= 0.75 &&
       input.candidates.some((profile) => profile.id === decision.value.profileId)
       ? decision.value
       : fallback;
+  });
+
+  const chooseEffort = Effect.fnUntraced(function* (input: {
+    readonly objective: string;
+    readonly profile: TeamModelProfile;
+    readonly choices: { readonly optionId: string; readonly values: ReadonlyArray<string> } | null;
+  }): Effect.fn.Return<{ readonly optionId: string; readonly value: string } | null> {
+    if (!input.choices) return null;
+    const { optionId, values } = input.choices;
+    if (values.length === 0) return null;
+    const prior = modelRoutingPrior(input.profile.selection.model);
+    if (prior.effortStrategy === "highest") {
+      const value = highestSupportedEffort(values);
+      return value ? { optionId, value } : null;
+    }
+    if (values.length === 1) return { optionId, value: values[0]! };
+    const result = yield* request("effort", {
+      objective: routingObjective(input.objective),
+      candidates: [candidateState(input.profile)],
+      effortChoices: values,
+    });
+    const decision = yield* decodeEffortDecision(result.value).pipe(Effect.option);
+    const value =
+      result.status === 200 && Option.isSome(decision) && values.includes(decision.value.effort)
+        ? decision.value.effort
+        : (values.find((candidate) => candidate === "medium") ?? values[0]!);
+    return { optionId, value };
+  });
+
+  const chooseWorkerCount = Effect.fnUntraced(function* (input: {
+    readonly objective: string;
+    readonly scope: string;
+    readonly lead: TeamModelProfile;
+    readonly maxWorkers: number;
+  }): Effect.fn.Return<{
+    readonly workers: number;
+    readonly source: OrchestrationAdvisorSource;
+    readonly reason: string;
+  }> {
+    if (input.maxWorkers === 0)
+      return { workers: 0, source: "policy", reason: "Concurrency allows Lead-only work." };
+    const result = yield* request("workers", {
+      objective: routingObjective(input.objective),
+      scope: routingObjective(input.scope),
+      maxWorkers: input.maxWorkers,
+      candidates: [candidateState(input.lead)],
+    });
+    const decision = yield* decodeWorkerCountDecision(result.value).pipe(Effect.option);
+    return result.status === 200 &&
+      Option.isSome(decision) &&
+      decision.value.source === "jev" &&
+      decision.value.workers >= 0 &&
+      decision.value.workers <= input.maxWorkers
+      ? decision.value
+      : {
+          workers: input.maxWorkers,
+          source: "policy",
+          reason:
+            "Smart Routing could not choose a worker count; Flow Standard will let the Lead delegate within the saved concurrency limit.",
+        };
   });
 
   const recommendProfiles = Effect.fnUntraced(function* (
@@ -398,9 +523,7 @@ export const make = Effect.gen(function* () {
     for (let offset = 0; offset < pending.length; offset += 4) {
       const batch = pending.slice(offset, offset + 4);
       const result = yield* request("recommendations", { candidates: batch.map(candidateState) });
-      const response = yield* Schema.decodeUnknownEffect(Recommendations)(result.value).pipe(
-        Effect.option,
-      );
+      const response = yield* decodeRecommendations(result.value).pipe(Effect.option);
       if (result.status !== 200 || Option.isNone(response)) break;
       for (const recommendation of response.value.profiles) {
         const original = batch.find((profile) => profile.id === recommendation.id);
@@ -416,6 +539,8 @@ export const make = Effect.gen(function* () {
     localPrerequisites,
     setSmartRoutingSession,
     chooseProfile,
+    chooseEffort,
+    chooseWorkerCount,
     routeExecution,
     recommendProfiles,
   };

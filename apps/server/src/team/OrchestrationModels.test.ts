@@ -1,4 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
+import { it as effectIt } from "@effect/vitest";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import {
   ProviderDriverKind,
   ProviderInstanceId,
@@ -10,10 +13,13 @@ import {
 import {
   directWorkerProfileOrder,
   equivalentProfileOrder,
+  makeOrchestrationModelCatalog,
   orchestrationModelUsable,
   orchestrationQuotaExhausted,
   orderedRoleProfiles,
 } from "./OrchestrationModels.ts";
+import { ProviderRegistry } from "../provider/Services/ProviderRegistry.ts";
+import { ProviderService } from "../provider/Services/ProviderService.ts";
 
 const codex = ProviderInstanceId.make("codex");
 const claude = ProviderInstanceId.make("claude");
@@ -62,6 +68,45 @@ const policy = (profiles: ReadonlyArray<TeamModelProfile>): TeamPolicy => ({
 });
 
 describe("orchestration model ordering", () => {
+  effectIt.effect("offers every ready text model to direct Auto regardless of Flow roles", () => {
+    const saved = profile("saved", codex, "gpt-6-sol", {
+      selection: {
+        instanceId: codex,
+        model: "gpt-6-sol",
+        options: [
+          { id: "reasoningEffort", value: "high" },
+          { id: "serviceTier", value: "priority" },
+        ],
+      },
+      effortMode: "fixed",
+      lead: false,
+      worker: false,
+    });
+    return Effect.gen(function* () {
+      const catalog = yield* makeOrchestrationModelCatalog;
+      const models = yield* catalog.runnableDirectProfiles(policy([saved]));
+      expect(models.map((candidate) => candidate.selection.model)).toEqual([
+        "gpt-6-sol",
+        "gpt-6-luna",
+      ]);
+      expect(models[0]?.selection).toEqual(saved.selection);
+      expect(models[0]?.effortMode).toBe("fixed");
+      expect(models.every((candidate) => !candidate.lead && !candidate.worker)).toBe(true);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          Layer.mock(ProviderRegistry)({
+            getProviders: Effect.succeed([
+              provider(codex, ["gpt-6-sol", "gpt-6-luna"]),
+              provider(claude, ["opus"], { supportsTextGeneration: false }),
+            ]),
+          }),
+          Layer.mock(ProviderService)({}),
+        ),
+      ),
+    );
+  });
+
   it("preserves policy order while filtering by role, readiness and quota", () => {
     const first = profile("first", codex, "luna");
     const workerOnly = profile("worker-only", codex, "luna", { lead: false });

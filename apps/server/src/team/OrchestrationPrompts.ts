@@ -116,7 +116,20 @@ export function providerHandoffPrompt(run: TeamRun, failed: TeamAttempt): string
   return `${prior}\n\n${suffix}`;
 }
 
-export function planningPrompt(run: Pick<TeamRun, "prompt" | "policy" | "executionMode">): string {
+export function scopePrompt(run: Pick<TeamRun, "prompt" | "policy">): string {
+  return [
+    "You are the Lead of a Dispatch-managed coding run. Dispatch alone schedules workers; never spawn native subagents.",
+    "Inspect the repository enough to identify acceptance, risks, and independently useful areas. Do not implement, create worker tasks, or choose models yet. Smart Routing will decide a worker count from this scope before you write directives.",
+    "Return ONLY JSON matching {summary:string,independentAreas:string[],risks:string[],acceptance:string[]}. Keep each field concrete and concise. Areas describe separable work, not worker assignments. This compact scope will go to Smart Routing: do not include source excerpts, secrets, credentials, or private file contents.",
+    `Concurrency allows at most ${Math.max(0, run.policy.maxActive - 1)} workers alongside you. Do not invent areas to fill capacity.`,
+    `Objective: ${clip(run.prompt, 40_000)}`,
+  ].join("\n\n");
+}
+
+export function planningPrompt(
+  run: Pick<TeamRun, "prompt" | "policy" | "executionMode" | "workerTarget">,
+  scope?: string,
+): string {
   const direct = run.executionMode === "direct";
   const workers = direct
     ? []
@@ -133,8 +146,15 @@ export function planningPrompt(run: Pick<TeamRun, "prompt" | "policy" | "executi
       : "You are the lead of a Dispatch-managed coding run. Dispatch is the only scheduler; never spawn native subagents.",
     direct
       ? "Inspect the repository only enough to define stable acceptance criteria for this bounded objective. Do not implement yet and do not delegate: the next managed turn will execute the complete objective in this same worktree."
-      : "Inspect the repository and plan before implementation. Choose the smallest useful team. Keep tightly coupled work with the lead and delegate only independently useful tasks.",
+      : scope
+        ? "Use your earlier scope to write concrete worker directives now. Keep tightly coupled work with the Lead and delegate only independently useful tasks. Do not implement yet."
+        : "Inspect the repository and plan before implementation. Choose the smallest useful team. Keep tightly coupled work with the lead and delegate only independently useful tasks.",
     "Return ONLY JSON matching {acceptance:string[],tasks:[{id,objective,acceptance:string[],dependencies:string[],preferredProfileId?:string|null,context:string}],rationale:string}.",
+    ...(scope
+      ? [
+          "Worker directive objectives, acceptance, and context may go to Smart Routing for model and effort selection. Describe the work without source excerpts, secrets, credentials, or private file contents.",
+        ]
+      : []),
     direct
       ? "Define stable observable acceptance criteria for the COMPLETE objective and return tasks:[]."
       : "Define stable observable acceptance criteria for the COMPLETE objective. Each delegated task must have a bounded scope and concrete verification. Dependencies must be explicit and acyclic.",
@@ -143,11 +163,14 @@ export function planningPrompt(run: Pick<TeamRun, "prompt" | "policy" | "executi
       : "preferredProfileId is advisory; Dispatch may choose another allowed worker when availability, quota, or advisor decisions require it.",
     direct
       ? "No Worker thread or worktree will be created for this run."
-      : run.policy.maxActive === 1
+      : run.workerTarget === 0 || run.policy.maxActive === 1
         ? "This run is configured for one agent with no delegation. Return tasks:[]; you will implement the complete objective yourself during final integration."
-        : `Concurrency policy allows up to ${run.policy.maxActive - 1} worker(s) alongside the lead. Delegate only when it improves independence or throughput.`,
+        : run.workerTarget !== undefined
+          ? `Smart Routing chose up to ${run.workerTarget} useful worker(s). Return at most that many concrete tasks; fewer is correct when the scope does not justify all slots.`
+          : `Concurrency policy allows up to ${run.policy.maxActive - 1} worker(s) alongside the lead. Delegate only when it improves independence or throughput.`,
     mailbox,
     ...(direct ? [] : [`Allowed worker profiles: ${JSON.stringify(workers)}`]),
+    ...(scope ? [`Your earlier repository scope: ${clip(scope, 8_000)}`] : []),
     `Objective: ${clip(run.prompt, 40_000)}`,
   ].join("\n\n");
 }

@@ -1824,6 +1824,7 @@ const makeWsRpcLayer = (
                   shellRevealInFileManagerKind: fileManagerRevealKind,
                 }),
             teamRouting: true,
+            teamRoutingV2: true,
             threadResumeCompletionMarker: true,
             threadSnapshotPagination: true,
             reasoningMessages: true,
@@ -1837,6 +1838,7 @@ const makeWsRpcLayer = (
 
       return WsRpcGroup.of({
         "team.start": (input) => observeRpcEffect("team.start", teamRuntime.start(input)),
+        "team.route": (input) => observeRpcEffect("team.route", teamRuntime.route(input)),
         "team.control": (input) =>
           observeRpcEffect(
             "team.control",

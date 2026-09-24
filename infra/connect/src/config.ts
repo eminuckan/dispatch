@@ -98,7 +98,7 @@ function parseSmartRoutingConfig(env: NodeJS.ProcessEnv): SmartRoutingConfig | n
     ),
     accountBurstRequests: parseInteger(
       env.CONNECT_ROUTING_ACCOUNT_BURST_REQUESTS,
-      6,
+      16,
       "CONNECT_ROUTING_ACCOUNT_BURST_REQUESTS",
     ),
     accountMinuteRequests: parseInteger(
