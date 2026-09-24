@@ -599,13 +599,13 @@ function FlowStep({
       <WizardPanel>
         <StepShell
           title="Dispatch Flow"
-          description="Flow plans tasks, manages changes, and verifies results with your selected agents. Choose a mode for each environment."
+          description="Flow is optional. It plans work and verifies results with your agents."
         >
           <ScrollArea
             scrollFade
             className="mt-4 h-auto max-h-96 [&_[data-slot=scroll-area-scrollbar]]:opacity-100"
           >
-            <div className="space-y-4 pr-3">
+            <div className="divide-y divide-border pr-3">
               {environmentIds.map((environmentId) => (
                 <FlowEnvironmentSetup
                   key={environmentId}
@@ -620,16 +620,9 @@ function FlowStep({
           </ScrollArea>
         </StepShell>
       </WizardPanel>
-      <WizardFooter
-        leading={
-          <p className="text-xs text-muted-foreground">
-            Continue with the Flow settings shown; no extra setup is needed. Change them later in
-            Settings → Flow.
-          </p>
-        }
-      >
+      <WizardFooter>
         <Button autoFocus onClick={onContinue}>
-          Continue
+          Continue to Projects
           <ArrowRightIcon className="size-3.5" />
         </Button>
       </WizardFooter>
@@ -664,7 +657,7 @@ function FlowEnvironmentSetup({
   async function syncAutoSession(accountToken: string): Promise<boolean> {
     if (!connectBaseUrl) return false;
     setPending(true);
-    setMessage(null);
+    setMessage("Preparing Flow Auto…");
     try {
       if (environmentId === primaryEnvironmentId) {
         await ensurePrimaryDispatchConnectEnvironmentLinked(connectBaseUrl);
@@ -703,7 +696,7 @@ function FlowEnvironmentSetup({
   async function enableFlow(flowMode: TeamFlowMode) {
     if (pending || !settings.data) return;
     setPending(true);
-    setMessage(null);
+    setMessage(`Setting up Flow ${flowMode === "auto" ? "Auto" : "Standard"}…`);
     try {
       let recommendations = settings.data.policy.profiles;
       if (flowMode === "standard" && recommendations.length === 0) {
@@ -759,7 +752,7 @@ function FlowEnvironmentSetup({
 
   if (!capable) {
     return (
-      <section className="rounded-xl border border-border bg-background px-3 py-3">
+      <section className="py-4 first:pt-0 last:pb-0">
         <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
           <p className="min-w-0 text-sm font-medium">{machineLabel}</p>
           <span className="shrink-0 rounded-full bg-muted/50 px-2 py-0.5 text-xs font-medium text-muted-foreground">
@@ -775,7 +768,7 @@ function FlowEnvironmentSetup({
 
   if (!settings.data) {
     return (
-      <section className="rounded-xl border border-border bg-background px-3 py-3">
+      <section className="py-4 first:pt-0 last:pb-0">
         <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
           <p className="min-w-0 text-sm font-medium">{machineLabel}</p>
           <span className="shrink-0 rounded-full bg-muted/50 px-2 py-0.5 text-xs font-medium text-muted-foreground">
@@ -800,7 +793,7 @@ function FlowEnvironmentSetup({
   const autoStatusId = `flow-auto-status-${environmentId}`;
 
   return (
-    <section className="rounded-xl border border-border bg-background px-3 py-3">
+    <section className="py-4 first:pt-0 last:pb-0">
       <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
         <p className="min-w-0 text-sm font-medium">{machineLabel}</p>
         <span className="shrink-0 rounded-full bg-muted/50 px-2 py-0.5 text-xs font-medium text-foreground">
@@ -819,7 +812,7 @@ function FlowEnvironmentSetup({
           className="h-auto min-h-14 w-full flex-col items-start justify-start gap-1.5 whitespace-normal rounded-lg px-3 py-2.5 text-left"
         >
           <span className="flex w-full items-center justify-between gap-2">
-            <span className="text-sm font-semibold">{pending ? "Working…" : "Use Standard"}</span>
+            <span className="text-sm font-semibold">Use Standard</span>
             {standardSelected ? (
               <span className="inline-flex shrink-0 items-center gap-1 text-xs font-medium">
                 <CheckIcon className="size-3.5" /> Selected
@@ -893,9 +886,7 @@ function FlowEnvironmentSetup({
         </Dialog>
       </fieldset>
 
-      <div
-        className={`mt-2.5 flex flex-wrap items-center justify-between gap-x-3 gap-y-2 ${autoAvailable ? "px-0.5" : "rounded-lg bg-muted/30 px-3 py-2.5"}`}
-      >
+      <div className="mt-2.5 flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
         <p id={autoStatusId} className="min-w-0 flex-1 text-xs leading-snug text-muted-foreground">
           {autoAvailable
             ? "Auto is ready on this environment."
