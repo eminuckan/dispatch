@@ -44,6 +44,7 @@ describe("team RPC contract", () => {
         "team.list",
         "team.providerDecision",
         "team.recommendModels",
+        "team.route",
         "team.saveSettings",
         "team.setSmartRoutingSession",
         "team.settings",
