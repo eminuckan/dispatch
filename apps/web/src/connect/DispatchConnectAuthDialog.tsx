@@ -171,7 +171,7 @@ function ConfiguredDispatchConnectAuthDialog({
             pairing work without an account.
           </DialogDescription>
         </DialogHeader>
-        <form onSubmit={(event) => void submit(event)}>
+        <form className="flex min-h-0 flex-col" onSubmit={(event) => void submit(event)}>
           <DialogPanel className="space-y-3">
             <label className="block space-y-1.5" htmlFor={emailId}>
               <span className="text-xs font-medium text-foreground">Email</span>

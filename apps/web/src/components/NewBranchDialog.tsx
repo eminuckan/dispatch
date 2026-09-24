@@ -42,6 +42,7 @@ export function NewBranchDialog({
     >
       <DialogPopup showCloseButton={!pending} initialFocus={inputRef}>
         <form
+          className="flex min-h-0 flex-col"
           onSubmit={(event) => {
             event.preventDefault();
             if (!canCreate || pending) return;

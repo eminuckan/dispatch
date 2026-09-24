@@ -522,31 +522,32 @@ export function UsagePriceOverrides({
             </div>
           ) : null}
         </DialogPanel>
-        <DialogFooter variant="bare" className="items-center sm:justify-between">
-          <span className="text-xs text-muted-foreground">
-            {hasChanges ? `Changes apply to ${destinationLabel}` : ""}
-          </span>
-          <div className="flex w-full flex-wrap justify-end gap-2 sm:w-auto">
-            {hasChanges ? (
-              <Button variant="ghost" disabled={pending} onClick={discard}>
-                {failedDestinations.length > 0 ? "Discard pending changes" : "Discard changes"}
-              </Button>
-            ) : null}
-            <Button
-              disabled={
-                pending ||
-                (!hasChanges && failedDestinations.length === 0) ||
-                (failedDestinations.length === 0 && (errors.size > 0 || selected.length === 0))
-              }
-              onClick={() => void save(failedDestinations.length > 0)}
-            >
-              {pending
-                ? "Saving…"
-                : failedDestinations.length > 0
-                  ? "Retry failed saves"
-                  : "Save changes"}
+        <DialogFooter
+          leading={
+            <span className="text-xs text-muted-foreground">
+              {hasChanges ? `Changes apply to ${destinationLabel}` : ""}
+            </span>
+          }
+        >
+          {hasChanges ? (
+            <Button variant="ghost" disabled={pending} onClick={discard}>
+              {failedDestinations.length > 0 ? "Discard pending changes" : "Discard changes"}
             </Button>
-          </div>
+          ) : null}
+          <Button
+            disabled={
+              pending ||
+              (!hasChanges && failedDestinations.length === 0) ||
+              (failedDestinations.length === 0 && (errors.size > 0 || selected.length === 0))
+            }
+            onClick={() => void save(failedDestinations.length > 0)}
+          >
+            {pending
+              ? "Saving…"
+              : failedDestinations.length > 0
+                ? "Retry failed saves"
+                : "Save changes"}
+          </Button>
         </DialogFooter>
       </DialogPopup>
     </Dialog>

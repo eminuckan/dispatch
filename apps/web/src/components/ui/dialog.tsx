@@ -121,24 +121,31 @@ function DialogHeader({ className, ...props }: React.ComponentProps<"div">) {
   );
 }
 
+/** Standard right-aligned action row for every dialog, including the What's New layout. */
 function DialogFooter({
-  className,
-  variant = "default",
+  children,
+  leading,
   ...props
-}: React.ComponentProps<"div"> & {
-  variant?: "default" | "bare";
+}: Omit<React.ComponentProps<"div">, "className" | "style"> & {
+  leading?: React.ReactNode;
 }) {
   return (
     <div
       className={cn(
-        "flex flex-col-reverse gap-2 px-6 sm:flex-row sm:justify-end sm:rounded-b-[calc(var(--radius-2xl)-1px)]",
-        variant === "default" && "border-t bg-muted/72 py-4",
-        variant === "bare" && "py-4",
-        className,
+        "flex flex-col gap-3 border-t bg-muted/72 px-6 py-4 sm:flex-row sm:items-center sm:rounded-b-[calc(var(--radius-2xl)-1px)]",
+        leading ? "sm:justify-between" : "sm:justify-end",
       )}
       data-slot="dialog-footer"
       {...props}
-    />
+    >
+      {leading}
+      <div
+        data-slot="dialog-footer-actions"
+        className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end"
+      >
+        {children}
+      </div>
+    </div>
   );
 }
 
@@ -171,7 +178,7 @@ function DialogPanel({
     <ScrollArea scrollFade={scrollFade}>
       <div
         className={cn(
-          "p-6 in-[[data-slot=dialog-popup]:has([data-slot=dialog-header])]:pt-1 in-[[data-slot=dialog-popup]:has([data-slot=dialog-footer]:not(.border-t))]:pb-1",
+          "p-6 in-[[data-slot=dialog-popup]:has([data-slot=dialog-header])]:pt-1",
           className,
         )}
         data-slot="dialog-panel"

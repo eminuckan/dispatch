@@ -46,16 +46,7 @@ export function WizardFooter({
   readonly children: ReactNode;
   readonly leading?: ReactNode;
 }) {
-  return (
-    <DialogFooter variant="bare" className={leading ? "sm:justify-between" : undefined}>
-      {leading}
-      {leading ? (
-        <div className="flex flex-col-reverse gap-2 sm:flex-row">{children}</div>
-      ) : (
-        children
-      )}
-    </DialogFooter>
-  );
+  return <DialogFooter leading={leading}>{children}</DialogFooter>;
 }
 
 export function WizardSteps({

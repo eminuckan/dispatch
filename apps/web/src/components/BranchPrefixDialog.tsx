@@ -234,7 +234,7 @@ function BranchPrefixForm({
           </p>
         </div>
       </DialogPanel>
-      <DialogFooter variant="bare" className="flex-row justify-end">
+      <DialogFooter>
         <Button type="button" variant="outline" disabled={pending} onClick={onClose}>
           Cancel
         </Button>

@@ -8,6 +8,7 @@ import {
   DIALOG_MOBILE_SHEET_CLASS,
   DIALOG_POPUP_CLASS,
 } from "~/components/ui/dialog-styles";
+import { DialogFooter } from "~/components/ui/dialog";
 
 const AlertDialog = AlertDialogPrimitive.Root;
 
@@ -77,25 +78,8 @@ function AlertDialogHeader({ className, ...props }: React.ComponentProps<"div">)
   );
 }
 
-function AlertDialogFooter({
-  className,
-  variant = "default",
-  ...props
-}: React.ComponentProps<"div"> & {
-  variant?: "default" | "bare";
-}) {
-  return (
-    <div
-      className={cn(
-        "flex flex-col-reverse gap-2 px-6 sm:flex-row sm:justify-end sm:rounded-b-[calc(var(--radius-2xl)-1px)]",
-        variant === "default" && "border-t bg-muted/72 py-4",
-        variant === "bare" && "pb-6",
-        className,
-      )}
-      data-slot="alert-dialog-footer"
-      {...props}
-    />
-  );
+function AlertDialogFooter(props: React.ComponentProps<typeof DialogFooter>) {
+  return <DialogFooter {...props} data-slot="alert-dialog-footer" />;
 }
 
 function AlertDialogTitle({ className, ...props }: AlertDialogPrimitive.Title.Props) {

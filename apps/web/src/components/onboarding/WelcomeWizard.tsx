@@ -76,7 +76,7 @@ import { Input } from "../ui/input";
 import { Tooltip, TooltipTrigger, TooltipPopup } from "../ui/tooltip";
 import { ScrollArea } from "../ui/scroll-area";
 import { Spinner } from "../ui/spinner";
-import { WizardPanel, WizardSteps, WizardPopup, WizardHeader } from "../ui/wizard";
+import { WizardFooter, WizardPanel, WizardSteps, WizardPopup, WizardHeader } from "../ui/wizard";
 import {
   Dialog,
   DialogClose,
@@ -153,10 +153,6 @@ export function WelcomeWizard({
   const selectedIds =
     selection ?? new Set(primaryEnvironment ? [primaryEnvironment.environmentId] : []);
   const scans = useProjectScans(step === "import" ? setupIds : NO_ENVIRONMENTS);
-  const isLoadingProjects =
-    step === "import" &&
-    scans.every((scan) => scan.data === null) &&
-    scans.some((scan) => scan.isPending);
   const startSetup = (ids: readonly EnvironmentId[]) => {
     if (ids.length === 0) return;
     setSetupIds(ids);
@@ -241,36 +237,34 @@ export function WelcomeWizard({
           />
         </WizardHeader>
 
-        <WizardPanel holdHeight={isLoadingProjects}>
-          {step === "connection" ? (
-            <ConnectionStep
-              expandPairingInitially={!localAvailable}
-              selectedIds={selectedIds}
-              onSelectionChange={setSelection}
-              onContinue={() =>
-                startSetup(
-                  environments
-                    .filter((environment) => selectedIds.has(environment.environmentId))
-                    .map((environment) => environment.environmentId),
-                )
-              }
-              onPaired={(environmentId) => {
-                setSelection(new Set([...selectedIds, environmentId]));
-              }}
-            />
-          ) : step === "agents" ? (
-            <AgentsStep environmentIds={setupIds} onContinue={() => setStep("flow")} />
-          ) : step === "flow" ? (
-            <FlowStep environmentIds={setupIds} onContinue={() => setStep("import")} />
-          ) : (
-            <ImportStep
-              scans={scans}
-              isImporting={isImporting}
-              setIsImporting={setIsImporting}
-              onDone={finish}
-            />
-          )}
-        </WizardPanel>
+        {step === "connection" ? (
+          <ConnectionStep
+            expandPairingInitially={!localAvailable}
+            selectedIds={selectedIds}
+            onSelectionChange={setSelection}
+            onContinue={() =>
+              startSetup(
+                environments
+                  .filter((environment) => selectedIds.has(environment.environmentId))
+                  .map((environment) => environment.environmentId),
+              )
+            }
+            onPaired={(environmentId) => {
+              setSelection(new Set([...selectedIds, environmentId]));
+            }}
+          />
+        ) : step === "agents" ? (
+          <AgentsStep environmentIds={setupIds} onContinue={() => setStep("flow")} />
+        ) : step === "flow" ? (
+          <FlowStep environmentIds={setupIds} onContinue={() => setStep("import")} />
+        ) : (
+          <ImportStep
+            scans={scans}
+            isImporting={isImporting}
+            setIsImporting={setIsImporting}
+            onDone={finish}
+          />
+        )}
       </WizardPopup>
     </Dialog>
   );
@@ -314,86 +308,88 @@ function ConnectionStep({
   }, [ready]);
   return (
     <>
-      <h1 className="text-2xl font-semibold tracking-tight text-foreground">
-        Connect your computers
-      </h1>
-      <p className="mt-2.5 text-sm leading-relaxed text-muted-foreground">
-        Choose one or more computers. We’ll set up agents and projects on each.
-      </p>
-      {environments.length > 0 ? (
-        <fieldset className="mt-5 space-y-2">
-          <legend className="sr-only">Computers to set up</legend>
-          {environments.map((environment) => (
-            <label
-              key={environment.environmentId}
-              className="flex cursor-pointer items-center gap-3 rounded-lg border border-border bg-background px-3 py-3"
-            >
-              <Checkbox
-                checked={selectedIds.has(environment.environmentId)}
-                onCheckedChange={(checked) => {
-                  const next = new Set(selectedIds);
-                  if (checked) next.add(environment.environmentId);
-                  else next.delete(environment.environmentId);
-                  onSelectionChange(next);
-                }}
-              />
-              <MonitorIcon className="size-4 shrink-0 text-muted-foreground" />
-              <span className="min-w-0 flex-1">
-                <span className="flex items-baseline justify-between gap-3">
-                  <span className="min-w-0 text-sm font-medium break-words">
-                    {environment.label}
+      <WizardPanel>
+        <h1 className="text-2xl font-semibold tracking-tight text-foreground">
+          Connect your computers
+        </h1>
+        <p className="mt-2.5 text-sm leading-relaxed text-muted-foreground">
+          Choose one or more computers. We’ll set up agents and projects on each.
+        </p>
+        {environments.length > 0 ? (
+          <fieldset className="mt-5 space-y-2">
+            <legend className="sr-only">Computers to set up</legend>
+            {environments.map((environment) => (
+              <label
+                key={environment.environmentId}
+                className="flex cursor-pointer items-center gap-3 rounded-lg border border-border bg-background px-3 py-3"
+              >
+                <Checkbox
+                  checked={selectedIds.has(environment.environmentId)}
+                  onCheckedChange={(checked) => {
+                    const next = new Set(selectedIds);
+                    if (checked) next.add(environment.environmentId);
+                    else next.delete(environment.environmentId);
+                    onSelectionChange(next);
+                  }}
+                />
+                <MonitorIcon className="size-4 shrink-0 text-muted-foreground" />
+                <span className="min-w-0 flex-1">
+                  <span className="flex items-baseline justify-between gap-3">
+                    <span className="min-w-0 text-sm font-medium break-words">
+                      {environment.label}
+                    </span>
+                    <span className="shrink-0 text-xs text-muted-foreground">
+                      {environment.connection.phase === "connected" ? "Connected" : "Connecting…"}
+                    </span>
                   </span>
-                  <span className="shrink-0 text-xs text-muted-foreground">
-                    {environment.connection.phase === "connected" ? "Connected" : "Connecting…"}
-                  </span>
+                  {environment.displayUrl ? (
+                    <span className="mt-0.5 block text-xs break-all text-muted-foreground">
+                      {environment.displayUrl}
+                    </span>
+                  ) : null}
                 </span>
-                {environment.displayUrl ? (
-                  <span className="mt-0.5 block text-xs break-all text-muted-foreground">
-                    {environment.displayUrl}
-                  </span>
-                ) : null}
-              </span>
-            </label>
-          ))}
-        </fieldset>
-      ) : null}
-      <div className="mt-4 space-y-2">
-        <Collapsible
-          open={pairingOpen}
-          onOpenChange={setPairingOpen}
-          className="rounded-lg border border-border bg-background"
-        >
-          <CollapsibleTrigger
-            disabled={isPairing}
-            render={
-              <Button
-                variant="ghost"
-                className="h-auto min-h-14 w-full justify-start gap-3 px-3 py-3 text-left whitespace-normal sm:h-auto"
-              />
-            }
+              </label>
+            ))}
+          </fieldset>
+        ) : null}
+        <div className="mt-4 space-y-2">
+          <Collapsible
+            open={pairingOpen}
+            onOpenChange={setPairingOpen}
+            className="rounded-lg border border-border bg-background"
           >
-            <LinkIcon className="size-4 text-muted-foreground" />
-            <span className="flex-1">Add a computer</span>
-            <ChevronRightIcon
-              className={cn("size-4 text-muted-foreground", pairingOpen && "rotate-90")}
-            />
-          </CollapsibleTrigger>
-          <CollapsiblePanel>
-            <div className="px-3 pb-3">
-              <PairingForm
-                isPairing={isPairing}
-                setIsPairing={setIsPairing}
-                onPaired={(environmentId) => {
-                  setPairingOpen(false);
-                  onPaired(environmentId);
-                  requestAnimationFrame(() => continueRef.current?.focus());
-                }}
+            <CollapsibleTrigger
+              disabled={isPairing}
+              render={
+                <Button
+                  variant="ghost"
+                  className="h-auto min-h-14 w-full justify-start gap-3 px-3 py-3 text-left whitespace-normal sm:h-auto"
+                />
+              }
+            >
+              <LinkIcon className="size-4 text-muted-foreground" />
+              <span className="flex-1">Add a computer</span>
+              <ChevronRightIcon
+                className={cn("size-4 text-muted-foreground", pairingOpen && "rotate-90")}
               />
-            </div>
-          </CollapsiblePanel>
-        </Collapsible>
-      </div>
-      <div className="mt-6 flex items-center justify-end gap-3">
+            </CollapsibleTrigger>
+            <CollapsiblePanel>
+              <div className="px-3 pb-3">
+                <PairingForm
+                  isPairing={isPairing}
+                  setIsPairing={setIsPairing}
+                  onPaired={(environmentId) => {
+                    setPairingOpen(false);
+                    onPaired(environmentId);
+                    requestAnimationFrame(() => continueRef.current?.focus());
+                  }}
+                />
+              </div>
+            </CollapsiblePanel>
+          </Collapsible>
+        </div>
+      </WizardPanel>
+      <WizardFooter>
         <Button
           ref={continueRef}
           autoFocus={!expandPairingInitially}
@@ -403,7 +399,7 @@ function ConnectionStep({
           Continue
           <ArrowRightIcon className="size-3.5" />
         </Button>
-      </div>
+      </WizardFooter>
     </>
   );
 }
@@ -558,31 +554,35 @@ function AgentsStep({
 }) {
   const { environments } = useEnvironments();
   return (
-    <StepShell title="Your agents" description="Agents available on your selected computers.">
-      <ScrollArea
-        scrollFade
-        className="mt-5 h-auto max-h-96 [&_[data-slot=scroll-area-scrollbar]]:opacity-100"
-      >
-        <div className="space-y-5 pr-3">
-          {environmentIds.map((environmentId) => (
-            <ConnectedAgentsStep
-              key={environmentId}
-              environmentId={environmentId}
-              machineLabel={
-                environments.find((environment) => environment.environmentId === environmentId)
-                  ?.label ?? "Computer"
-              }
-            />
-          ))}
-        </div>
-      </ScrollArea>
-      <div className="mt-6 flex justify-end">
+    <>
+      <WizardPanel>
+        <StepShell title="Your agents" description="Agents available on your selected computers.">
+          <ScrollArea
+            scrollFade
+            className="mt-5 h-auto max-h-96 [&_[data-slot=scroll-area-scrollbar]]:opacity-100"
+          >
+            <div className="space-y-5 pr-3">
+              {environmentIds.map((environmentId) => (
+                <ConnectedAgentsStep
+                  key={environmentId}
+                  environmentId={environmentId}
+                  machineLabel={
+                    environments.find((environment) => environment.environmentId === environmentId)
+                      ?.label ?? "Computer"
+                  }
+                />
+              ))}
+            </div>
+          </ScrollArea>
+        </StepShell>
+      </WizardPanel>
+      <WizardFooter>
         <Button autoFocus onClick={onContinue}>
           Continue
           <ArrowRightIcon className="size-3.5" />
         </Button>
-      </div>
-    </StepShell>
+      </WizardFooter>
+    </>
   );
 }
 
@@ -595,37 +595,44 @@ function FlowStep({
 }) {
   const { environments } = useEnvironments();
   return (
-    <StepShell
-      title="Dispatch Flow"
-      description="Flow plans tasks, manages changes, and verifies results with your selected agents. Standard uses your chosen Lead and Workers; Auto chooses one Worker or a coordinated team."
-    >
-      <ScrollArea
-        scrollFade
-        className="mt-5 h-auto max-h-96 [&_[data-slot=scroll-area-scrollbar]]:opacity-100"
+    <>
+      <WizardPanel>
+        <StepShell
+          title="Dispatch Flow"
+          description="Flow plans tasks, manages changes, and verifies results with your selected agents. Standard uses your chosen Lead and Workers; Auto chooses one Worker or a coordinated team."
+        >
+          <ScrollArea
+            scrollFade
+            className="mt-5 h-auto max-h-96 [&_[data-slot=scroll-area-scrollbar]]:opacity-100"
+          >
+            <div className="space-y-4 pr-3">
+              {environmentIds.map((environmentId) => (
+                <FlowEnvironmentSetup
+                  key={environmentId}
+                  environmentId={environmentId}
+                  machineLabel={
+                    environments.find((environment) => environment.environmentId === environmentId)
+                      ?.label ?? "Computer"
+                  }
+                />
+              ))}
+            </div>
+          </ScrollArea>
+        </StepShell>
+      </WizardPanel>
+      <WizardFooter
+        leading={
+          <p className="text-xs text-muted-foreground">
+            You can skip Flow and set it up later in Settings → Flow.
+          </p>
+        }
       >
-        <div className="space-y-4 pr-3">
-          {environmentIds.map((environmentId) => (
-            <FlowEnvironmentSetup
-              key={environmentId}
-              environmentId={environmentId}
-              machineLabel={
-                environments.find((environment) => environment.environmentId === environmentId)
-                  ?.label ?? "Computer"
-              }
-            />
-          ))}
-        </div>
-      </ScrollArea>
-      <div className="mt-6 flex flex-wrap items-center justify-between gap-2">
-        <p className="text-xs text-muted-foreground">
-          You can skip Flow and set it up later in Settings → Flow.
-        </p>
         <Button autoFocus onClick={onContinue}>
           Continue
           <ArrowRightIcon className="size-3.5" />
         </Button>
-      </div>
-    </StepShell>
+      </WizardFooter>
+    </>
   );
 }
 
@@ -1393,111 +1400,120 @@ function ImportStep({
 
   if (scans.every((scan) => scan.data === null) && scans.some((scan) => scan.isPending)) {
     return (
-      <div className="flex h-full min-h-40 flex-col">
-        <h1 className="text-2xl font-semibold tracking-tight text-foreground">Your projects</h1>
-        <div className="flex flex-1 flex-col items-center justify-center gap-3 py-6">
-          <Spinner className="size-5 text-muted-foreground" />
-          <p className="text-center text-sm text-muted-foreground">
-            Looking for projects from Claude Code and Codex…
-          </p>
-        </div>
-        <div className="flex justify-end">
+      <>
+        <WizardPanel holdHeight>
+          <div className="flex h-full min-h-40 flex-col">
+            <h1 className="text-2xl font-semibold tracking-tight text-foreground">Your projects</h1>
+            <div className="flex flex-1 flex-col items-center justify-center gap-3 py-6">
+              <Spinner className="size-5 text-muted-foreground" />
+              <p className="text-center text-sm text-muted-foreground">
+                Looking for projects from Claude Code and Codex…
+              </p>
+            </div>
+          </div>
+        </WizardPanel>
+        <WizardFooter>
           <Button variant="ghost-muted" onClick={() => void onDone()}>
             Do not import projects
           </Button>
-        </div>
-      </div>
+        </WizardFooter>
+      </>
     );
   }
 
   return (
-    <StepShell
-      title="Choose your projects"
-      description="Import projects and conversations from your selected computers."
-    >
-      {candidates.length > 0 ? (
-        <div className="mt-5 flex items-center justify-between gap-3 text-xs text-muted-foreground">
-          <span role="status">
-            {selected.length} of {candidates.length} selected
-          </span>
-          <div className="flex items-center gap-1">
-            <Button
-              variant="ghost"
-              size="xs"
-              disabled={isImporting || selected.length === candidates.length}
-              onClick={() => setSelectedPaths(new Set(candidates.map((item) => item.key)))}
-            >
-              Select all
-            </Button>
-            <Button
-              variant="ghost"
-              size="xs"
-              disabled={isImporting || selected.length === 0}
-              onClick={() => setSelectedPaths(new Set())}
-            >
-              Select none
-            </Button>
-          </div>
-        </div>
-      ) : null}
-      <ScrollArea
-        scrollFade
-        className="mt-2 h-auto max-h-80 [&_[data-slot=scroll-area-scrollbar]]:opacity-100"
-      >
-        <div className="space-y-5 pr-3">
-          {scans.map((scan) => {
-            const scanCandidates = candidates.filter(
-              (candidate) => candidate.environmentId === scan.environmentId,
-            );
-            const label =
-              environments.find((environment) => environment.environmentId === scan.environmentId)
-                ?.label ?? "Computer";
-            return (
-              <fieldset
-                key={scan.environmentId}
-                className="min-w-0 space-y-0.5"
-                disabled={isImporting}
-              >
-                {scans.length > 1 ? (
-                  <legend className="mb-2 text-sm font-medium">{label}</legend>
-                ) : null}
-                {scan.isPending && scan.data === null ? (
-                  <div className="flex items-center gap-2 py-3 text-sm text-muted-foreground">
-                    <Spinner className="size-4" />
-                    Looking for projects…
-                  </div>
-                ) : scan.error !== null ? (
-                  <div
-                    role="alert"
-                    className="flex items-center justify-between gap-3 text-sm text-muted-foreground"
+    <>
+      <WizardPanel>
+        <StepShell
+          title="Choose your projects"
+          description="Import projects and conversations from your selected computers."
+        >
+          {candidates.length > 0 ? (
+            <div className="mt-5 flex items-center justify-between gap-3 text-xs text-muted-foreground">
+              <span role="status">
+                {selected.length} of {candidates.length} selected
+              </span>
+              <div className="flex items-center gap-1">
+                <Button
+                  variant="ghost"
+                  size="xs"
+                  disabled={isImporting || selected.length === candidates.length}
+                  onClick={() => setSelectedPaths(new Set(candidates.map((item) => item.key)))}
+                >
+                  Select all
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="xs"
+                  disabled={isImporting || selected.length === 0}
+                  onClick={() => setSelectedPaths(new Set())}
+                >
+                  Select none
+                </Button>
+              </div>
+            </div>
+          ) : null}
+          <ScrollArea
+            scrollFade
+            className="mt-2 h-auto max-h-80 [&_[data-slot=scroll-area-scrollbar]]:opacity-100"
+          >
+            <div className="space-y-5 pr-3">
+              {scans.map((scan) => {
+                const scanCandidates = candidates.filter(
+                  (candidate) => candidate.environmentId === scan.environmentId,
+                );
+                const label =
+                  environments.find(
+                    (environment) => environment.environmentId === scan.environmentId,
+                  )?.label ?? "Computer";
+                return (
+                  <fieldset
+                    key={scan.environmentId}
+                    className="min-w-0 space-y-0.5"
+                    disabled={isImporting}
                   >
-                    <span>Could not check projects. {scan.error}</span>
-                    <Button variant="ghost" size="sm" onClick={scan.refresh}>
-                      Retry
-                    </Button>
-                  </div>
-                ) : scanCandidates.length === 0 ? (
-                  <p className="py-2 text-sm text-muted-foreground">
-                    No existing Claude Code or Codex projects found.
-                  </p>
-                ) : null}
-                {scan.data?.truncated ? (
-                  <p className="text-xs text-muted-foreground" role="status">
-                    {SCAN_LIMIT_MESSAGE}
-                  </p>
-                ) : null}
-                <ImportCandidateList
-                  candidates={scanCandidates}
-                  selectedKeys={selectedKeys}
-                  onSelectionChange={setSelectedPaths}
-                />
-              </fieldset>
-            );
-          })}
-        </div>
-      </ScrollArea>
-      {importError ? <p className="mt-3 text-sm text-destructive">{importError}</p> : null}
-      <div className="mt-6 flex flex-wrap items-center justify-end gap-3">
+                    {scans.length > 1 ? (
+                      <legend className="mb-2 text-sm font-medium">{label}</legend>
+                    ) : null}
+                    {scan.isPending && scan.data === null ? (
+                      <div className="flex items-center gap-2 py-3 text-sm text-muted-foreground">
+                        <Spinner className="size-4" />
+                        Looking for projects…
+                      </div>
+                    ) : scan.error !== null ? (
+                      <div
+                        role="alert"
+                        className="flex items-center justify-between gap-3 text-sm text-muted-foreground"
+                      >
+                        <span>Could not check projects. {scan.error}</span>
+                        <Button variant="ghost" size="sm" onClick={scan.refresh}>
+                          Retry
+                        </Button>
+                      </div>
+                    ) : scanCandidates.length === 0 ? (
+                      <p className="py-2 text-sm text-muted-foreground">
+                        No existing Claude Code or Codex projects found.
+                      </p>
+                    ) : null}
+                    {scan.data?.truncated ? (
+                      <p className="text-xs text-muted-foreground" role="status">
+                        {SCAN_LIMIT_MESSAGE}
+                      </p>
+                    ) : null}
+                    <ImportCandidateList
+                      candidates={scanCandidates}
+                      selectedKeys={selectedKeys}
+                      onSelectionChange={setSelectedPaths}
+                    />
+                  </fieldset>
+                );
+              })}
+            </div>
+          </ScrollArea>
+          {importError ? <p className="mt-3 text-sm text-destructive">{importError}</p> : null}
+        </StepShell>
+      </WizardPanel>
+      <WizardFooter>
         <Button
           variant="ghost-muted"
           disabled={isImporting}
@@ -1514,8 +1530,8 @@ function ImportStep({
             ? "Importing…"
             : `Import ${selected.length} ${selected.length === 1 ? "project" : "projects"}`}
         </Button>
-      </div>
-    </StepShell>
+      </WizardFooter>
+    </>
   );
 }
 

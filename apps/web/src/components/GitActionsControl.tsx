@@ -1933,7 +1933,7 @@ export default function GitActionsControl({
               />
             </div>
           </DialogPanel>
-          <DialogFooter variant="bare">
+          <DialogFooter>
             <Button
               variant="outline"
               size="sm"
@@ -1984,9 +1984,9 @@ export default function GitActionsControl({
             </DialogTitle>
             <DialogDescription>{pendingDefaultBranchActionCopy?.description}</DialogDescription>
           </DialogHeader>
-          <DialogFooter className="dark:border-transparent dark:bg-transparent sm:flex-wrap sm:items-center">
+          <DialogFooter>
             <Button
-              className="w-full sm:mr-auto sm:w-auto"
+              className="w-full sm:w-auto"
               variant="outline"
               size="sm"
               onClick={() => setPendingDefaultBranchAction(null)}

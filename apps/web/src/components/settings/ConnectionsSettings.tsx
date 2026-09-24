@@ -841,7 +841,7 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
                   </div>
                 ) : null}
               </DialogPanel>
-              <DialogFooter variant="bare">
+              <DialogFooter>
                 <Button variant="outline" onClick={() => setIsRevealDialogOpen(false)}>
                   Done
                 </Button>
@@ -1197,7 +1197,7 @@ const AuthorizedClientsHeaderAction = memo(function AuthorizedClientsHeaderActio
               ) : null}
             </section>
           </DialogPanel>
-          <DialogFooter variant="bare">
+          <DialogFooter>
             <Button
               variant="outline"
               disabled={isCreatingPairingLink}
@@ -2579,15 +2579,6 @@ export function ConnectionsSettings() {
     <div className="space-y-4">
       {renderRemoteFields()}
       {savedBackendError ? <p className="text-xs text-destructive">{savedBackendError}</p> : null}
-      <Button
-        variant="outline"
-        className="w-full"
-        disabled={isAddingSavedBackend}
-        onClick={() => void handleAddSavedBackend()}
-      >
-        <PlusIcon className="size-3.5" />
-        {isAddingSavedBackend ? "Adding…" : "Add environment"}
-      </Button>
     </div>
   );
   const renderDispatchConnectModeBody = () => (
@@ -2611,17 +2602,6 @@ export function ConnectionsSettings() {
         </span>
       </label>
       {savedBackendError ? <p className="text-xs text-destructive">{savedBackendError}</p> : null}
-      <Button
-        variant="outline"
-        className="w-full"
-        disabled={
-          isAddingSavedBackend || dispatchConnectPairingCode.replace(/-/gu, "").length !== 12
-        }
-        onClick={() => void handleAddSavedBackend()}
-      >
-        <PlusIcon className="size-3.5" />
-        {isAddingSavedBackend ? "Connecting…" : "Add environment"}
-      </Button>
     </div>
   );
   const renderSshFields = () => (
@@ -2734,15 +2714,6 @@ export function ConnectionsSettings() {
             {savedBackendError ?? discoveredSshHostsError}
           </div>
         ) : null}
-        <Button
-          variant="outline"
-          className="w-full"
-          disabled={isAddingSavedBackend}
-          onClick={() => void handleAddSavedBackend()}
-        >
-          <PlusIcon className="size-3.5" />
-          {isAddingSavedBackend ? "Adding…" : "Add environment"}
-        </Button>
       </div>
     </div>
   );
@@ -3702,6 +3673,29 @@ export function ConnectionsSettings() {
                     </AnimatedHeight>
                   </div>
                 </DialogPanel>
+                <DialogFooter>
+                  <DialogClose
+                    disabled={isAddingSavedBackend}
+                    render={<Button variant="outline" disabled={isAddingSavedBackend} />}
+                  >
+                    Cancel
+                  </DialogClose>
+                  <Button
+                    disabled={
+                      isAddingSavedBackend ||
+                      (savedBackendMode === "connect" &&
+                        dispatchConnectPairingCode.replace(/-/gu, "").length !== 12)
+                    }
+                    onClick={() => void handleAddSavedBackend()}
+                  >
+                    <PlusIcon className="size-3.5" />
+                    {isAddingSavedBackend
+                      ? savedBackendMode === "connect"
+                        ? "Connecting…"
+                        : "Adding…"
+                      : "Add environment"}
+                  </Button>
+                </DialogFooter>
               </DialogPopup>
             </Dialog>
           </div>

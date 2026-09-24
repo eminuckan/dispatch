@@ -431,12 +431,11 @@ export function ProjectScriptEditorDialog({
               </fieldset>
             </form>
           </DialogPanel>
-          <DialogFooter className="dark:border-transparent dark:bg-transparent">
+          <DialogFooter>
             {isEditing && (
               <Button
                 type="button"
                 variant="destructive-outline"
-                className="mr-auto"
                 disabled={isSaving}
                 onClick={() => setDeleteConfirmOpen(true)}
               >

@@ -20,7 +20,14 @@ import {
 } from "../../vscodeThemeImport";
 import { Alert } from "../ui/alert";
 import { Button } from "../ui/button";
-import { Dialog, DialogHeader, DialogPanel, DialogPopup, DialogTitle } from "../ui/dialog";
+import {
+  Dialog,
+  DialogFooter,
+  DialogHeader,
+  DialogPanel,
+  DialogPopup,
+  DialogTitle,
+} from "../ui/dialog";
 import { ThemeSearchSection } from "./ThemeSearchSection";
 
 /**
@@ -496,20 +503,6 @@ export function ThemeImportDialog({
                       {conflicts.map((theme) => theme.label).join(", ")}
                     </p>
                   </div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <Button size="sm" onClick={() => resolveConflicts("update")}>
-                      Update existing
-                    </Button>
-                    <Button size="sm" variant="outline" onClick={() => resolveConflicts("copy")}>
-                      Keep both
-                    </Button>
-                    <Button size="sm" variant="ghost" onClick={() => setConflicts(null)}>
-                      Back
-                    </Button>
-                    <Button size="sm" variant="ghost" onClick={() => onOpenChange(false)}>
-                      Cancel
-                    </Button>
-                  </div>
                 </div>
               );
             }
@@ -532,19 +525,6 @@ export function ThemeImportDialog({
                   {fileInput}
                 </div>
                 {editorSection()}
-                {/* The actions live with the import section, not in a DialogFooter,
-                    because Add theme only applies to the file in this section. Pinning
-                    them at the modal bottom would read as a modal-scoped action when
-                    the dialog also has the search and conflict views. */}
-                <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-                  <Button variant="ghost" onClick={() => onOpenChange(false)}>
-                    Cancel
-                  </Button>
-                  <Button disabled={!json.trim() || isReading} onClick={handleSubmit}>
-                    <PlusIcon />
-                    Add theme
-                  </Button>
-                </div>
               </div>
             );
           })()}
@@ -555,6 +535,34 @@ export function ThemeImportDialog({
             </Alert>
           ) : null}
         </DialogPanel>
+        <DialogFooter>
+          {conflicts ? (
+            <>
+              <Button size="sm" variant="ghost" onClick={() => onOpenChange(false)}>
+                Cancel
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => setConflicts(null)}>
+                Back
+              </Button>
+              <Button size="sm" variant="outline" onClick={() => resolveConflicts("copy")}>
+                Keep both
+              </Button>
+              <Button size="sm" onClick={() => resolveConflicts("update")}>
+                Update existing
+              </Button>
+            </>
+          ) : (
+            <>
+              <Button variant="ghost" onClick={() => onOpenChange(false)}>
+                Cancel
+              </Button>
+              <Button disabled={!json.trim() || isReading} onClick={handleSubmit}>
+                <PlusIcon />
+                Add theme
+              </Button>
+            </>
+          )}
+        </DialogFooter>
       </DialogPopup>
     </Dialog>
   );
