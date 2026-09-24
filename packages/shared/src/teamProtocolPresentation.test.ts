@@ -27,6 +27,22 @@ it("presents review and integration summaries", () => {
   ).toBe("Combined result verified.");
 });
 
+it("presents a valid scope response as its concise summary", () => {
+  const scope = {
+    summary: "The request separates into two independent areas with a shared acceptance check.",
+    independentAreas: ["Update the server projection", "Present the lead timeline response"],
+    risks: ["The initial scope turn shares a role with planning on the wire."],
+    acceptance: ["Valid scope is readable without exposing scheduler fields."],
+  };
+
+  expect(isTeamProtocolRole("scope")).toBe(true);
+  expect(teamProtocolSummary("scope", JSON.stringify(scope))).toBe(scope.summary);
+  expect(teamProtocolSummary("scope", JSON.stringify({ ...scope, acceptance: [] }))).toBeNull();
+  expect(teamProtocolSummary("scope", JSON.stringify({ ...scope, risks: [""] }))).toBeNull();
+  expect(looksLikeTeamProtocol('{"independentAreas":"')).toBe(true);
+  expect(looksLikeTeamProtocol('{"risks":"')).toBe(true);
+});
+
 it("does not reinterpret arbitrary or malformed JSON as a valid protocol summary", () => {
   expect(teamProtocolSummary("review", '{"hello":"world"}')).toBeNull();
   expect(teamProtocolSummary("review", '{"action":"blocked","summary":"Nope"}')).toBeNull();

@@ -1,4 +1,4 @@
-type ProtocolRole = "plan" | "worker" | "review" | "integrate";
+type ProtocolRole = "scope" | "plan" | "worker" | "review" | "integrate";
 
 export const TEAM_SUPERVISION_PROMPT_MARKER = "DISPATCH_FLOW_SUPERVISION_V1";
 
@@ -71,6 +71,32 @@ function isBoundedStringArray(
   );
 }
 
+function isScopeResponse(value: unknown): value is {
+  summary: string;
+  independentAreas: string[];
+  risks: string[];
+  acceptance: string[];
+} {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "summary" in value &&
+    typeof value.summary === "string" &&
+    value.summary.length > 0 &&
+    value.summary.length <= 4_000 &&
+    "independentAreas" in value &&
+    isBoundedStringArray(value.independentAreas, 8, 2_000) &&
+    value.independentAreas.every((area) => area.length > 0) &&
+    "risks" in value &&
+    isBoundedStringArray(value.risks, 8, 2_000) &&
+    value.risks.every((risk) => risk.length > 0) &&
+    "acceptance" in value &&
+    isBoundedStringArray(value.acceptance, 20, 2_000) &&
+    value.acceptance.length > 0 &&
+    value.acceptance.every((criterion) => criterion.length > 0)
+  );
+}
+
 function trailingFencedBlock(text: string): { prefix: string; json: string } | null {
   const trimmed = text.trimEnd();
   const match = /(?:^|\n)[\t ]*```(?:json)?[\t ]*\r?\n([\s\S]*?)\r?\n```[\t ]*$/u.exec(trimmed);
@@ -95,7 +121,13 @@ function isReviewCheck(value: unknown): boolean {
 }
 
 export function isTeamProtocolRole(role: string): role is ProtocolRole {
-  return role === "plan" || role === "worker" || role === "review" || role === "integrate";
+  return (
+    role === "scope" ||
+    role === "plan" ||
+    role === "worker" ||
+    role === "review" ||
+    role === "integrate"
+  );
 }
 
 /** Apply only to a response that has already been identified as a managed protocol turn. */
@@ -113,6 +145,11 @@ export function teamProtocolSummary(role: ProtocolRole, text: string): string | 
       text.trim().replace(/^```(?:json)?\s*\n([\s\S]*?)\n```$/, "$1"),
     );
     if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+
+    if (role === "scope") {
+      if (!isScopeResponse(value)) return null;
+      return value.summary.trim() || null;
+    }
 
     if (role === "plan") {
       const tasks = "tasks" in value ? parsePlanTasks(value.tasks) : null;
@@ -201,6 +238,8 @@ export function looksLikeTeamProtocol(text: string): boolean {
   if (firstKey === undefined) return false;
   const keys = [
     "acceptance",
+    "independentAreas",
+    "risks",
     "tasks",
     "rationale",
     "action",

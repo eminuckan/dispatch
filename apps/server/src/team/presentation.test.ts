@@ -140,6 +140,37 @@ it("projects attempts and derives the lead profile from the frozen policy", () =
   ]);
 });
 
+it("projects a valid scope response summary while preserving the plan turn wire role", () => {
+  const summary = "The request has two independent areas and one shared acceptance check.";
+  const scope = attempt(
+    "scope",
+    JSON.stringify({
+      summary,
+      independentAreas: ["Inspect server flow", "Format the lead response"],
+      risks: ["The scope and plan share a wire role."],
+      acceptance: ["The lead timeline shows the scope summary."],
+    }),
+  );
+
+  const turn = teamThreadView({ ...run, attempts: [scope] })!.turns[0]!;
+  expect(turn.role).toBe("plan");
+  expect(turn.summary).toBe(summary);
+});
+
+it("does not summarize a malformed scope response", () => {
+  const scope = attempt(
+    "scope",
+    JSON.stringify({
+      summary: "Looks plausible, but the scope contract is incomplete.",
+      independentAreas: [],
+      risks: [],
+      acceptance: [],
+    }),
+  );
+
+  expect(teamThreadView({ ...run, attempts: [scope] })!.turns[0]?.summary).toBeNull();
+});
+
 it("projects the worker result summary instead of the settlement JSON", () => {
   const worker = attempt(
     "work",

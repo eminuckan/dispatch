@@ -30,12 +30,17 @@ export function teamProviderDecisionState(
 // chat timeline. Structured scheduler replies are rendered as human text.
 export function teamConversationEntries(
   entries: ReadonlyArray<TimelineEntry>,
-  attempts: ReadonlyArray<Pick<TeamAttempt, "id" | "requestMessageId">>,
+  attempts: ReadonlyArray<
+    Pick<TeamAttempt, "id" | "requestMessageId"> & Partial<Pick<TeamAttempt, "role">>
+  >,
   turns: TeamThreadView["turns"] = [],
   initialMessage?: { id: string; objective: string },
   managedThreadRole?: "lead" | "worker",
 ): TimelineEntry[] {
   const internal = new Set(attempts.map((attempt) => attempt.requestMessageId));
+  const scopeAttempts = new Set(
+    attempts.flatMap((attempt) => (attempt.role === "scope" ? [attempt.id] : [])),
+  );
   const protocolTurns = turns.filter((turn) => isTeamProtocolRole(turn.role));
   const byTurn = new Map(
     protocolTurns.flatMap((turn) =>
@@ -66,9 +71,13 @@ export function teamConversationEntries(
         (precedingRequest?.providerTurnId ? undefined : precedingRequest);
       if (!turn || !isTeamProtocolRole(turn.role)) {
         const inferredRole = managedThreadRole === "lead" ? "plan" : managedThreadRole;
-        const inferredSummary = inferredRole
-          ? teamProtocolSummary(inferredRole, entry.message.text)
-          : null;
+        const inferredSummary =
+          inferredRole === "plan"
+            ? (teamProtocolSummary("scope", entry.message.text) ??
+              teamProtocolSummary(inferredRole, entry.message.text))
+            : inferredRole
+              ? teamProtocolSummary(inferredRole, entry.message.text)
+              : null;
         if (inferredSummary)
           return [{ ...entry, message: { ...entry.message, text: inferredSummary } }];
         if (
@@ -87,7 +96,8 @@ export function teamConversationEntries(
       }
       const finalResult = !turn.resultMessageId || turn.resultMessageId === entry.message.id;
       if (!finalResult && turn.role !== "plan") return [entry];
-      const summary = teamProtocolSummary(turn.role, entry.message.text);
+      const protocolRole = scopeAttempts.has(turn.id) ? "scope" : turn.role;
+      const summary = teamProtocolSummary(protocolRole, entry.message.text);
       if (summary) return [{ ...entry, message: { ...entry.message, text: summary } }];
       if (!looksLikeTeamProtocol(entry.message.text)) return [entry];
       if (entry.message.streaming) return [];
@@ -120,7 +130,7 @@ function looksLikeManagedThreadProtocol(role: "lead" | "worker", text: string): 
   if (firstKey === undefined) return false;
   const keys =
     role === "lead"
-      ? ["acceptance", "tasks", "rationale"]
+      ? ["summary", "independentAreas", "risks", "acceptance", "tasks", "rationale"]
       : ["summary", "commit", "changedFiles", "checks", "limitations"];
   return keys.some(
     (key) => key === firstKey || (!object.includes(`"${firstKey}"`) && key.startsWith(firstKey)),

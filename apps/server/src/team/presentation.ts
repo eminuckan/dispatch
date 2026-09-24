@@ -67,14 +67,7 @@ function turnStatus(status: TeamAttempt["status"]): TeamThreadTurnView["status"]
 
 function turnSummary(attempt: TeamAttempt): string | null {
   if (attempt.result === null) return null;
-  if (attempt.role === "scope") {
-    try {
-      const parsed = JSON.parse(attempt.result) as { summary?: unknown };
-      return typeof parsed.summary === "string" ? parsed.summary : null;
-    } catch {
-      return null;
-    }
-  }
+  if (attempt.role === "scope") return teamProtocolSummary("scope", attempt.result);
   if (
     attempt.role === "review" &&
     attempt.taskId === null &&

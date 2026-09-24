@@ -156,8 +156,13 @@ function message(
 function managedRequest(
   id: string,
   requestMessageId: string,
-): Pick<TeamAttempt, "id" | "requestMessageId"> {
-  return { id, requestMessageId: MessageId.make(requestMessageId) };
+  role?: TeamAttempt["role"],
+): Pick<TeamAttempt, "id" | "requestMessageId"> & Partial<Pick<TeamAttempt, "role">> {
+  return {
+    id,
+    requestMessageId: MessageId.make(requestMessageId),
+    ...(role === undefined ? {} : { role }),
+  };
 }
 
 const protocolTurn: TeamThreadView["turns"][number] = {
@@ -310,6 +315,90 @@ it("renders managed planning JSON without exposing the protocol object", () => {
   expect(visible[1].message.text).toContain("Completion checks:\n- Works");
   expect(visible[1].message.text).not.toContain('"acceptance"');
   expect(visible[1].message.text).not.toContain("private worker notes");
+});
+
+it("renders a valid scope response as its concise summary", () => {
+  const scope = {
+    summary: "The request separates into two useful areas with a shared acceptance check.",
+    independentAreas: ["Inspect server flow", "Present the Lead response"],
+    risks: ["Scope and plan use the same wire role."],
+    acceptance: ["The Lead timeline shows a concise summary."],
+  };
+  const response = message("scope-result", "assistant", "scope-turn", JSON.stringify(scope));
+  const scopeTurn = {
+    ...protocolTurn,
+    id: "scope-attempt",
+    role: "plan" as const,
+    taskId: null,
+    providerTurnId: TurnId.make("scope-turn"),
+    resultMessageId: MessageId.make("scope-result"),
+  };
+  const visible = teamConversationEntries(
+    [message("team-scope", "user", "scope-turn", "internal scope prompt"), response],
+    [managedRequest("scope-attempt", "team-scope", "scope")],
+    [scopeTurn],
+    { id: "team-scope", objective: "Implement the requested change." },
+    "lead",
+  );
+
+  expect(visible).toHaveLength(2);
+  expect(visible[0]?.kind === "message" && visible[0].message.text).toBe(
+    "Implement the requested change.",
+  );
+  expect(visible[1]?.kind === "message" && visible[1].message.text).toBe(scope.summary);
+  expect(visible[1]?.kind === "message" && visible[1].message.text).not.toContain(
+    "independentAreas",
+  );
+  expect(visible[1]?.kind === "message" && visible[1].message.text).not.toContain('"risks"');
+});
+
+it("keeps a malformed completed scope response distinguishable", () => {
+  const response = message(
+    "scope-result",
+    "assistant",
+    "scope-turn",
+    JSON.stringify({
+      summary: "Incomplete scope response.",
+      independentAreas: [],
+      risks: [],
+      acceptance: [],
+    }),
+  );
+  const scopeTurn = {
+    ...protocolTurn,
+    id: "scope-attempt",
+    role: "plan" as const,
+    taskId: null,
+    providerTurnId: TurnId.make("scope-turn"),
+    resultMessageId: MessageId.make("scope-result"),
+  };
+  const visible = teamConversationEntries(
+    [response],
+    [managedRequest("scope-attempt", "team-scope", "scope")],
+    [scopeTurn],
+  );
+
+  expect(visible[0]?.kind === "message" && visible[0].message.text).toBe(
+    "The lead’s structured response could not be read. Check the team status in Agents.",
+  );
+  expect(visible[0]?.kind === "message" && visible[0].message.text).not.toContain(
+    "Incomplete scope response.",
+  );
+});
+
+it("infers and summarizes a scope response in a managed Lead thread before team metadata arrives", () => {
+  const scope = {
+    summary: "The Lead found two bounded areas worth routing.",
+    independentAreas: ["Area A", "Area B"],
+    risks: [],
+    acceptance: ["Both areas remain within scope."],
+  };
+  const response = message("scope-result", "assistant", "scope-turn", JSON.stringify(scope));
+
+  expect(teamConversationEntries([response], [], [], undefined, "lead")[0]).toEqual({
+    ...response,
+    message: { ...response.message, text: scope.summary },
+  });
 });
 
 it("normalizes an exact managed worker result and preserves ordinary commentary", () => {
