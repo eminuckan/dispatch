@@ -51,7 +51,12 @@ import { ProcessRunner, layer as ProcessRunnerLive } from "../processRunner.ts";
 import { ProviderService } from "../provider/Services/ProviderService.ts";
 import { forkParked } from "../serverActivation.ts";
 import { OrchestrationAdvisor } from "./OrchestrationAdvisor.ts";
-import { profileUsesAutoEffort, selectionWithEffort } from "./ModelRoutingCatalog.ts";
+import {
+  limitDirectAutoEffort,
+  modelRoutingPrior,
+  profileUsesAutoEffort,
+  selectionWithEffort,
+} from "./ModelRoutingCatalog.ts";
 import { verificationDecision } from "./OrchestrationEvidence.ts";
 import { equivalentProfileOrder, OrchestrationModelCatalog } from "./OrchestrationModels.ts";
 import {
@@ -2610,12 +2615,19 @@ export const make = Effect.gen(function* () {
         );
       return { kind: "team" as const, source: decision.source, reason: decision.reason };
     }
+    const economical =
+      decision.difficulty === "routine"
+        ? candidates.filter(
+            (candidate) => modelRoutingPrior(candidate.selection.model).costClass === "economy",
+          )
+        : [];
+    const directCandidates = economical.length > 0 ? economical : candidates;
     const choice = yield* advisor.chooseProfile({
       purpose: "worker",
       objective,
-      candidates,
+      candidates: directCandidates,
     });
-    if (choice.source !== "jev" && candidates.length > 1) {
+    if (choice.source !== "jev" && directCandidates.length > 1) {
       const leads = yield* models.runnableProfiles(settings.policy, "lead", requiresImageInput);
       if (leads.length === 0)
         return yield* unavailable(
@@ -2628,14 +2640,24 @@ export const make = Effect.gen(function* () {
       };
     }
     const profile =
-      candidates.find((candidate) => candidate.id === choice.profileId) ?? candidates[0]!;
-    const effort = profileUsesAutoEffort(profile)
+      directCandidates.find((candidate) => candidate.id === choice.profileId) ??
+      directCandidates[0]!;
+    const effortChoices = profileUsesAutoEffort(profile)
+      ? yield* models.supportedEfforts(profile)
+      : null;
+    const advisedEffort = effortChoices
       ? yield* advisor.chooseEffort({
           objective,
           profile,
-          choices: yield* models.supportedEfforts(profile),
+          choices: effortChoices,
         })
       : null;
+    const effort = limitDirectAutoEffort(
+      profile,
+      decision.difficulty,
+      effortChoices,
+      advisedEffort,
+    );
     return {
       kind: "direct" as const,
       selection: selectionWithEffort(profile.selection, effort),

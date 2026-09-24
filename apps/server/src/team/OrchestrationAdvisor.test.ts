@@ -202,6 +202,8 @@ it.effect("lets only a confident hosted execution decision select direct mode", 
       body: request.url.endsWith("/execution")
         ? {
             mode: "direct",
+            difficulty: "routine",
+            workload: "short",
             source: "jev",
             confidence: 0.91,
             reason: "One worker can handle the bounded objective.",
@@ -215,7 +217,13 @@ it.effect("lets only a confident hosted execution decision select direct mode", 
       objective: "Migrate authentication across server and web and preserve production data.",
       workers: [profile("worker")],
     });
-    expect(decision).toMatchObject({ mode: "direct", source: "jev", confidence: 0.91 });
+    expect(decision).toMatchObject({
+      mode: "direct",
+      difficulty: "routine",
+      workload: "short",
+      source: "jev",
+      confidence: 0.91,
+    });
     expect(f.requests).toHaveLength(1);
     const request = f.requests[0]!;
     const body = requestJson(request);
@@ -232,6 +240,8 @@ it.effect("accepts an uncertain managed route without approving direct execution
     respond: () => ({
       body: {
         mode: "orchestrated",
+        difficulty: "substantial",
+        workload: "medium",
         source: "jev",
         confidence: 0.26,
         reason: "Smart Routing could not confirm direct execution; using a managed team.",
@@ -257,6 +267,8 @@ it.effect(
       respond: () => ({
         body: {
           mode: "direct",
+          difficulty: "routine",
+          workload: "short",
           source: "jev",
           confidence: 0.79,
           reason: "Uncertain.",
@@ -296,6 +308,21 @@ it.effect(
     });
   },
 );
+
+it.effect("accepts a legacy hosted decision without a task assessment", () => {
+  const f = fixture({
+    accountToken: "account-session",
+    respond: () => ({
+      body: { mode: "direct", source: "jev", confidence: 1, reason: "Incomplete." },
+    }),
+  });
+  return Effect.gen(function* () {
+    const advisor = yield* make;
+    expect(
+      yield* advisor.routeExecution({ objective: "Fix a dialog", workers: [profile("worker")] }),
+    ).toMatchObject({ mode: "direct", difficulty: null, workload: null, source: "jev" });
+  }).pipe(Effect.provide(f.layer));
+});
 
 it.effect("uses the highest advertised effort for economy models without a hosted call", () => {
   const f = fixture({ accountToken: "account-session" });

@@ -50,7 +50,14 @@ async function fixture(
               throw new SmartRoutingError(429, "smart_routing_quota_exhausted", 60);
             calls++;
             seen.push({ principal, ipHash });
-            return { mode: "direct", source: "jev", confidence: 0.99, reason: "One worker" };
+            return {
+              mode: "direct",
+              difficulty: "routine",
+              workload: "short",
+              source: "jev",
+              confidence: 0.99,
+              reason: "One worker",
+            };
           },
         },
   });

@@ -181,6 +181,8 @@ function fixture(
     readonly advisorSource?: "policy" | "jev";
     readonly routeAdvisorSource?: "policy" | "jev";
     readonly routeConfidence?: number;
+    readonly routeDifficulty?: "routine" | "substantial" | "frontier";
+    readonly routeWorkload?: "short" | "medium" | "long";
     readonly profileAdvisorSource?: "policy" | "jev";
     readonly executionMode?: TeamRun["executionMode"];
     readonly directProfiles?: ReadonlyArray<TeamModelProfile>;
@@ -314,6 +316,8 @@ function fixture(
       const mode = options.executionMode ?? "orchestrated";
       return Effect.succeed({
         mode,
+        difficulty: options.routeDifficulty ?? "substantial",
+        workload: options.routeWorkload ?? "medium",
         source: options.routeAdvisorSource ?? options.advisorSource ?? ("policy" as const),
         confidence: options.routeConfidence ?? 1,
         reason: mode === "direct" ? "Direct route" : "Orchestrated route",
@@ -653,6 +657,73 @@ it.effect("routes a single-model task through an allowed model without creating 
     });
     expect(f.current()).toBeNull();
     expect(f.commands).toEqual([]);
+  }).pipe(Effect.provide(f.layer));
+});
+
+it.effect("keeps routine Auto work on an economical allowed model", () => {
+  const sol: TeamModelProfile = {
+    ...leadProfile,
+    id: "premium-sol",
+    selection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-6-sol" },
+    capability: "frontier",
+  };
+  const luna: TeamModelProfile = {
+    ...leadProfile,
+    id: "economy-luna",
+    selection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-6-luna" },
+    capability: "complex",
+  };
+  const f = fixture(null, true, {
+    advisorConfigured: true,
+    executionMode: "direct",
+    advisorSource: "jev",
+    routeDifficulty: "routine",
+    routeWorkload: "short",
+    settingsPolicy: { ...policy, flowMode: "auto", profiles: [sol, luna] },
+    directProfiles: [sol, luna],
+  });
+  return Effect.gen(function* () {
+    const runtime = yield* make;
+    const decision = yield* runtime.route({
+      projectId,
+      prompt: "Match the existing dialog footer",
+    });
+    expect(decision).toMatchObject({ kind: "direct", selection: luna.selection });
+    expect(f.profileCalls[0]?.candidateProfileIds).toEqual([luna.id]);
+  }).pipe(Effect.provide(f.layer));
+});
+
+it.effect("limits premium Auto effort for routine direct work", () => {
+  const sol: TeamModelProfile = {
+    ...leadProfile,
+    id: "premium-sol",
+    selection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-6-sol" },
+    effortMode: "auto",
+    capability: "frontier",
+  };
+  const f = fixture(null, true, {
+    advisorConfigured: true,
+    executionMode: "direct",
+    advisorSource: "jev",
+    routeDifficulty: "routine",
+    routeWorkload: "short",
+    settingsPolicy: { ...policy, flowMode: "auto", profiles: [sol] },
+    directProfiles: [sol],
+    selectedEffort: "max",
+  });
+  return Effect.gen(function* () {
+    const runtime = yield* make;
+    const decision = yield* runtime.route({
+      projectId,
+      prompt: "Match the existing dialog footer",
+    });
+    expect(decision).toMatchObject({
+      kind: "direct",
+      selection: {
+        ...sol.selection,
+        options: [{ id: "reasoningEffort", value: "medium" }],
+      },
+    });
   }).pipe(Effect.provide(f.layer));
 });
 

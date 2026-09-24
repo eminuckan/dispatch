@@ -7,6 +7,7 @@ import {
 
 import {
   highestSupportedEffort,
+  limitDirectAutoEffort,
   modelRoutingPrior,
   profileUsesAutoEffort,
   selectionWithEffort,
@@ -75,4 +76,27 @@ it("keeps fixed user effort but allows an explicit Auto mode to override it", ()
     costClass: "premium",
     effortStrategy: "adaptive",
   });
+});
+
+it("bounds premium direct effort by the routed task difficulty", () => {
+  const profile: TeamModelProfile = {
+    id: "sol",
+    label: "Sol",
+    selection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-6-sol" },
+    lead: true,
+    worker: true,
+  };
+  const choices = { optionId: "reasoningEffort", values: ["low", "medium", "high", "max"] };
+  const selected = { optionId: "reasoningEffort", value: "max" };
+  expect(limitDirectAutoEffort(profile, "routine", choices, selected)?.value).toBe("medium");
+  expect(limitDirectAutoEffort(profile, "substantial", choices, selected)?.value).toBe("high");
+  expect(limitDirectAutoEffort(profile, "frontier", choices, selected)?.value).toBe("max");
+  expect(
+    limitDirectAutoEffort(
+      { ...profile, selection: { ...profile.selection, model: "gpt-6-luna" } },
+      "routine",
+      choices,
+      selected,
+    )?.value,
+  ).toBe("max");
 });

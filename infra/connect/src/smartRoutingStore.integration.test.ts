@@ -90,6 +90,8 @@ NodeTest.test(
     const base = config.smartRouting!;
     const decision = {
       mode: "direct" as const,
+      difficulty: "routine" as const,
+      workload: "short" as const,
       source: "jev" as const,
       confidence: 0.95,
       reason: "One worker",

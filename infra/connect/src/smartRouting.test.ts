@@ -67,6 +67,8 @@ NodeTest.test(
       }),
       {
         mode: "direct",
+        difficulty: "routine",
+        workload: "short",
         source: "jev",
         confidence: 0.95,
         reason:
@@ -180,6 +182,8 @@ NodeTest.test(
     });
     NodeAssert.deepEqual(managed, {
       mode: "orchestrated",
+      difficulty: "routine",
+      workload: "long",
       source: "jev",
       confidence: 0.26,
       reason: "Smart Routing assessed routine, long, one_stream, bounded; selected a managed team.",
@@ -206,7 +210,16 @@ NodeTest.test(
         decomposition: answer("independent_streams", ["one_stream", "independent_streams"]),
       },
     });
-    NodeAssert.equal("mode" in crossCutting && crossCutting.mode, "direct");
+    NodeAssert.equal("mode" in crossCutting && crossCutting.mode, "orchestrated");
+    const diagnostic = decodeSmartRoutingResponse("execution", parsed, {
+      model: SMART_ROUTING_MODEL,
+      answers: {
+        ...executionAnswers("direct"),
+        difficulty: answer("substantial", ["routine", "substantial", "frontier"]),
+        workload: answer("medium", ["short", "medium", "long"]),
+      },
+    });
+    NodeAssert.equal("mode" in diagnostic && diagnostic.mode, "orchestrated");
     const needlessTeam = decodeSmartRoutingResponse("execution", parsed, {
       model: SMART_ROUTING_MODEL,
       answers: executionAnswers("orchestrated"),
@@ -272,6 +285,62 @@ NodeTest.test(
   },
 );
 
+NodeTest.test("routine worker selection favors a capable economical model", () => {
+  const parsed = parseSmartRoutingInput(
+    "profile",
+    input({
+      purpose: "worker",
+      candidates: [
+        {
+          ...candidate,
+          id: "sol",
+          model: "gpt-6-sol",
+          costClass: "premium",
+          capability: "frontier",
+        },
+        {
+          ...candidate,
+          id: "luna",
+          model: "gpt-6-luna",
+          costClass: "economy",
+          capability: "complex",
+        },
+        {
+          ...candidate,
+          id: "flash",
+          model: "deepseek-v4.1-flash",
+          costClass: "economy",
+          capability: "complex",
+        },
+      ],
+    }),
+  );
+  const request = JSON.parse(smartRoutingRequest("profile", parsed));
+  NodeAssert.deepEqual(Object.keys(request.questions), ["profile", "difficulty"]);
+  const profile = {
+    type: "choice",
+    choice: "c0",
+    confidence: 0.7,
+    probabilities: { c0: 0.55, c1: 0.35, c2: 0.1 },
+  };
+  const route = (difficulty: "routine" | "substantial") =>
+    decodeSmartRoutingResponse("profile", parsed, {
+      model: SMART_ROUTING_MODEL,
+      answers: {
+        profile,
+        difficulty: answer(difficulty, ["routine", "substantial", "frontier"]),
+      },
+    });
+  NodeAssert.deepEqual(route("routine"), {
+    profileId: "luna",
+    source: "jev",
+    confidence: 0.7,
+    reason: "Smart Routing selected an economical allowed model for routine work.",
+  });
+  const substantial = route("substantial");
+  NodeAssert.equal("profileId" in substantial && substantial.profileId, "sol");
+});
+
 NodeTest.test("effort selection stays within advertised provider values", () => {
   const parsed = parseSmartRoutingInput(
     "effort",
@@ -296,6 +365,32 @@ NodeTest.test("effort selection stays within advertised provider values", () => 
     answers: { effort: answer("ultra", ["ultra"]) },
   });
   NodeAssert.equal("effort" in fallback && fallback.effort, "medium");
+});
+
+NodeTest.test("premium effort follows assessed work difficulty", () => {
+  const parsed = parseSmartRoutingInput(
+    "effort",
+    input({
+      candidates: [{ ...candidate, model: "gpt-6-sol", costClass: "premium" }],
+      effortChoices: ["low", "medium", "high", "max"],
+    }),
+  );
+  const request = JSON.parse(smartRoutingRequest("effort", parsed));
+  NodeAssert.deepEqual(Object.keys(request.questions), ["effort", "difficulty"]);
+  for (const [difficulty, expected] of [
+    ["routine", "medium"],
+    ["substantial", "high"],
+    ["frontier", "max"],
+  ] as const) {
+    const decision = decodeSmartRoutingResponse("effort", parsed, {
+      model: SMART_ROUTING_MODEL,
+      answers: {
+        effort: answer("max", ["low", "medium", "high", "max"]),
+        difficulty: answer(difficulty, ["routine", "substantial", "frontier"]),
+      },
+    });
+    NodeAssert.equal("effort" in decision && decision.effort, expected);
+  }
 });
 
 NodeTest.test("worker count is bounded by concurrency and can be zero", () => {

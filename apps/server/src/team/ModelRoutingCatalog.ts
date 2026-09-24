@@ -92,7 +92,31 @@ export function selectionWithEffort(
 }
 
 export function highestSupportedEffort(values: readonly string[]): string | null {
-  return [...values].toSorted((a, b) => EFFORT_RANK.indexOf(b) - EFFORT_RANK.indexOf(a))[0] ?? null;
+  return (
+    [...values].toSorted(
+      (a, b) => EFFORT_RANK.indexOf(b.toLowerCase()) - EFFORT_RANK.indexOf(a.toLowerCase()),
+    )[0] ?? null
+  );
+}
+
+export function limitDirectAutoEffort(
+  profile: TeamModelProfile,
+  difficulty: "routine" | "substantial" | "frontier" | null,
+  choices: { readonly optionId: string; readonly values: ReadonlyArray<string> } | null,
+  effort: { readonly optionId: string; readonly value: string } | null,
+): typeof effort {
+  if (!choices || !effort || difficulty === null || difficulty === "frontier") return effort;
+  const costClass = modelRoutingPrior(profile.selection.model).costClass;
+  if (costClass !== "premium" && costClass !== "scarce") return effort;
+  const ceiling = EFFORT_RANK.indexOf(difficulty === "routine" ? "medium" : "high");
+  const selected = EFFORT_RANK.indexOf(effort.value.toLowerCase());
+  if (selected <= ceiling) return effort;
+  const allowed = choices.values.filter((value) => {
+    const rank = EFFORT_RANK.indexOf(value.toLowerCase());
+    return rank >= 0 && rank <= ceiling;
+  });
+  const value = highestSupportedEffort(allowed);
+  return value ? { optionId: effort.optionId, value } : effort;
 }
 
 export function profileUsesAutoEffort(profile: TeamModelProfile): boolean {

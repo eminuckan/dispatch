@@ -47,7 +47,12 @@ const DecisionFields = {
   confidence: Probability,
   reason: Schema.String.check(Schema.isMaxLength(1_000)),
 };
-const ModeDecision = Schema.Struct({ mode: TeamExecutionMode, ...DecisionFields });
+const ModeDecision = Schema.Struct({
+  mode: TeamExecutionMode,
+  difficulty: Schema.optional(Schema.Literals(["routine", "substantial", "frontier"])),
+  workload: Schema.optional(Schema.Literals(["short", "medium", "long"])),
+  ...DecisionFields,
+});
 const ProfileDecision = Schema.Struct({ profileId: Schema.String, ...DecisionFields });
 const EffortDecision = Schema.Struct({ effort: Schema.String, ...DecisionFields });
 const WorkerCountDecision = Schema.Struct({ workers: Schema.Int, ...DecisionFields });
@@ -101,6 +106,8 @@ export interface OrchestrationAdvisorDecision {
 }
 export interface OrchestrationExecutionModeDecision {
   readonly mode: TeamExecutionMode;
+  readonly difficulty: "routine" | "substantial" | "frontier" | null;
+  readonly workload: "short" | "medium" | "long" | null;
   readonly source: OrchestrationAdvisorSource;
   readonly confidence: number;
   readonly reason: string;
@@ -369,6 +376,8 @@ export const make = Effect.gen(function* () {
   }): Effect.fn.Return<OrchestrationExecutionModeDecision> {
     const fallback: OrchestrationExecutionModeDecision = {
       mode: "orchestrated",
+      difficulty: null,
+      workload: null,
       source: "policy",
       confidence: 1,
       reason: "Using Flow Standard with your selected Lead and Worker models.",
@@ -383,7 +392,11 @@ export const make = Effect.gen(function* () {
       Option.isSome(decision) &&
       decision.value.source === "jev" &&
       (decision.value.mode === "orchestrated" || decision.value.mode === "direct")
-      ? decision.value
+      ? {
+          ...decision.value,
+          difficulty: decision.value.difficulty ?? null,
+          workload: decision.value.workload ?? null,
+        }
       : fallback;
   });
 
