@@ -128,6 +128,7 @@ function TeamActivity({
   run,
   environmentId,
   threadId,
+  activeThreadWorking,
   cwd,
   refresh,
   error,
@@ -135,6 +136,7 @@ function TeamActivity({
   run: TeamThreadView;
   environmentId: EnvironmentId;
   threadId: ThreadId;
+  activeThreadWorking: boolean;
   cwd: string | undefined;
   refresh: () => void;
   error: string | null;
@@ -165,27 +167,48 @@ function TeamActivity({
   const leadRunningTurnId =
     (leadThread?.session?.status === "running" ? leadThread.session.activeTurnId : null) ??
     (leadThread?.latestTurn?.state === "running" ? leadThread.latestTurn.turnId : null);
+  const currentLeadWorking = activeThreadWorking && threadId === run.leadThreadId;
   const activeThreadActivity = useMemo(
     () =>
       run.leadThreadId === null
         ? null
-        : { threadId: run.leadThreadId, runningTurnId: leadRunningTurnId },
-    [leadRunningTurnId, run.leadThreadId],
+        : {
+            threadId: run.leadThreadId,
+            runningTurnId: leadRunningTurnId,
+            working: currentLeadWorking,
+          },
+    [currentLeadWorking, leadRunningTurnId, run.leadThreadId],
   );
   const agents = teamActivityAgents(run, activeThreadActivity);
   const mailbox = teamMailboxEntries(run);
   const primaryRole = teamPrimaryRoleLabel(run);
-  const working = new Set(
+  const workingThreads = new Set(
     run.attempts
       .filter((attempt) => ["dispatching", "running"].includes(attempt.status))
       .flatMap((attempt) => (attempt.owner.threadId ? [attempt.owner.threadId] : [])),
-  ).size;
+  );
+  if ((leadRunningTurnId !== null || currentLeadWorking) && run.leadThreadId)
+    workingThreads.add(run.leadThreadId);
+  const leadWorking =
+    leadRunningTurnId !== null ||
+    currentLeadWorking ||
+    run.attempts.some(
+      (attempt) =>
+        attempt.owner.role === "lead" && ["dispatching", "running"].includes(attempt.status),
+    );
+  const pausedWhileLeadWorking =
+    run.status === "paused" && run.statusReason !== "Paused by user." && leadWorking;
+  const controlAction = pausedWhileLeadWorking
+    ? null
+    : run.status === "paused"
+      ? "resume"
+      : "pause";
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex items-center justify-between px-3 py-2 text-xs text-muted-foreground">
         <span>
           {agents.length} agents<span className="mx-1.5">·</span>
-          <span className="capitalize">{run.status}</span>
+          <span className="capitalize">{pausedWhileLeadWorking ? "Lead working" : run.status}</span>
         </span>
         <Button
           size="icon-micro"
@@ -390,14 +413,16 @@ function TeamActivity({
       )}
       {!["completed", "cancelled", "failed"].includes(run.status) && (
         <div className="flex items-center gap-1 px-3 py-1">
-          <Button
-            size="xs"
-            variant="ghost"
-            disabled={controlPending}
-            onClick={() => void change(run.status === "paused" ? "resume" : "pause")}
-          >
-            {run.status === "paused" ? "Resume" : "Pause"}
-          </Button>
+          {controlAction && (
+            <Button
+              size="xs"
+              variant="ghost"
+              disabled={controlPending}
+              onClick={() => void change(controlAction)}
+            >
+              {controlAction === "resume" ? "Resume" : "Pause"}
+            </Button>
+          )}
           <Button
             size="xs"
             variant="ghost"
@@ -410,8 +435,8 @@ function TeamActivity({
       )}
       <footer className="flex items-center justify-between px-3 py-2 font-mono text-[.7rem] text-muted-foreground">
         <span>
-          {working > 0
-            ? `${working} working`
+          {workingThreads.size > 0
+            ? `${workingThreads.size} working`
             : `${run.tasks.filter((task) => task.status === "settled").length} / ${run.tasks.length} tasks accepted`}
         </span>
         <span>{run.turns.length} activity steps</span>
@@ -542,11 +567,13 @@ export function TeamProviderLimitDecision({
 export function TeamAgentsPanel({
   environmentId,
   threadId,
+  activeThreadWorking = false,
   cwd,
   children,
 }: {
   environmentId: EnvironmentId | null;
   threadId: ThreadId | null;
+  activeThreadWorking?: boolean;
   cwd: string | undefined;
   children: ReactNode;
 }) {
@@ -574,6 +601,7 @@ export function TeamAgentsPanel({
       run={query.data}
       environmentId={environmentId}
       threadId={threadId}
+      activeThreadWorking={activeThreadWorking}
       cwd={cwd}
       refresh={query.refresh}
       error={query.error}

@@ -277,12 +277,14 @@ function leadActivityStatus(
   run: TeamThreadView,
   attempt: TeamAttempt | undefined,
   nativeRunningTurnId: string | null,
+  currentThreadWorking: boolean,
 ): TeamAgentActivityStatus {
   const active = attempt && attemptActivityStatus(attempt, "lead");
   if (nativeRunningTurnId !== null) {
     if (attempt?.providerTurnId === nativeRunningTurnId && active) return active;
     return "running";
   }
+  if (currentThreadWorking) return "running";
   if (active) return active;
   switch (run.status) {
     case "planning":
@@ -344,7 +346,7 @@ function workerActivityStatus(
 /** Derives truthful row state from the latest managed attempt before the scheduler phase. */
 export function teamActivityAgents(
   run: TeamThreadView,
-  activeThread: { threadId: string; runningTurnId: string | null } | null = null,
+  activeThread: { threadId: string; runningTurnId: string | null; working?: boolean } | null = null,
 ): ReadonlyArray<TeamActivityAgent> {
   const leadAttempt =
     run.attempts.findLast(
@@ -355,6 +357,8 @@ export function teamActivityAgents(
   const primaryRole = teamPrimaryRoleLabel(run);
   const nativeRunningTurnId =
     activeThread?.threadId === run.leadThreadId ? activeThread.runningTurnId : null;
+  const currentThreadWorking =
+    activeThread?.threadId === run.leadThreadId && activeThread.working === true;
   const agents: TeamActivityAgent[] = [
     {
       id: run.leadThreadId,
@@ -366,7 +370,7 @@ export function teamActivityAgents(
       dependencies: [],
       model: run.lead.label,
       effort: reasoningEffort(leadAttempt),
-      status: leadActivityStatus(run, leadAttempt, nativeRunningTurnId),
+      status: leadActivityStatus(run, leadAttempt, nativeRunningTurnId, currentThreadWorking),
       attempts: run.attempts.filter((attempt) => attempt.owner.role === "lead").length,
     },
     ...run.tasks.map((task, index) => {

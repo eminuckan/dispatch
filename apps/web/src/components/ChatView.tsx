@@ -9751,6 +9751,7 @@ export default function ChatView(props: ChatViewProps) {
       <TeamAgentsPanel
         environmentId={activeThreadRef?.environmentId ?? null}
         threadId={activeThreadRef?.threadId ?? null}
+        activeThreadWorking={isWorking}
         cwd={gitCwd ?? undefined}
       >
         <AgentsPanel

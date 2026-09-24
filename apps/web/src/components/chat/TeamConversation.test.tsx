@@ -129,8 +129,24 @@ function button(renderer: ReactTestRenderer, text: string) {
   return match;
 }
 
+function teamStatus(renderer: ReactTestRenderer) {
+  const status = renderer.root.findAll(
+    (node) => node.type === "span" && node.props.className === "capitalize",
+  )[0];
+  return status?.children.join("");
+}
+
+function hasButton(renderer: ReactTestRenderer, text: string) {
+  return (
+    renderer.root.findAll((node) => node.type === "button" && node.props.children === text).length >
+    0
+  );
+}
+
 beforeEach(() => {
   mocks.openPanel.mockReset();
+  mocks.query.mockReset();
+  mocks.thread.mockReset();
   mocks.providerDecision.mockReset().mockResolvedValue({
     _tag: "Success",
     value: {
@@ -399,6 +415,9 @@ it("tracks the lead thread while the Agents panel is opened from a worker chat",
         node.children.length === 1,
     )[0]?.children[0];
   expect(leadStatus()).toBe("running");
+  expect(teamStatus(renderer)).toBe("Lead working");
+  expect(hasButton(renderer, "Resume")).toBe(false);
+  expect(JSON.stringify(renderer.toJSON())).toContain("1 working");
 
   leadThread = {
     session: { status: "idle", activeTurnId: null },
@@ -408,6 +427,75 @@ it("tracks the lead thread while the Agents panel is opened from a worker chat",
     renderer.update(view());
   });
   expect(leadStatus()).toBe("paused");
+  expect(teamStatus(renderer)).toBe("paused");
+  expect(hasButton(renderer, "Resume")).toBe(true);
+  await act(async () => renderer.unmount());
+});
+
+it("shows optimistic lead work while a paused Flow ledger has not received the native turn", async () => {
+  const flow = { ...run(), status: "paused" as const, failovers: [] };
+  mocks.query.mockReturnValue({ data: flow, error: null, refresh: vi.fn() });
+  mocks.thread.mockReturnValue({
+    session: { status: "idle", activeTurnId: null },
+    latestTurn: { state: "completed", turnId: TurnId.make("previous-turn") },
+  });
+  const view = (working: boolean) => (
+    <TeamAgentsPanel
+      environmentId={environmentId}
+      threadId={currentThreadId}
+      activeThreadWorking={working}
+      cwd={undefined}
+    >
+      <div>lead chat</div>
+    </TeamAgentsPanel>
+  );
+  let renderer!: ReactTestRenderer;
+  await act(async () => {
+    renderer = create(view(true));
+  });
+  expect(teamStatus(renderer)).toBe("Lead working");
+  expect(hasButton(renderer, "Resume")).toBe(false);
+  expect(JSON.stringify(renderer.toJSON())).toContain("1 working");
+
+  await act(async () => renderer.update(view(false)));
+  expect(teamStatus(renderer)).toBe("paused");
+  expect(hasButton(renderer, "Resume")).toBe(true);
+  await act(async () => renderer.unmount());
+});
+
+it("keeps an intentional pause visible and resumable during an in-flight lead turn", async () => {
+  const flow = {
+    ...run(),
+    status: "paused" as const,
+    statusReason: "Paused by user.",
+    notice: "Paused by user.",
+    failovers: [],
+  };
+  const refresh = vi.fn();
+  mocks.query.mockReturnValue({ data: flow, error: null, refresh });
+  mocks.thread.mockReturnValue({
+    session: { status: "running", activeTurnId: TurnId.make("lead-turn") },
+    latestTurn: null,
+  });
+  let renderer!: ReactTestRenderer;
+  await act(async () => {
+    renderer = create(
+      <TeamAgentsPanel environmentId={environmentId} threadId={currentThreadId} cwd={undefined}>
+        <div>lead chat</div>
+      </TeamAgentsPanel>,
+    );
+  });
+  expect(teamStatus(renderer)).toBe("paused");
+  expect(hasButton(renderer, "Resume")).toBe(true);
+  await act(async () => {
+    button(renderer, "Resume").props.onClick();
+    await Promise.resolve();
+  });
+  expect(mocks.providerDecision).toHaveBeenCalledWith({
+    environmentId,
+    input: { id: flow.id, revision: flow.revision, action: "resume" },
+  });
+  expect(refresh).toHaveBeenCalledOnce();
   await act(async () => renderer.unmount());
 });
 
