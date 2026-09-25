@@ -3685,6 +3685,7 @@ pending_approval_requests AS (
         id: threadRow.value.threadId,
         projectId: threadRow.value.projectId,
         title: threadRow.value.title,
+        flowEnabled: threadRow.value.flowEnabled === 1,
         modelSelection: threadRow.value.modelSelection,
         runtimeMode: threadRow.value.runtimeMode,
         interactionMode: threadRow.value.interactionMode,

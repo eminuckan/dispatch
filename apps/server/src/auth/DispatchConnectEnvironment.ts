@@ -153,7 +153,7 @@ function managedEndpointStatus(
 }
 
 /** Server-only credential access for Connect transport. */
-export const readDispatchConnectEnvironmentConnection = Effect.fnUntraced(function* (
+const readDispatchConnectEnvironmentConnection = Effect.fnUntraced(function* (
   secrets: ServerSecretStore.ServerSecretStore["Service"],
 ) {
   const bytes = yield* secrets

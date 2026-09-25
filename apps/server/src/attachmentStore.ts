@@ -376,24 +376,6 @@ export function copyLeasedPendingAttachmentsForThread(input: {
   return copied;
 }
 
-export function deleteThreadAttachmentCopies(input: {
-  readonly attachmentsDir: string;
-  readonly attachments: ReadonlyArray<ChatAttachment>;
-}): void {
-  for (const attachment of input.attachments) {
-    if (parseThreadSegmentFromAttachmentId(attachment.id) === PENDING_ATTACHMENT_THREAD_SEGMENT) {
-      continue;
-    }
-    const path = resolveAttachmentPath({ attachmentsDir: input.attachmentsDir, attachment });
-    if (!path) continue;
-    try {
-      NodeFS.rmSync(path, { force: true });
-    } catch {
-      // Best-effort rollback for a command reservation that did not persist.
-    }
-  }
-}
-
 export function hasPendingAttachmentLease(input: {
   readonly attachmentsDir: string;
   readonly attachmentId: string;

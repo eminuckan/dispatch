@@ -608,21 +608,3 @@ export function releaseDraftAttachments(
     releaseDraftAttachment(attachment);
   }
 }
-
-/**
- * Drops only the browser-side upload bookkeeping after another durable owner
- * has accepted the pending attachment ids. Unlike `releaseDraftAttachments`,
- * this deliberately does NOT delete the server-side pending files: managed
- * teams can need the same source later when a worker thread claims its own
- * copy. Call this only after TeamStart has accepted ownership.
- */
-export function forgetDraftAttachmentUploads(
-  attachments: ReadonlyArray<ComposerImageAttachment | ComposerFileAttachment>,
-): void {
-  for (const attachment of attachments) {
-    // Submission awaits every upload before transferring ownership, so no
-    // live UploadJob should remain here. Clearing the state avoids the
-    // destructive cancel/release path.
-    clearUploadState(attachment.id);
-  }
-}

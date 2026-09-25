@@ -57,6 +57,6 @@ it.effect("creates isolated orchestration v2 tables without changing legacy team
       "orchestration_v2_runs",
       "orchestration_v2_settings",
     ]);
-    expect(migrationManifest.at(-1)).toEqual([56, "OrchestrationV2"]);
+    expect(migrationManifest.find(([id]) => id === 56)).toEqual([56, "OrchestrationV2"]);
   }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
 );

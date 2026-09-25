@@ -19,7 +19,6 @@ import {
   attachmentFileExtension,
   copyLeasedPendingAttachmentsForThread,
   createPendingAttachmentId,
-  deleteThreadAttachmentCopies,
   hasPendingAttachmentLease,
   parseThreadSegmentFromAttachmentId,
   pendingAttachmentLeaseHasOwner,
@@ -119,14 +118,6 @@ export const materializePendingAttachmentsForThread = Effect.fn(
     ownerId: input.ownerId,
     threadId: input.threadId,
   });
-});
-
-export const deleteMaterializedThreadAttachments = Effect.fn(
-  "AttachmentUpload.deleteMaterializedThreadAttachments",
-)(function* (attachments: ReadonlyArray<ChatAttachment>) {
-  if (attachments.length === 0) return;
-  const config = yield* ServerConfig.ServerConfig;
-  deleteThreadAttachmentCopies({ attachmentsDir: config.attachmentsDir, attachments });
 });
 
 const AttachmentUploadClaims = Schema.Struct({
