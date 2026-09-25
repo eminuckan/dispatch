@@ -121,14 +121,6 @@ function run(): TeamThreadView {
   };
 }
 
-function button(renderer: ReactTestRenderer, text: string) {
-  const match = renderer.root.findAll(
-    (node) => node.type === "button" && node.props.children === text,
-  )[0];
-  if (!match) throw new Error(`Missing button: ${text}`);
-  return match;
-}
-
 function teamStatus(renderer: ReactTestRenderer) {
   const status = renderer.root.findAll(
     (node) => node.type === "span" && node.props.className === "capitalize",
@@ -155,8 +147,7 @@ beforeEach(() => {
   });
 });
 
-it("renders provider-limit guidance and switches to the selected candidate with exact RPC input", async () => {
-  const refresh = vi.fn();
+it("shows previous provider decisions without offering retired actions", async () => {
   let renderer!: ReactTestRenderer;
   await act(async () => {
     renderer = create(
@@ -164,114 +155,13 @@ it("renders provider-limit guidance and switches to the selected candidate with 
         run={run()}
         environmentId={environmentId}
         currentThreadId={currentThreadId}
-        refresh={refresh}
+        refresh={vi.fn()}
       />,
     );
   });
-
-  const text = JSON.stringify(renderer.toJSON());
-  expect(text).toContain("Current Luna");
-  expect(text).toContain("hit a provider limit");
-  expect(text).toContain("another selected model/provider");
-  expect(text).toContain("Backup Astra");
-
-  await act(async () => {
-    button(renderer, "Continue with Backup Astra").props.onClick();
-    await Promise.resolve();
-    await Promise.resolve();
-  });
-  expect(mocks.providerDecision).toHaveBeenCalledWith({
-    environmentId,
-    input: {
-      id: "run-1",
-      revision: 7,
-      failoverId: "failover-1",
-      action: "switch",
-      profileId: "backup",
-    },
-  });
-  expect(refresh).toHaveBeenCalledOnce();
-  expect(mocks.openPanel).not.toHaveBeenCalled();
-});
-
-it("opens the authoritative replacement lead after a successful cross-provider switch", async () => {
-  const refresh = vi.fn();
-  const replacementLeadThreadId = ThreadId.make("team-run-1-lead-replacement");
-  mocks.providerDecision.mockResolvedValueOnce({
-    _tag: "Success",
-    value: {
-      lead: {
-        role: "lead",
-        profileId: "backup",
-        threadId: replacementLeadThreadId,
-        taskId: null,
-      },
-    },
-  });
-  let renderer!: ReactTestRenderer;
-  await act(async () => {
-    renderer = create(
-      <TeamProviderLimitDecision
-        run={run()}
-        environmentId={environmentId}
-        currentThreadId={currentThreadId}
-        refresh={refresh}
-      />,
-    );
-  });
-
-  await act(async () => {
-    button(renderer, "Continue with Backup Astra").props.onClick();
-    await Promise.resolve();
-    await Promise.resolve();
-  });
-
-  expect(mocks.openPanel).toHaveBeenCalledOnce();
-  expect(mocks.openPanel).toHaveBeenCalledWith(
-    { environmentId, threadId: replacementLeadThreadId },
-    "agents",
-  );
-  expect(refresh).toHaveBeenCalledOnce();
-});
-
-it("can pause a pending failover and surfaces command errors with a refresh action", async () => {
-  const refresh = vi.fn();
-  mocks.providerDecision.mockResolvedValueOnce({ _tag: "Failure", cause: new Error("stale run") });
-  let renderer!: ReactTestRenderer;
-  await act(async () => {
-    renderer = create(
-      <TeamProviderLimitDecision
-        run={run()}
-        environmentId={environmentId}
-        currentThreadId={currentThreadId}
-        refresh={refresh}
-      />,
-    );
-  });
-
-  await act(async () => {
-    button(renderer, "Pause Flow").props.onClick();
-    await Promise.resolve();
-    await Promise.resolve();
-  });
-  expect(mocks.providerDecision).toHaveBeenCalledWith({
-    environmentId,
-    input: {
-      id: "run-1",
-      revision: 7,
-      failoverId: "failover-1",
-      action: "pause",
-      profileId: null,
-    },
-  });
-  expect(refresh).toHaveBeenCalledOnce();
-  expect(mocks.openPanel).not.toHaveBeenCalled();
-  expect(JSON.stringify(renderer.toJSON())).toContain("stale run");
-
-  await act(async () => {
-    button(renderer, "Refresh").props.onClick();
-  });
-  expect(refresh).toHaveBeenCalledTimes(2);
+  expect(JSON.stringify(renderer.toJSON())).toContain("Previous managed run paused");
+  expect(JSON.stringify(renderer.toJSON())).toContain("Weekly provider limit reached.");
+  expect(renderer.root.findAllByType("button")).toHaveLength(0);
 });
 
 it("renders nothing outside awaiting-provider-decision", async () => {
@@ -428,7 +318,7 @@ it("tracks the lead thread while the Agents panel is opened from a worker chat",
   });
   expect(leadStatus()).toBe("paused");
   expect(teamStatus(renderer)).toBe("paused");
-  expect(hasButton(renderer, "Resume")).toBe(true);
+  expect(hasButton(renderer, "Resume")).toBe(false);
   await act(async () => renderer.unmount());
 });
 
@@ -459,22 +349,20 @@ it("shows optimistic lead work while a paused Flow ledger has not received the n
 
   await act(async () => renderer.update(view(false)));
   expect(teamStatus(renderer)).toBe("paused");
-  expect(hasButton(renderer, "Resume")).toBe(true);
+  expect(hasButton(renderer, "Resume")).toBe(false);
   await act(async () => renderer.unmount());
 });
 
-it("keeps an intentional pause visible and resumable during an in-flight lead turn", async () => {
+it("keeps an intentional pause visible in previous run history", async () => {
   const flow = {
     ...run(),
     status: "paused" as const,
     statusReason: "Paused by user.",
-    notice: "Paused by user.",
     failovers: [],
   };
-  const refresh = vi.fn();
-  mocks.query.mockReturnValue({ data: flow, error: null, refresh });
+  mocks.query.mockReturnValue({ data: flow, error: null, refresh: vi.fn() });
   mocks.thread.mockReturnValue({
-    session: { status: "running", activeTurnId: TurnId.make("lead-turn") },
+    session: { status: "idle", activeTurnId: null },
     latestTurn: null,
   });
   let renderer!: ReactTestRenderer;
@@ -486,16 +374,8 @@ it("keeps an intentional pause visible and resumable during an in-flight lead tu
     );
   });
   expect(teamStatus(renderer)).toBe("paused");
-  expect(hasButton(renderer, "Resume")).toBe(true);
-  await act(async () => {
-    button(renderer, "Resume").props.onClick();
-    await Promise.resolve();
-  });
-  expect(mocks.providerDecision).toHaveBeenCalledWith({
-    environmentId,
-    input: { id: flow.id, revision: flow.revision, action: "resume" },
-  });
-  expect(refresh).toHaveBeenCalledOnce();
+  expect(JSON.stringify(renderer.toJSON())).toContain("Previous managed run");
+  expect(hasButton(renderer, "Resume")).toBe(false);
   await act(async () => renderer.unmount());
 });
 

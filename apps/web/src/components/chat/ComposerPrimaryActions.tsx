@@ -1,4 +1,4 @@
-import { useComposerRouting } from "./TeamRoutingPreview";
+import { useFlowComposerModeContext } from "./FlowComposerMode";
 import { memo, type PointerEventHandler } from "react";
 import { ChevronDownIcon, ChevronLeftIcon } from "lucide-react";
 import { useEnvironmentIdentificationMode } from "~/hooks/useSettings";
@@ -74,9 +74,9 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   onInterrupt,
   onImplementPlanInNewThread,
 }: ComposerPrimaryActionsProps) {
-  const routing = useComposerRouting();
-  const orchestration = routing?.orchestration === true;
-  const routingBlocked = orchestration ? routing?.blocked : null;
+  const flowMode = useFlowComposerModeContext();
+  const flowEnabled = flowMode?.enabled === true;
+  const flowBlocked = flowMode?.blocked ?? null;
   const pointerFocusProps = preserveComposerFocusOnPointerDown
     ? { onPointerDown: preventPointerFocus }
     : undefined;
@@ -235,7 +235,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
         isConnecting ||
         isEnvironmentUnavailable ||
         !hasSendableContent ||
-        Boolean(routingBlocked)
+        Boolean(flowBlocked)
       }
 
       aria-label={
@@ -251,9 +251,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
                   ? "Sending"
                   : isRunning
                     ? "Queue message"
-                    : orchestration
-                      ? (routingBlocked ?? "Start Flow task")
-                      : "Send message"
+                    : (flowBlocked ?? (flowEnabled ? "Start Flow task" : "Send message"))
       }
     >
       {stageBackdropVariant ? (

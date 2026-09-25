@@ -297,6 +297,64 @@ it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-branch-pr-proje
   },
 );
 
+it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("dispatch-flow-mode-projection-")))(
+  "Flow mode projection",
+  (it) => {
+    it.effect("persists Flow mode on create and updates it on an existing thread", () =>
+      Effect.gen(function* () {
+        const pipeline = yield* OrchestrationProjectionPipeline;
+        const events = yield* OrchestrationEventStore;
+        const sql = yield* SqlClient.SqlClient;
+        const threadId = ThreadId.make("flow-mode-thread");
+        const now = "2026-09-25T00:00:00.000Z";
+        yield* events.append({
+          type: "thread.created",
+          eventId: EventId.make("flow-mode-created"),
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: now,
+          commandId: CommandId.make("flow-mode-create"),
+          causationEventId: null,
+          correlationId: null,
+          metadata: {},
+          payload: {
+            threadId,
+            projectId: ProjectId.make("flow-mode-project"),
+            title: "Flow mode",
+            flowEnabled: true,
+            modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-test" },
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            createdAt: now,
+            updatedAt: now,
+          },
+        });
+        yield* pipeline.bootstrap;
+        const mode = sql<{
+          flowEnabled: number;
+        }>`SELECT flow_enabled AS "flowEnabled" FROM projection_threads WHERE thread_id = ${threadId}`;
+        assert.deepEqual(yield* mode, [{ flowEnabled: 1 }]);
+        yield* events.append({
+          type: "thread.meta-updated",
+          eventId: EventId.make("flow-mode-disabled"),
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: now,
+          commandId: CommandId.make("flow-mode-update"),
+          causationEventId: null,
+          correlationId: null,
+          metadata: {},
+          payload: { threadId, flowEnabled: false, updatedAt: now },
+        });
+        yield* pipeline.bootstrap;
+        assert.deepEqual(yield* mode, [{ flowEnabled: 0 }]);
+      }),
+    );
+  },
+);
+
 it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
   it.effect("bootstraps all projection states and writes projection rows", () =>
     Effect.gen(function* () {

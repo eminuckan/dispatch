@@ -19,9 +19,7 @@ import {
 import { pairingApiErrorCode, type PairingValidationError } from "./pairing.ts";
 import { FixedWindowRateLimiter } from "./rateLimit.ts";
 import { ConnectClientIp } from "./clientIp.ts";
-import { SmartRoutingStore } from "./smartRoutingStore.ts";
-import { SmartRoutingService } from "./smartRoutingService.ts";
-import { createSmartRoutingHttpHandler } from "./smartRoutingHttp.ts";
+import { cleanupLegacyRoutingRecords } from "./legacyRoutingRetention.ts";
 
 class HttpError extends Error {
   readonly status: number;
@@ -141,34 +139,14 @@ const managedTunnelService = config.managedTunnel
 const pairingRedeemDeviceLimiter = new FixedWindowRateLimiter(30, 60_000);
 const pairingRedeemAccountLimiter = new FixedWindowRateLimiter(120, 60_000);
 const clientIp = new ConnectClientIp(config.trustedProxyCidrs);
-const routingStore = new SmartRoutingStore(database.pool, config.credentialSecret);
-const routingService = config.smartRouting
-  ? new SmartRoutingService({
-      store: routingStore,
-      config: config.smartRouting,
-      digestSecret: config.credentialSecret,
-    })
-  : null;
-const handleSmartRouting = createSmartRoutingHttpHandler({
-  store: routingStore,
-  service: routingService,
-  clientIp,
-  credentialSecret: config.credentialSecret,
-  getSession: async (token) => {
-    const session = await connectAuth.getSession({ authorization: `Bearer ${token}` });
-    return session ? { accountId: session.user.id, sessionId: session.session.id } : null;
-  },
-});
-
 await connectAuth.migrate();
 await database.migrate();
-await routingStore.migrate();
-await routingStore.cleanup();
+await cleanupLegacyRoutingRecords(database.pool);
 const routingCleanup = setInterval(
   () => {
-    void routingStore
-      .cleanup()
-      .catch(() => console.error("[dispatch-connect] routing retention cleanup failed"));
+    void cleanupLegacyRoutingRecords(database.pool).catch(() =>
+      console.error("[dispatch-connect] routing retention cleanup failed"),
+    );
   },
   60 * 60 * 1000,
 );
@@ -232,8 +210,6 @@ const server = NodeHttp.createServer(async (request, response) => {
       if (!session) throw new HttpError(401, "authentication_required");
       return session.user;
     };
-
-    if (await handleSmartRouting(request, response, url.pathname, ip)) return;
 
     if (url.pathname === "/v1/devices" && request.method === "POST") {
       const user = await sessionUser();

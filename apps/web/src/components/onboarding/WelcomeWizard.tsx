@@ -6,7 +6,6 @@ import type {
   ScopedProjectRef,
   ServerConfig,
   ServerProvider,
-  TeamFlowMode,
 } from "@dispatch/contracts";
 import { scopeProjectRef, scopeThreadRef } from "@dispatch/client-runtime/environment";
 import {
@@ -29,10 +28,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { TYPOGRAPHY_ADVANCED_STORAGE_KEY } from "../../appearanceFonts";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { useCompleteOnboarding } from "../../onboarding/firstRun";
-import {
-  firstReadyStandardFlowModel,
-  prepareOnboardingFlowPolicy,
-} from "../../onboarding/flowSetup.logic";
 import {
   groupOnboardingProjects,
   partitionOnboardingProjects,
@@ -59,8 +54,6 @@ import {
 import { useProjectScans } from "../../onboarding/useProjectScans";
 import { projectEnvironment } from "../../state/projects";
 import { serverEnvironment } from "../../state/server";
-import { teamEnvironment } from "../../state/team";
-import { useEnvironmentQuery } from "../../state/query";
 import { terminalEnvironment } from "../../state/terminal";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { connectPairing } from "../../connection/onboarding";
@@ -77,28 +70,10 @@ import { Tooltip, TooltipTrigger, TooltipPopup } from "../ui/tooltip";
 import { ScrollArea } from "../ui/scroll-area";
 import { Spinner } from "../ui/spinner";
 import { WizardFooter, WizardPanel, WizardSteps, WizardPopup, WizardHeader } from "../ui/wizard";
-import {
-  Dialog,
-  DialogClose,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogPanel,
-  DialogPopup,
-  DialogTitle,
-} from "../ui/dialog";
+import { Dialog, DialogPopup } from "../ui/dialog";
 import { toastManager } from "../ui/toast";
 import { cn } from "../../lib/utils";
 import { formatRelativeTime } from "../../timestampFormat";
-import {
-  DispatchConnectAccountAccess,
-  DispatchConnectAuthActions,
-} from "../../connect/DispatchConnectAccountAccess";
-import { readDispatchConnectAccountToken } from "../../connect/accountToken";
-import { resolveDispatchConnectUrl } from "../../connect/dispatchConnect";
-import { ensurePrimaryDispatchConnectEnvironmentLinked } from "../../connect/environmentRegistration";
-import { dispatchFlowSessionPayload } from "../../connect/flowSession";
-import { smartRoutingReasonMessage } from "../../flowPresentation";
 
 /**
  * First-run welcome wizard. Rendered over the workspace at `/welcome` on a
@@ -109,11 +84,11 @@ import { smartRoutingReasonMessage } from "../../flowPresentation";
  * re-runnable by clearing the flag.
  */
 
-type WizardStep = "connection" | "agents" | "flow" | "import";
+type WizardStep = "connection" | "agents" | "import";
 const NO_ENVIRONMENTS: readonly EnvironmentId[] = [];
 
 const AGENT_ONBOARDING_THREAD_ID = ThreadId.make("onboarding-agent-setup");
-const ONBOARDING_STAGES = ["Connect", "Agents", "Flow", "Projects"] as const;
+const ONBOARDING_STAGES = ["Connect", "Agents", "Projects"] as const;
 const SCAN_LIMIT_MESSAGE = "Scan limit reached. Some projects or conversations may be missing.";
 
 export function WelcomeWizard({
@@ -158,7 +133,7 @@ export function WelcomeWizard({
     setSetupIds(ids);
     setStep("agents");
   };
-  const stageIndex = step === "agents" ? 1 : step === "flow" ? 2 : step === "import" ? 3 : 0;
+  const stageIndex = step === "agents" ? 1 : step === "import" ? 2 : 0;
   const finish = useCallback(
     (projectRef?: ScopedProjectRef) => {
       if (finishingPromiseRef.current !== null) return finishingPromiseRef.current;
@@ -224,15 +199,7 @@ export function WelcomeWizard({
             isStepDisabled={(index) => isImporting || index >= stageIndex}
             onStepChange={(index) => {
               if (isImporting || index > stageIndex) return;
-              setStep(
-                index === 0
-                  ? "connection"
-                  : index === 1
-                    ? "agents"
-                    : index === 2
-                      ? "flow"
-                      : "import",
-              );
+              setStep(index === 0 ? "connection" : index === 1 ? "agents" : "import");
             }}
           />
         </WizardHeader>
@@ -254,9 +221,7 @@ export function WelcomeWizard({
             }}
           />
         ) : step === "agents" ? (
-          <AgentsStep environmentIds={setupIds} onContinue={() => setStep("flow")} />
-        ) : step === "flow" ? (
-          <FlowStep environmentIds={setupIds} onContinue={() => setStep("import")} />
+          <AgentsStep environmentIds={setupIds} onContinue={() => setStep("import")} />
         ) : (
           <ImportStep
             scans={scans}
@@ -583,355 +548,6 @@ function AgentsStep({
         </Button>
       </WizardFooter>
     </>
-  );
-}
-
-function FlowStep({
-  environmentIds,
-  onContinue,
-}: {
-  readonly environmentIds: readonly EnvironmentId[];
-  readonly onContinue: () => void;
-}) {
-  const { environments } = useEnvironments();
-  return (
-    <>
-      <WizardPanel>
-        <StepShell
-          title="Dispatch Flow"
-          description="Flow is optional. It plans work and verifies results with your agents."
-        >
-          <ScrollArea
-            scrollFade
-            className="mt-4 h-auto max-h-96 [&_[data-slot=scroll-area-scrollbar]]:opacity-100"
-          >
-            <div className="divide-y divide-border pr-3">
-              {environmentIds.map((environmentId) => (
-                <FlowEnvironmentSetup
-                  key={environmentId}
-                  environmentId={environmentId}
-                  machineLabel={
-                    environments.find((environment) => environment.environmentId === environmentId)
-                      ?.label ?? "Computer"
-                  }
-                />
-              ))}
-            </div>
-          </ScrollArea>
-        </StepShell>
-      </WizardPanel>
-      <WizardFooter>
-        <Button autoFocus onClick={onContinue}>
-          Continue to Projects
-          <ArrowRightIcon className="size-3.5" />
-        </Button>
-      </WizardFooter>
-    </>
-  );
-}
-
-function FlowEnvironmentSetup({
-  environmentId,
-  machineLabel,
-}: {
-  readonly environmentId: EnvironmentId;
-  readonly machineLabel: string;
-}) {
-  const config = useAtomValue(serverEnvironment.configValueAtom(environmentId));
-  const providers = useAtomValue(serverEnvironment.providersValueAtom(environmentId));
-  const capable = config?.teamRouting === true;
-  const settings = useEnvironmentQuery(
-    capable ? teamEnvironment.settings({ environmentId, input: {} }) : null,
-  );
-  const recommendModels = useAtomCommand(teamEnvironment.recommendModels, { reportFailure: false });
-  const saveSettings = useAtomCommand(teamEnvironment.saveSettings, { reportFailure: false });
-  const setSmartRoutingSession = useAtomCommand(teamEnvironment.setSmartRoutingSession, {
-    reportFailure: false,
-  });
-  const primaryEnvironmentId = usePrimaryEnvironmentId();
-  const connectBaseUrl = resolveDispatchConnectUrl();
-  const [pending, setPending] = useState(false);
-  const [message, setMessage] = useState<string | null>(null);
-  const [autoConfirmationOpen, setAutoConfirmationOpen] = useState(false);
-
-  async function syncAutoSession(accountToken: string): Promise<boolean> {
-    if (!connectBaseUrl) return false;
-    setPending(true);
-    setMessage("Preparing Flow Auto…");
-    try {
-      if (environmentId === primaryEnvironmentId) {
-        await ensurePrimaryDispatchConnectEnvironmentLinked(connectBaseUrl);
-      }
-      const result = await setSmartRoutingSession({
-        environmentId,
-        input: dispatchFlowSessionPayload(connectBaseUrl, accountToken),
-      });
-      if (result._tag === "Failure") {
-        const error = squashAtomCommandFailure(result);
-        setMessage(
-          error instanceof Error ? error.message : "Could not prepare Flow Auto on this computer.",
-        );
-        return false;
-      }
-      if (!result.value.smartRouting.available) {
-        setMessage(smartRoutingReasonMessage(result.value.smartRouting.reason));
-        settings.refresh();
-        return false;
-      }
-      setMessage("Flow Auto is available. Choose Auto to enable it.");
-      settings.refresh();
-      return true;
-    } catch (cause) {
-      setMessage(
-        cause instanceof Error
-          ? cause.message
-          : "Could not link this computer to Dispatch Connect.",
-      );
-      return false;
-    } finally {
-      setPending(false);
-    }
-  }
-
-  async function enableFlow(flowMode: TeamFlowMode) {
-    if (pending || !settings.data) return;
-    setPending(true);
-    setMessage(`Setting up Flow ${flowMode === "auto" ? "Auto" : "Standard"}…`);
-    try {
-      let recommendations = settings.data.policy.profiles;
-      if (flowMode === "standard" && recommendations.length === 0) {
-        if (settings.data.supportedProviderInstanceIds === undefined) {
-          setMessage("Update this environment's server to choose supported Flow models.");
-          return;
-        }
-        const model = firstReadyStandardFlowModel(
-          providers ?? [],
-          settings.data.supportedProviderInstanceIds,
-        );
-        recommendations = model ? [{ id: randomUUID(), ...model, lead: false, worker: false }] : [];
-      } else if (flowMode === "auto" && recommendations.length === 0) {
-        const recommended = await recommendModels({ environmentId, input: {} });
-        if (recommended._tag === "Failure") {
-          const error = squashAtomCommandFailure(recommended);
-          setMessage(
-            error instanceof Error ? error.message : "Could not find models for Dispatch Flow.",
-          );
-          return;
-        }
-        recommendations = recommended.value.profiles;
-      }
-      const policy = prepareOnboardingFlowPolicy({
-        policy: settings.data.policy,
-        recommendations,
-        flowMode,
-      });
-      if (!policy) {
-        setMessage(
-          "Flow needs at least one ready supported model. Finish agent sign-in first, or set up Flow later in Settings.",
-        );
-        return;
-      }
-      const saved = await saveSettings({ environmentId, input: { policy } });
-      if (saved._tag === "Failure") {
-        const error = squashAtomCommandFailure(saved);
-        setMessage(error instanceof Error ? error.message : "Could not save Dispatch Flow setup.");
-        return;
-      }
-      const autoWithoutLead =
-        flowMode === "auto" && !policy.profiles.some((profile) => profile.lead);
-      setMessage(
-        autoWithoutLead
-          ? "Flow Auto is ready for direct work. Add a Lead later for managed-team and Standard fallback coverage."
-          : `Flow ${flowMode === "auto" ? "Auto" : "Standard"} is ready.`,
-      );
-      settings.refresh();
-    } finally {
-      setPending(false);
-    }
-  }
-
-  if (!capable) {
-    return (
-      <section className="py-4 first:pt-0 last:pb-0">
-        <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
-          <p className="min-w-0 text-sm font-medium">{machineLabel}</p>
-          <span className="shrink-0 rounded-full bg-muted/50 px-2 py-0.5 text-xs font-medium text-muted-foreground">
-            Not supported
-          </span>
-        </div>
-        <p className="mt-1.5 text-xs text-muted-foreground">
-          This server does not support Dispatch Flow yet. You can continue setup without it.
-        </p>
-      </section>
-    );
-  }
-
-  if (!settings.data) {
-    return (
-      <section className="py-4 first:pt-0 last:pb-0">
-        <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
-          <p className="min-w-0 text-sm font-medium">{machineLabel}</p>
-          <span className="shrink-0 rounded-full bg-muted/50 px-2 py-0.5 text-xs font-medium text-muted-foreground">
-            Checking Flow
-          </span>
-        </div>
-        <p className="mt-1.5 text-xs text-muted-foreground" role="status">
-          {settings.error ? settings.error : "Checking Flow availability…"}
-        </p>
-      </section>
-    );
-  }
-
-  const currentMode = settings.data.policy.enabled
-    ? settings.data.policy.flowMode === "auto"
-      ? "Auto"
-      : "Standard"
-    : "Off";
-  const standardSelected = currentMode === "Standard";
-  const autoSelected = currentMode === "Auto";
-  const autoAvailable = settings.data.smartRouting.available;
-  const autoStatusId = `flow-auto-status-${environmentId}`;
-
-  return (
-    <section className="py-4 first:pt-0 last:pb-0">
-      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
-        <p className="min-w-0 text-sm font-medium">{machineLabel}</p>
-        <span className="shrink-0 rounded-full bg-muted/50 px-2 py-0.5 text-xs font-medium text-foreground">
-          Flow {currentMode}
-        </span>
-      </div>
-
-      <fieldset className="mt-3 grid grid-cols-1 gap-2 min-[480px]:grid-cols-2">
-        <legend className="sr-only">{machineLabel} Flow mode</legend>
-        <Button
-          size="sm"
-          variant={standardSelected ? "secondary" : "outline"}
-          aria-pressed={standardSelected}
-          disabled={pending}
-          onClick={() => void enableFlow("standard")}
-          className="h-auto min-h-14 w-full flex-col items-start justify-start gap-1.5 whitespace-normal rounded-lg px-3 py-2.5 text-left"
-        >
-          <span className="flex w-full items-center justify-between gap-2">
-            <span className="text-sm font-semibold">Use Standard</span>
-            {standardSelected ? (
-              <span className="inline-flex shrink-0 items-center gap-1 text-xs font-medium">
-                <CheckIcon className="size-3.5" /> Selected
-              </span>
-            ) : null}
-          </span>
-          <span
-            className={`text-xs leading-snug ${standardSelected ? "text-secondary-foreground/80" : "text-muted-foreground"}`}
-          >
-            Use your chosen Lead and Workers. No Dispatch account needed.
-          </span>
-        </Button>
-
-        <Dialog open={autoConfirmationOpen} onOpenChange={setAutoConfirmationOpen}>
-          <Button
-            size="sm"
-            variant={autoSelected ? "secondary" : "outline"}
-            aria-pressed={autoSelected}
-            aria-describedby={autoStatusId}
-            disabled={pending || !autoAvailable}
-            onClick={() => setAutoConfirmationOpen(true)}
-            className="h-auto min-h-14 w-full flex-col items-start justify-start gap-1.5 whitespace-normal rounded-lg px-3 py-2.5 text-left"
-          >
-            <span className="flex w-full items-center justify-between gap-2">
-              <span className="text-sm font-semibold">Use Auto</span>
-              {autoSelected ? (
-                <span className="inline-flex shrink-0 items-center gap-1 text-xs font-medium">
-                  <CheckIcon className="size-3.5" /> Selected
-                </span>
-              ) : null}
-            </span>
-            <span
-              className={`text-xs leading-snug ${autoSelected ? "text-secondary-foreground/80" : "text-muted-foreground"}`}
-            >
-              Smart Routing chooses one Worker or a team.
-            </span>
-          </Button>
-          <DialogPopup className="sm:max-w-lg">
-            <DialogHeader>
-              <DialogTitle>Enable Flow Auto?</DialogTitle>
-              <DialogDescription>
-                Auto uses Dispatch-hosted Smart Routing. Dispatch covers the routing service;
-                coding-model usage stays on your provider accounts.
-              </DialogDescription>
-            </DialogHeader>
-            <DialogPanel className="space-y-2 text-sm text-muted-foreground">
-              <p>
-                Auto sends the task objective and minimal selected-model metadata to Dispatch's
-                hosted router, which may use JEV for routing decisions.
-              </p>
-              <p>
-                If hosted routing is unavailable later, Flow keeps Auto selected. Standard can take
-                over when a Lead is configured; otherwise that task will ask you to add one.
-              </p>
-            </DialogPanel>
-            <DialogFooter>
-              <DialogClose render={<Button variant="outline" disabled={pending} />}>
-                Cancel
-              </DialogClose>
-              <Button
-                disabled={pending}
-                onClick={() => {
-                  setAutoConfirmationOpen(false);
-                  void enableFlow("auto");
-                }}
-              >
-                Enable Auto
-              </Button>
-            </DialogFooter>
-          </DialogPopup>
-        </Dialog>
-      </fieldset>
-
-      <div className="mt-2.5 flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
-        <p id={autoStatusId} className="min-w-0 flex-1 text-xs leading-snug text-muted-foreground">
-          {autoAvailable
-            ? "Auto is ready on this environment."
-            : smartRoutingReasonMessage(settings.data.smartRouting.reason)}
-        </p>
-        {!autoAvailable ? (
-          <DispatchConnectAccountAccess>
-            {(account) => (
-              <>
-                {account.pending ? (
-                  <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
-                    <Spinner className="size-3.5" /> Checking…
-                  </span>
-                ) : !account.configured ? null : !account.signedIn ? (
-                  <DispatchConnectAuthActions
-                    disabled={pending}
-                    onAuthenticated={async () => {
-                      account.refresh();
-                      if (!connectBaseUrl) return;
-                      const token = readDispatchConnectAccountToken(connectBaseUrl);
-                      if (token) await syncAutoSession(token);
-                    }}
-                  />
-                ) : account.accountToken ? (
-                  <Button
-                    size="xs"
-                    variant="outline"
-                    disabled={pending}
-                    onClick={() => void syncAutoSession(account.accountToken!)}
-                  >
-                    Prepare Auto
-                  </Button>
-                ) : null}
-              </>
-            )}
-          </DispatchConnectAccountAccess>
-        ) : null}
-      </div>
-
-      {message ? (
-        <p className="mt-2 text-xs text-muted-foreground" role="status">
-          {message}
-        </p>
-      ) : null}
-    </section>
   );
 }
 

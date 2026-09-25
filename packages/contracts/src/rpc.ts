@@ -14,6 +14,7 @@ import {
   TeamSettingsUpdate,
   TeamError,
 } from "./team.ts";
+import { FlowError, FlowStopInput, FlowThreadInput, FlowThreadView } from "./flow.ts";
 import * as Schema from "effect/Schema";
 import * as Rpc from "effect/unstable/rpc/Rpc";
 import * as RpcGroup from "effect/unstable/rpc/RpcGroup";
@@ -1398,7 +1399,19 @@ const WsSubscribeResourceTelemetryRpc = Rpc.make(WS_METHODS.subscribeResourceTel
 });
 
 const TeamRpcError = Schema.Union([TeamError, EnvironmentAuthorizationError]);
+const FlowRpcError = Schema.Union([FlowError, EnvironmentAuthorizationError]);
 export const WsRpcGroup = RpcGroup.make(
+  Rpc.make("flow.forThread", {
+    payload: FlowThreadInput,
+    success: Schema.NullOr(FlowThreadView),
+    error: FlowRpcError,
+  }),
+  Rpc.make("flow.stop", {
+    payload: FlowStopInput,
+    success: FlowThreadView,
+    error: FlowRpcError,
+  }),
+  // Older clients still decode these methods; the server rejects their mutations.
   Rpc.make("team.start", { payload: TeamStart, success: TeamRun, error: TeamRpcError }),
   Rpc.make("team.route", { payload: TeamRoute, success: TeamRouteResult, error: TeamRpcError }),
   Rpc.make("team.control", { payload: TeamControl, success: TeamRun, error: TeamRpcError }),

@@ -17,6 +17,7 @@ import { useNavigation } from "@react-navigation/native";
 import type {
   ApprovalRequestId,
   EnvironmentId,
+  FlowThreadView,
   MessageId,
   ModelSelection,
   OrchestrationThreadShell,
@@ -44,6 +45,8 @@ import {
   AppState,
   Keyboard,
   Platform,
+  Pressable,
+  ScrollView,
   useWindowDimensions,
   View,
   type GestureResponderEvent,
@@ -175,6 +178,12 @@ export interface ThreadDetailScreenProps {
   readonly onUpdateThreadModelSelection: (modelSelection: ModelSelection) => void;
   readonly onUpdateThreadRuntimeMode: (runtimeMode: RuntimeMode) => void;
   readonly onUpdateThreadInteractionMode: (interactionMode: ProviderInteractionMode) => void;
+  readonly onUpdateThreadFlowEnabled?: (enabled: boolean) => void;
+  readonly flowView?: FlowThreadView | null;
+  readonly flowError?: string | null;
+  readonly onRefreshFlow?: () => void;
+  readonly onOpenFlowWorker?: (threadId: ThreadId) => void;
+  readonly onStopFlowWorker?: (threadId: ThreadId) => void;
   readonly onRespondToApproval: (
     requestId: ApprovalRequestId,
     decision: ProviderApprovalDecision,
@@ -883,6 +892,82 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
 
   return (
     <View className="flex-1">
+      {props.flowError ? (
+        <View
+          className="min-h-11 flex-row items-center justify-between gap-3 border-b border-border px-4"
+          accessibilityLiveRegion="polite"
+        >
+          <AppText className="min-w-0 flex-1 text-xs text-destructive" numberOfLines={2}>
+            Could not load Flow workers.
+          </AppText>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Retry loading Flow workers"
+            className="min-h-11 justify-center px-2"
+            onPress={props.onRefreshFlow}
+          >
+            <AppText className="text-xs text-foreground">Retry</AppText>
+          </Pressable>
+        </View>
+      ) : null}
+      {props.flowView?.currentWorkerThreadId === null && props.flowView.workers.length > 0 ? (
+        <View className="border-b border-border px-4 py-2">
+          <View className="mb-1 flex-row items-center justify-between">
+            <AppText className="text-xs text-foreground-muted">Flow workers</AppText>
+            <Pressable
+              className="min-h-11 justify-center px-2"
+              accessibilityRole="button"
+              accessibilityLabel="Refresh Flow workers"
+              onPress={props.onRefreshFlow}
+            >
+              <AppText className="text-xs text-foreground-muted">Refresh</AppText>
+            </Pressable>
+          </View>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={{ gap: 8 }}
+          >
+            {props.flowView.workers.map((worker) => (
+              <View
+                key={worker.threadId}
+                className="max-w-56 flex-row items-center rounded-xl bg-subtle"
+              >
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={`Open ${worker.assignment}, ${worker.state}`}
+                  onPress={() => props.onOpenFlowWorker?.(worker.threadId)}
+                  className="min-h-11 min-w-0 flex-1 justify-center px-3 py-2"
+                >
+                  <AppText numberOfLines={1} className="text-sm">
+                    {worker.assignment}
+                  </AppText>
+                  <AppText className="text-xs text-foreground-muted">{worker.state}</AppText>
+                </Pressable>
+                {worker.state !== "stopped" ? (
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel={`Stop ${worker.assignment}`}
+                    onPress={() =>
+                      Alert.alert("Stop worker?", worker.assignment, [
+                        { text: "Keep working", style: "cancel" },
+                        {
+                          text: "Stop",
+                          style: "destructive",
+                          onPress: () => props.onStopFlowWorker?.(worker.threadId),
+                        },
+                      ])
+                    }
+                    className="min-h-11 justify-center px-2 py-2"
+                  >
+                    <AppText className="text-xs text-foreground-muted">Stop</AppText>
+                  </Pressable>
+                ) : null}
+              </View>
+            ))}
+          </ScrollView>
+        </View>
+      ) : null}
       {showContent ? (
         <View
           style={{ flex: 1 }}
@@ -1131,6 +1216,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                     onUpdateModelSelection={props.onUpdateThreadModelSelection}
                     onUpdateRuntimeMode={props.onUpdateThreadRuntimeMode}
                     onUpdateInteractionMode={props.onUpdateThreadInteractionMode}
+                    onUpdateFlowEnabled={props.onUpdateThreadFlowEnabled}
                     onExpandedChange={setComposerExpanded}
                     onEditorFocusChange={handleComposerFocusChange}
                   />

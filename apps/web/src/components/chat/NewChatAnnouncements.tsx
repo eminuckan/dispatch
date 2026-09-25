@@ -67,13 +67,13 @@ function FeatureAnnouncement({
 
 /** Product announcements live on the new-chat landing surface, outside the input. */
 export function NewChatAnnouncements({
-  teamRouting,
+  flow,
   environmentId,
 }: {
-  teamRouting: boolean;
+  flow: boolean;
   environmentId: EnvironmentId;
 }) {
-  const capabilities = { teamRouting };
+  const capabilities = { flow };
   return Object.values(FEATURE_DISCOVERIES)
     .filter((announcement) => capabilities[announcement.capability])
     .map((announcement) => (

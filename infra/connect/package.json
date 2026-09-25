@@ -6,8 +6,7 @@
     "dev": "node --watch src/server.ts",
     "start": "node src/server.ts",
     "test": "node --test src/**/*.test.ts",
-    "typecheck": "tsc --noEmit",
-    "routing:admin": "node src/routingAdmin.ts"
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@better-auth/expo": "1.7.5",

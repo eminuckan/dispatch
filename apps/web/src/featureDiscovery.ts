@@ -8,12 +8,12 @@ const DismissedFeatureIds = Schema.Array(Schema.String);
 
 export const FEATURE_DISCOVERIES = {
   flow: {
-    id: "dispatch-flow-v1",
+    id: "dispatch-flow-v2",
     title: "Introducing Dispatch Flow",
     description: "Plan, delegate, and review work with your selected agents.",
     actionLabel: "Explore Flow",
     to: "/settings/orchestration",
-    capability: "teamRouting",
+    capability: "flow",
   },
 } as const;
 

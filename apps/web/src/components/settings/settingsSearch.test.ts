@@ -271,14 +271,12 @@ describe("searchSettings", () => {
     expect(new Set(ids).size).toBe(ids.length);
   });
 
-  it("uses Flow and Smart Routing terms for orchestration discovery", () => {
-    expect(SETTINGS_SEARCH_ITEMS.find((item) => item.id === "routing-enabled")).toMatchObject({
-      title: "Enable Flow",
+  it("points Flow search to the current guide", () => {
+    expect(SETTINGS_SEARCH_ITEMS.find((item) => item.id === "flow")).toMatchObject({
+      title: "Flow",
       to: "/settings/orchestration",
+      targetId: "flow",
     });
-    const smartRouting = SETTINGS_SEARCH_ITEMS.find((item) => item.id === "routing-jev");
-    expect(smartRouting).toMatchObject({ title: "Smart Routing" });
-    expect(smartRouting?.searchTerms).not.toContain("api key");
   });
 
   it("serves anchor props to panels from the catalog", () => {

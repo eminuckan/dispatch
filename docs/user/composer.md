@@ -67,62 +67,17 @@ returns to the remembered selection.
 
 Leaving reasoning level or service tier unset uses the provider's own configuration.
 
-## Dispatch Flow and managed teams (experimental)
+## Flow
 
-Dispatch Flow is optional. You can choose it during onboarding or configure it later in
-**Dispatch Flow** in the sidebar or **Settings → Flow**. Choose a Flow mode and add allowed models.
-Auto chooses only from this list. Mark a model as **Lead**, **Worker**, or both to allow it in a
-managed team; a model with neither role remains available for direct Auto tasks. Set **Auto effort**
-to let routing choose a provider-supported reasoning level per task, or **Fixed effort** to keep the
-selected level.
+Turn on **Flow** in the composer for a thread when you want the selected agent to coordinate other agents. The model you select remains the lead. Flow does not choose a model for you or require a Dispatch Connect account. You can turn Flow on or off for an existing thread.
 
-**Standard** needs no Dispatch Connect account and does not use Dispatch's hosted routing
-service. It runs with the Lead and Worker models you selected on that environment.
+The lead can start up to five workers, choose an available model for each, send follow-up instructions, wait for results, and stop them. Each worker has its own thread and Git worktree. Open **Agents** to inspect workers and their conversations. Ask the lead to integrate or review their work; worker branches are not merged automatically.
 
-**Auto** requires a signed-in Dispatch Connect account and a linked environment. It uses
-Dispatch-hosted Smart Routing to assess task difficulty, workload, opportunities to delegate,
-and review value. For a single-model task it chooses from the allowed model list regardless of
-Lead or Worker role, selects a supported effort, and sends through ordinary chat. When the prompt
-includes images, Auto considers only allowed models with confirmed image input support.
-If none is available, the draft stays in the composer so you can add a compatible model.
-For a team it selects a Lead and effort, asks the Lead for a compact repository scope, chooses a
-useful worker count, then has the Lead write concrete directives. Each directive receives its
-own Worker model and effort. The team uses only models enabled for those roles. Dispatch sends
-the task objective, available model metadata, the compact scope, and worker directives to the
-hosted router, which may use JEV. Dispatch covers routing; coding-model usage remains on your
-provider accounts. If the initial hosted decision is unavailable, the task uses Standard with
-your saved model order and shows the fallback. Later unavailable decisions use bounded defaults
-or Standard, depending on the stage. Standard and managed teams require a selected Lead.
+Turning Flow off prevents new delegation. Work already assigned to workers continues; you can inspect or stop those workers in **Agents**.
 
-Flow is offered for new drafts rather than converting an already-started conversation. The
-composer shows **Flow · Standard** or **Flow · Auto** according to the environment setting.
-Turning Flow on applies it to that draft. Selecting a model manually turns Flow off for the
-draft and sends through the selected model normally.
+A worker needs a repository with a commit. Its checkout starts from the lead thread's current commit, so commit changes you want workers to see first. Flow workers persist across app restarts, and their threads remain available for inspection after they stop.
 
-Managed teams use isolated worktrees based on committed repository state, leaving your
-original checkout untouched. Dispatch keeps durable messages and
-attempt history across retries or reloads. Worker results are reviewed before integration,
-and every run is verified against persisted acceptance criteria before it can complete.
-Completion does not push or merge the managed worktree into your original checkout.
-
-Open **Agents** in the right panel to inspect the managed Lead, Workers,
-task state, attempts, messages, settlements, and blockers. **Pause** prevents new managed work
-from starting while current work settles; **Cancel** requests interruption.
-
-You can inspect worker conversations, but they are read-only; send instructions to the Lead.
-The Lead and Workers exchange progress messages automatically, visible in both relevant chats.
-Flow message status distinguishes a message waiting for a safe handoff from one accepted into an
-active or new agent turn.
-
-If a provider reaches a limit or becomes unavailable, Flow follows the saved provider-limit
-behavior: **Ask** before switching, **Continue with another selected provider** when Dispatch
-can make the allowed replacement safely, or **Pause** the run. Managed mode also blocks
-provider-native delegation where the adapter can enforce that restriction deterministically;
-providers without that guarantee are not treated as safe managed execution targets.
-
-Checks, reviews, and model selection reduce risk but do not guarantee correctness or remaining
-subscription quota. Uncommitted changes are not part of a new managed run; commit the state you
-want Flow to work from first.
+Older managed team runs remain visible in their existing threads, but new work starts through Flow.
 
 ## Quote an assistant response
 

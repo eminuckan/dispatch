@@ -1290,6 +1290,24 @@ describe("composerDraftStore project draft thread mapping", () => {
     });
   });
 
+  it("keeps a draft's Flow choice across a storage round-trip", async () => {
+    vi.useFakeTimers();
+    try {
+      const store = useComposerDraftStore.getState();
+      store.setProjectDraftThreadId(projectRef, draftId, { threadId });
+      store.setDraftThreadContext(draftId, { flowEnabled: true });
+      await vi.advanceTimersByTimeAsync(300);
+
+      resetComposerDraftStore();
+      await useComposerDraftStore.persist.rehydrate();
+      expect(useComposerDraftStore.getState().getDraftSession(draftId)?.flowEnabled).toBe(true);
+    } finally {
+      await useComposerDraftStore.persist.clearStorage();
+      vi.useRealTimers();
+      resetComposerDraftStore();
+    }
+  });
+
   it("removes a draft's previous project mapping when retargeted in place", () => {
     const store = useComposerDraftStore.getState();
     store.setProjectDraftThreadId(projectRef, draftId, { threadId });

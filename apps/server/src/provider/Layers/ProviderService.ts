@@ -918,6 +918,13 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     const access = yield* agentAccessSettings(threadId);
     if (access.browser) capabilities.add("preview");
     if (access.device) capabilities.add("device");
+    if (Option.isSome(projectionQuery)) {
+      const flowEnabled = yield* projectionQuery.value.getThreadShellById(threadId).pipe(
+        Effect.map((thread) => Option.isSome(thread) && thread.value.flowEnabled === true),
+        Effect.orElseSucceed(() => false),
+      );
+      if (flowEnabled) capabilities.add("flow");
+    }
     return capabilities;
   });
 
@@ -1677,10 +1684,27 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       );
     }
 
+    const flowEnabled = Option.isSome(projectionQuery)
+      ? yield* projectionQuery.value.getThreadShellById(parsed.threadId).pipe(
+          Effect.map((thread) => Option.isSome(thread) && thread.value.flowEnabled === true),
+          Effect.orElseSucceed(() => false),
+        )
+      : false;
+    const flowInstructions = flowEnabled
+      ? "<dispatch_flow>The user enabled Flow for this thread. You are the lead using the model they selected. You may use the flow_* MCP tools to start persistent workers with explicit assignments and model choices. Delegate only when useful, review their work, integrate changes yourself, and give the final answer. You may also work directly.</dispatch_flow>"
+      : undefined;
+    const flowInput = [flowInstructions, inputTextWithAttachmentContext]
+      .filter(Boolean)
+      .join("\n\n");
     const input = {
       ...parsed,
-      ...(inputTextWithAttachmentContext !== undefined
-        ? { input: inputTextWithAttachmentContext }
+      ...(flowInput.length > 0
+        ? {
+            input:
+              flowInput.length <= PROVIDER_SEND_TURN_MAX_INPUT_CHARS
+                ? flowInput
+                : inputTextWithAttachmentContext,
+          }
         : {}),
     };
     yield* Effect.annotateCurrentSpan({

@@ -9,7 +9,7 @@ function environment(
   id: string,
   options: {
     phase?: EnvironmentConnectionPhase;
-    teamRouting?: boolean;
+    flow?: boolean;
     loaded?: boolean;
   } = {},
 ) {
@@ -17,14 +17,14 @@ function environment(
     environmentId: EnvironmentId.make(id),
     label: id,
     connection: { phase: options.phase ?? "connected" },
-    serverConfig: options.loaded === false ? null : { teamRouting: options.teamRouting ?? true },
+    serverConfig: options.loaded === false ? null : { flow: options.flow ?? true },
   };
 }
 
 describe("sidebar Flow environment", () => {
   it("opens the connected remote environment's settings without a primary catalog entry", () => {
     const remote = environment("remote");
-    const unsupported = environment("unsupported", { teamRouting: false });
+    const unsupported = environment("unsupported", { flow: false });
     const environments = [unsupported, remote];
     const target = resolveSidebarFlowEnvironment({
       environments,
@@ -39,7 +39,7 @@ describe("sidebar Flow environment", () => {
   });
 
   it("keeps Flow available when only a secondary environment supports it", () => {
-    const primary = environment("primary", { teamRouting: false });
+    const primary = environment("primary", { flow: false });
     const remote = environment("remote");
     expect(
       resolveSidebarFlowEnvironment({
@@ -91,7 +91,7 @@ describe("sidebar Flow environment", () => {
   it("does not offer settings without a connected environment advertising Flow", () => {
     const offline = environment("offline", { phase: "offline" });
     const loading = environment("loading", { loaded: false });
-    const unsupported = environment("unsupported", { teamRouting: false });
+    const unsupported = environment("unsupported", { flow: false });
     const unknown = { ...environment("unknown"), serverConfig: {} };
     expect(
       resolveSidebarFlowEnvironment({

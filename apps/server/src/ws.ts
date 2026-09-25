@@ -1,5 +1,6 @@
 import { TeamRuntime } from "./team/TeamRuntime.ts";
-import { OrchestrationSettings } from "./team/OrchestrationSettings.ts";
+import { FlowRuntime } from "./flow/FlowRuntime.ts";
+import { setActiveMcpFlowEnabled } from "./mcp/McpSessionRegistry.ts";
 import {
   sameUsageLimitCommandCoverage,
   withUsageLimitsCommands,
@@ -33,6 +34,8 @@ import {
   CommandId,
   type DiscoveredLocalServerList,
   EventId,
+  FlowError,
+  TeamError,
   type EditorId,
   type FileManagerRevealKind,
   type OrchestrationClientOrigin,
@@ -503,7 +506,15 @@ const makeWsRpcLayer = (
     Effect.gen(function* () {
       const currentSessionId = currentSession.sessionId;
       const teamRuntime = yield* TeamRuntime;
-      const orchestrationSettings = yield* OrchestrationSettings;
+      const flowRuntime = Option.getOrNull(yield* Effect.serviceOption(FlowRuntime));
+      const legacyTeamUnavailable = () =>
+        Effect.fail(
+          new TeamError({
+            code: "unavailable",
+            message:
+              "Managed team creation and Auto routing have been retired. Enable Flow on a thread instead.",
+          }),
+        );
       const crypto = yield* Crypto.Crypto;
       const sql = yield* SqlClient.SqlClient;
       const projectionSnapshotQuery = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
@@ -1400,6 +1411,7 @@ const makeWsRpcLayer = (
                 threadId: command.threadId,
                 projectId: bootstrap.createThread.projectId,
                 title: bootstrap.createThread.title,
+                flowEnabled: bootstrap.createThread.flowEnabled,
                 modelSelection: bootstrap.createThread.modelSelection,
                 runtimeMode: bootstrap.createThread.runtimeMode,
                 interactionMode: bootstrap.createThread.interactionMode,
@@ -1823,8 +1835,9 @@ const makeWsRpcLayer = (
                   shellRevealInFileManager: true,
                   shellRevealInFileManagerKind: fileManagerRevealKind,
                 }),
-            teamRouting: true,
-            teamRoutingV2: true,
+            teamRouting: false,
+            teamRoutingV2: false,
+            flow: true,
             threadResumeCompletionMarker: true,
             threadSnapshotPagination: true,
             reasoningMessages: true,
@@ -1837,31 +1850,58 @@ const makeWsRpcLayer = (
           .pipe(Effect.ignoreCause({ log: true }), Effect.forkDetach, Effect.asVoid);
 
       return WsRpcGroup.of({
-        "team.start": (input) => observeRpcEffect("team.start", teamRuntime.start(input)),
-        "team.route": (input) => observeRpcEffect("team.route", teamRuntime.route(input)),
-        "team.control": (input) =>
+        "flow.forThread": ({ threadId }) =>
           observeRpcEffect(
-            "team.control",
-            teamRuntime
-              .control(input)
-              .pipe(Effect.tap(() => teamRuntime.tick().pipe(Effect.forkDetach))),
+            "flow.forThread",
+            flowRuntime ? flowRuntime.view(threadId) : Effect.succeed(null),
           ),
+        "flow.stop": ({ parentThreadId, workerThreadId }) =>
+          observeRpcEffect(
+            "flow.stop",
+            (flowRuntime
+              ? flowRuntime.stop(parentThreadId, workerThreadId)
+              : Effect.fail(new FlowError({ code: "unavailable", message: "Flow is unavailable." }))
+            ).pipe(
+              Effect.andThen(flowRuntime ? flowRuntime.view(parentThreadId) : Effect.succeed(null)),
+              Effect.flatMap((view) =>
+                view
+                  ? Effect.succeed(view)
+                  : Effect.fail(
+                      new FlowError({ code: "not-found", message: "Flow was not found." }),
+                    ),
+              ),
+            ),
+          ),
+        "team.start": () => observeRpcEffect("team.start", legacyTeamUnavailable()),
+        "team.route": () => observeRpcEffect("team.route", legacyTeamUnavailable()),
+        "team.control": () => observeRpcEffect("team.control", legacyTeamUnavailable()),
         "team.forThread": ({ threadId }) =>
           observeRpcEffect("team.forThread", teamRuntime.forThread(threadId)),
         "team.get": ({ id }) => observeRpcEffect("team.get", teamRuntime.get(id)),
         "team.list": () => observeRpcEffect("team.list", teamRuntime.list),
-        "team.settings": () => observeRpcEffect("team.settings", orchestrationSettings.settings),
-        "team.saveSettings": ({ policy }) =>
-          observeRpcEffect("team.saveSettings", orchestrationSettings.saveSettings(policy)),
-        "team.setSmartRoutingSession": (input) =>
+        "team.settings": () =>
           observeRpcEffect(
-            "team.setSmartRoutingSession",
-            orchestrationSettings.setSmartRoutingSession(input),
+            "team.settings",
+            Effect.succeed({
+              policy: {
+                revision: 0,
+                enabled: false,
+                flowMode: "standard" as const,
+                profiles: [],
+                maxActive: 5,
+                maxAttempts: 2,
+                providerLimitBehavior: "ask" as const,
+              },
+              smartRouting: { available: false, reason: "retired" },
+            }),
           ),
+        "team.saveSettings": () => observeRpcEffect("team.saveSettings", legacyTeamUnavailable()),
+        "team.setSmartRoutingSession": () =>
+          observeRpcEffect("team.setSmartRoutingSession", legacyTeamUnavailable()),
         "team.recommendModels": () =>
-          observeRpcEffect("team.recommendModels", orchestrationSettings.recommendModels()),
-        "team.providerDecision": (input) =>
-          observeRpcEffect("team.providerDecision", teamRuntime.providerDecision(input)),
+          observeRpcEffect("team.recommendModels", legacyTeamUnavailable()),
+        "team.providerDecision": () =>
+          observeRpcEffect("team.providerDecision", legacyTeamUnavailable()),
         [ORCHESTRATION_WS_METHODS.dispatchCommand]: (command) =>
           observeRpcEffect(
             ORCHESTRATION_WS_METHODS.dispatchCommand,
@@ -1895,10 +1935,22 @@ const makeWsRpcLayer = (
                   )
                 : false;
               const result = yield* Effect.andThen(
-                normalizedCommand.type === "thread.turn.start" ||
+                Effect.all([
+                  normalizedCommand.type === "thread.turn.start" ||
                   normalizedCommand.type === "thread.message.user.append"
-                  ? teamRuntime.assertClientMessageAllowed(normalizedCommand.threadId)
-                  : Effect.void,
+                    ? Effect.andThen(
+                        teamRuntime.assertClientMessageAllowed(normalizedCommand.threadId),
+                        flowRuntime
+                          ? flowRuntime.assertClientMessageAllowed(normalizedCommand.threadId)
+                          : Effect.void,
+                      )
+                    : Effect.void,
+                  normalizedCommand.type === "thread.meta.update" &&
+                  normalizedCommand.flowEnabled === true &&
+                  flowRuntime
+                    ? flowRuntime.assertCanEnableFlow(normalizedCommand.threadId)
+                    : Effect.void,
+                ]),
                 dispatchNormalizedCommand(normalizedCommand),
               ).pipe(
                 Effect.tapError(() => cleanupFailedUploadedAttachments(command, normalizedCommand)),
@@ -1906,6 +1958,14 @@ const makeWsRpcLayer = (
                   toDispatchCommandError(cause, "Failed to dispatch orchestration command"),
                 ),
               );
+              if (
+                normalizedCommand.type === "thread.meta.update" &&
+                normalizedCommand.flowEnabled !== undefined
+              )
+                yield* setActiveMcpFlowEnabled(
+                  normalizedCommand.threadId,
+                  normalizedCommand.flowEnabled,
+                );
               yield* recordClientCommandAnalytics(normalizedCommand);
               yield* ProjectCloneTracker.discardCloneForDeletedProject(
                 projectCloneTracker,

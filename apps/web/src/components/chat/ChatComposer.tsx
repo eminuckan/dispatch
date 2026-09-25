@@ -1,12 +1,10 @@
 import { svgMimeType } from "@dispatch/shared/image";
 import {
-  clearStartedTeamDraftIfUnchanged,
-  TeamRoutingProvider,
-  useTeamRoutingState,
-  TeamRoutingStatus,
-  TeamRoutingActions,
-  TeamManualModelControls,
-} from "./TeamRoutingPreview";
+  FlowComposerModeProvider,
+  useFlowComposerMode,
+  FlowComposerStatus,
+  FlowComposerToggle,
+} from "./FlowComposerMode";
 import { DESKTOP_PASTE_AS_TEXT_EVENT } from "../../lib/desktopPasteAsText";
 import { isLocalEnvironmentDisabled } from "../../localEnvironment";
 import { usePrimaryEnvironmentId } from "../../state/environments";
@@ -1394,7 +1392,9 @@ export interface ChatComposerProps {
     e?: { preventDefault: () => void },
     intent?: ComposerSubmissionIntent,
     routedSelection?: ModelSelection,
+    flowEnabled?: boolean,
   ) => void;
+  onFlowEnabledChange: (enabled: boolean) => Promise<void>;
   onInterrupt: () => void;
   onImplementPlanInNewThread: () => void;
   onRespondToApproval: (
@@ -1559,7 +1559,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   attachmentTargetKeyRef.current = attachmentTargetKey;
   const questionPreparations = useQuestionAttachmentPreparation((state) => state.counts);
   const prompt = composerDraft.prompt;
-  const [teamComposing, setTeamComposing] = useState(false);
   const composerImages = attachmentDraft.images;
   const composerFiles = attachmentDraft.files;
   const composerTerminalContexts = composerDraft.terminalContexts;
@@ -3711,29 +3710,35 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     showPlanFollowUpPrompt,
   ]);
 
-  const teamRouting = useTeamRoutingState({
-    scopeKey: composerTargetKey(composerDraftTarget),
+  const draftFlowSession = useComposerDraftStore((store) =>
+    typeof composerDraftTarget === "string"
+      ? (store.draftThreadsByThreadKey[composerDraftTarget] ?? null)
+      : null,
+  );
+  const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
+  const flowMode = useFlowComposerMode({
     environmentId,
-    projectId: routeKind === "draft" ? props.teamProjectId : null,
-    runtimeMode,
-    prompt: routeKind === "draft" ? prompt : "",
-    allowRouting: routeKind === "draft" && multipleModelSelections === null,
-    hasAttachments: composerImages.length + composerFiles.length > 0,
-    hasUnsupportedContext:
-      composerTerminalContexts.length +
-        composerPreviewAnnotations.length +
-        composerReviewComments.length >
-      0,
-    attachments: [...composerImages, ...composerFiles],
-    attachmentUploadsCapabilityKnown,
-    supportsAttachmentUploads,
-    attachmentDraftTarget,
-    composing: teamComposing,
+    projectId: props.teamProjectId ?? props.activeThreadShell?.projectId ?? null,
+    threadId: routeKind === "server" ? activeThreadId : null,
+    initialEnabled:
+      routeKind === "server"
+        ? props.activeThreadShell?.flowEnabled === true
+        : draftFlowSession?.flowEnabled === true,
+    allowRouting:
+      multipleModelSelections === null &&
+      props.activeThreadShell?.managedTeamWorker !== true &&
+      (routeKind === "server" || draftFlowSession !== null),
+    onExistingThreadChange: props.onFlowEnabledChange,
+    onDraftChange: (enabled) => {
+      if (typeof composerDraftTarget === "string") {
+        setDraftThreadContext(composerDraftTarget, { flowEnabled: enabled });
+      }
+    },
   });
 
   const submitComposer = useCallback(
     (event?: { preventDefault: () => void }, intent: ComposerSubmissionIntent = "foreground") => {
-      if (noProviderAvailable || isSendDisabled) {
+      if (noProviderAvailable || isSendDisabled || flowMode.pending) {
         event?.preventDefault();
         return;
       }
@@ -3764,56 +3769,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         });
         return;
       }
-      if (teamRouting.orchestration) {
-        event?.preventDefault();
-        if (!isConnecting && !isSendBusy && environmentUnavailable === null) {
-          const teamPromptSnapshot = promptRef.current;
-          const teamAttachmentIds = [...composerImages, ...composerFiles].map(
-            (attachment) => attachment.id,
-          );
-          const teamTarget = composerDraftTarget;
-          const teamTargetKey = composerTargetKey(teamTarget);
-          void teamRouting.submit().then((result) => {
-            if (!result) return;
-            if (composerDraftTargetKeyRef.current !== teamTargetKey) return;
-            if (result.kind === "direct") {
-              const currentDraft = getComposerDraft(teamTarget);
-              if (
-                !clearStartedTeamDraftIfUnchanged({
-                  currentDraft,
-                  promptSnapshot: teamPromptSnapshot,
-                  attachmentIds: teamAttachmentIds,
-                  clear: () => {},
-                })
-              ) {
-                toastManager.add({
-                  type: "info",
-                  title: "Draft changed while routing",
-                  description: "Send again to route the current draft.",
-                });
-                return;
-              }
-              onSend(undefined, intent, result.selection);
-              return;
-            }
-            const currentDraft = getComposerDraft(teamTarget);
-            if (
-              !clearStartedTeamDraftIfUnchanged({
-                currentDraft,
-                promptSnapshot: teamPromptSnapshot,
-                attachmentIds: teamAttachmentIds,
-                clear: () => clearComposerDraftPromptAndImages(teamTarget),
-              })
-            )
-              return;
-            promptRef.current = "";
-            composerImagesRef.current = [];
-            composerFilesRef.current = [];
-            composerRef.current?.resetCursorState();
-          });
-        }
-        return;
-      }
       const submission = submitComposerDraft({
         prompt: promptRef.current,
         submissionTarget: activePendingProgress ? "pending-user-input" : "provider-turn",
@@ -3822,7 +3777,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           // ChatView reports its final composed-input preflight through the
           // composer handle before its first asynchronous send step.
           providerInputRejectedRef.current = false;
-          onSend(sendEvent, intent);
+          onSend(sendEvent, intent, undefined, flowMode.enabled);
           return !providerInputRejectedRef.current;
         },
       });
@@ -3833,7 +3788,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       }
     },
     [
-      teamRouting,
+      flowMode,
       isConnecting,
       isSendBusy,
       environmentUnavailable,
@@ -4954,16 +4909,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     hidden: composerControlsHidden || restingHiddenBlockCount > 1,
   });
   const restingBlockDefs = [
-    ...(providerTraitsPicker && !teamRouting.orchestration
+    ...(providerTraitsPicker
       ? [
           {
             id: "traits",
             content: (
               <>
                 <ComposerControlSeparator size={composerControlsInStrip ? "xs" : "sm"} />
-                <TeamManualModelControls>
-                  {composerControlsInStrip ? restingProviderTraitsPicker : providerTraitsPicker}
-                </TeamManualModelControls>
+                {composerControlsInStrip ? restingProviderTraitsPicker : providerTraitsPicker}
               </>
             ),
           },
@@ -5102,7 +5055,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           interactionMode={interactionMode}
           runtimeMode={runtimeMode}
           showInteractionModeToggle={planModeUiEnabled}
-          traitsMenuContent={teamRouting.orchestration ? null : providerTraitsMenuContent}
+          traitsMenuContent={providerTraitsMenuContent}
           onToggleInteractionMode={toggleInteractionMode}
           onRuntimeModeChange={handleRuntimeModeChange}
         />
@@ -6064,12 +6017,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // Render
   // ------------------------------------------------------------------
   return (
-    <TeamRoutingProvider state={teamRouting}>
-      <TeamRoutingStatus />
+    <FlowComposerModeProvider state={flowMode}>
+      <FlowComposerStatus />
       <form
         ref={composerFormRef}
-        onCompositionStartCapture={() => setTeamComposing(true)}
-        onCompositionEndCapture={() => setTeamComposing(false)}
         onSubmit={submitComposer}
         onPointerDownCapture={(event) => {
           const target = event.target;
@@ -6334,14 +6285,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           >
             <span
               className="orchestration-composer-border"
-              data-active={teamRouting.orchestration}
+              data-active={flowMode.enabled}
               aria-hidden="true"
-            >
-              <span className="orchestration-border-plume">
-                <span className="orchestration-border-colors" />
-              </span>
-              <span className="orchestration-border-ignition" />
-            </span>
+            />
             <div
               ref={composerSurfaceRef}
               data-chat-composer-surface="true"
@@ -6843,7 +6789,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     }
                     className="flex shrink-0 flex-nowrap items-center justify-end gap-2"
                   >
-                    <TeamRoutingActions />
+                    <FlowComposerToggle />
                     {showComposerAttachAction ? (
                       <>
                         <input
@@ -6919,6 +6865,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           </ComposerSurface.Main>
         </div>
       </form>
-    </TeamRoutingProvider>
+    </FlowComposerModeProvider>
   );
 });

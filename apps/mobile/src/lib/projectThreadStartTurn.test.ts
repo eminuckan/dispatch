@@ -55,6 +55,7 @@ describe("project thread title", () => {
       runtimeMode: "full-access",
       interactionMode: "default",
       workspaceMode: "local",
+      flowEnabled: true,
       branch: null,
       worktreePath: null,
       startFromOrigin: false,
@@ -63,6 +64,7 @@ describe("project thread title", () => {
 
     expect(input.titleSeed).toBe(title);
     expect(input.bootstrap.createThread.title).toBe(input.titleSeed);
+    expect(input.bootstrap.createThread.flowEnabled).toBe(true);
     expect(input.message.text).toBe(text);
   });
 });

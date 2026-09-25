@@ -1,8 +1,7 @@
 import * as TeamRuntime from "./team/TeamRuntime.ts";
-import * as OrchestrationAdvisor from "./team/OrchestrationAdvisor.ts";
-import * as OrchestrationModelCatalog from "./team/OrchestrationModels.ts";
-import * as OrchestrationSettings from "./team/OrchestrationSettings.ts";
 import * as OrchestrationStore from "./team/OrchestrationStore.ts";
+import * as FlowRuntime from "./flow/FlowRuntime.ts";
+import * as FlowStore from "./flow/FlowStore.ts";
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeHttp from "node:http";
 
@@ -472,14 +471,12 @@ const AntigravityInstallationRefreshLive = Layer.effectDiscard(
 
 const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
   Layer.provideMerge(
-    TeamRuntime.reactorLayer.pipe(
-      Layer.provideMerge(TeamRuntime.layer),
-      Layer.provideMerge(OrchestrationSettings.layer),
-      Layer.provideMerge(OrchestrationModelCatalog.layer),
-      Layer.provideMerge(OrchestrationAdvisor.layer),
-      Layer.provideMerge(OrchestrationStore.layer),
+    FlowRuntime.reactorLayer.pipe(
+      Layer.provideMerge(FlowRuntime.layer),
+      Layer.provideMerge(FlowStore.layer),
     ),
   ),
+  Layer.provideMerge(TeamRuntime.layer.pipe(Layer.provideMerge(OrchestrationStore.layer))),
   Layer.provideMerge(AntigravityInstallationRefreshLive),
   Layer.provideMerge(ProviderAuthServiceLive),
   // Core Services

@@ -399,6 +399,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           threadId: command.threadId,
           projectId: command.projectId,
           title: command.title,
+          flowEnabled: command.flowEnabled ?? false,
           modelSelection: command.modelSelection,
           runtimeMode: command.runtimeMode,
           interactionMode: command.interactionMode,
@@ -1003,6 +1004,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
                 },
               }
             : {}),
+          ...(command.flowEnabled !== undefined ? { flowEnabled: command.flowEnabled } : {}),
           ...(command.regenerateTitle === true
             ? {
                 titleState: {

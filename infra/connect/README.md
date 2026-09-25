@@ -57,31 +57,10 @@ Environment-auth routes use `Authorization: Bearer dce_...`. Environment credent
 
 Clients can continue preferring a reachable Tailscale endpoint and use the managed Cloudflare endpoint as the internet fallback. The Cloudflare REST integration is isolated in this package and does not depend on the legacy relay, Alchemy, Cloudflare SDKs, PlanetScale, or Hyperdrive.
 
-## Hosted Smart Routing
+## Legacy routing data
 
-Set `CONNECT_JEV_API_KEY` in the **Connect server's secret environment** to sponsor task assessment, Lead and Worker model/effort selection, worker count, and model recommendations. Desktop and web clients never receive this key. Without it, or with `CONNECT_SMART_ROUTING_ENABLED=false`, the hosted feature is unavailable; standard local orchestration remains usable.
+Hosted model routing has been removed. Existing request records expire after 35 days and audit records after 180 days; cleanup runs at startup and hourly. Fresh deployments create no routing tables. Remove any `CONNECT_JEV_API_KEY`, `CONNECT_SMART_ROUTING_ENABLED`, and `CONNECT_ROUTING_*` variables from hosted service settings.
 
-`GET /v1/environments/:environmentId/smart-routing/capability` and `POST` to the sibling `execution`, `profile`, `effort`, `workers`, and `recommendations` endpoints require both the environment's active `dce_` credential and its owner's valid Better Auth session in `x-dispatch-connect-session`. The database binds the session, owner and environment; revocation and expiry are rechecked at admission. These routes do not issue local execution grants. Both incoming and complete upstream payloads are capped at 24,000 UTF-8 bytes; provider URL, model, and questions are server-owned. The client supplies a UUID request ID; retries reuse a completed decision and conflicting reuse is rejected. Valid low-confidence answers can be used when their probability distribution is well formed; unavailable or invalid initial decisions fall back to Standard.
+For correct signup and account IP limits, set `CONNECT_TRUSTED_PROXY_CIDRS` to the actual directly connecting reverse proxy CIDR(s), restrict origin access to that proxy, and configure it to overwrite or append `X-Forwarded-For`. An unset setting ignores forwarded headers and groups requests by socket address.
 
-Admission atomically reserves spend in PostgreSQL before contacting the provider. Default limits are $25/month and $2/day globally, 10,000 calls/month and 1,000/day per account, 100/day during an account's first 24 hours, two concurrent calls per account and 32 globally. The environment and IP limits share the same transaction; creating another environment does not reset account limits. The budget uses the pinned model's published input rate and full context ceiling, then settles validated successful input-token usage. Failed calls or missing usage keep their reservation because an upstream timeout may still be billed. Keep the provider account's own credit ceiling in place and review the pinned price when upgrading JEV.
-
-For correct signup and routing IP limits, set `CONNECT_TRUSTED_PROXY_CIDRS` to the actual directly connecting reverse proxy CIDR(s), restrict origin access to that proxy, and configure it to overwrite or append `X-Forwarded-For`. Never trust `0.0.0.0/0` or `::/0`. An unset setting ignores forwarded headers and groups requests by socket address. IPv6 quotas apply per /64. Better Auth signup/signin limits are stored in PostgreSQL; a client cannot choose the internal IP header used for those limits.
-
-Operator actions run **inside the Connect container**, through Dokploy's terminal or an equivalent authenticated administrative shell:
-
-```sh
-pnpm --filter @dispatch/connect routing:admin summary
-pnpm --filter @dispatch/connect routing:admin block ACCOUNT_ID "Repeated automated quota abuse"
-pnpm --filter @dispatch/connect routing:admin unblock ACCOUNT_ID "Reviewed and restored"
-pnpm --filter @dispatch/connect routing:admin account ACCOUNT_ID
-pnpm --filter @dispatch/connect routing:admin limits ACCOUNT_ID 50 500 "Temporary restriction"
-pnpm --filter @dispatch/connect routing:admin revoke-sessions ACCOUNT_ID "Compromised account session"
-pnpm --filter @dispatch/connect routing:admin pause "Upstream maintenance"
-pnpm --filter @dispatch/connect routing:admin resume "Maintenance completed"
-pnpm --filter @dispatch/connect routing:admin audit
-pnpm --filter @dispatch/connect routing:admin cleanup
-```
-
-There is no public administration endpoint. Blocking an account covers every one of its environments; `pause` disables all new sponsored calls across instances immediately. Usage records contain account/environment IDs, counts, token usage and keyed request/IP hashes, not objective text or credentials. Responses are retained for idempotency for up to 35 days and operator audit entries for 180 days; cleanup runs on startup and hourly. The provider still receives the objective and necessary model metadata. See the [Smart Routing operations guide](../../docs/operations/dispatch-connect.md#hosted-smart-routing) for the reservation calculation, all configurable limits, trusted proxies, retention and reversible operator actions.
-
-Run `pnpm --filter @dispatch/connect test` for focused checks. To include the real PostgreSQL concurrency/accounting tests, supply `DISPATCH_ROUTING_TEST_DATABASE_URL` pointing to an isolated loopback database whose name includes `test`. Those tests create and remove their own random schema; never point them at production.
+Run `pnpm --filter @dispatch/connect test` for focused checks.

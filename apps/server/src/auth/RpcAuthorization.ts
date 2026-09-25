@@ -21,6 +21,8 @@ type WsRpcMethod = RpcGroup.Rpcs<typeof WsRpcGroup>["_tag"];
  * runtime failure.
  */
 export const RPC_REQUIRED_SCOPES = {
+  "flow.forThread": AuthOrchestrationReadScope,
+  "flow.stop": AuthOrchestrationOperateScope,
   "team.start": AuthOrchestrationOperateScope,
   "team.route": AuthOrchestrationOperateScope,
   "team.control": AuthOrchestrationOperateScope,

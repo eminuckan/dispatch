@@ -58,10 +58,5 @@ to create zones, API tokens, or tunnel configuration just to pair another device
 ## Hosted metadata boundary
 
 Connect may store display names, ownership/membership, device public keys, environment public keys,
-online/last-seen state, endpoint metadata, and pairing state. Project and
-thread content is environment-local by default. Explicitly enabled Flow Auto sends bounded task
-objectives, Lead scope summaries, and worker directives to Connect for staged routing; it does
-not send repository files or provider credentials. Hosted decisions remain advisory: the
-environment validates model eligibility, supported effort, and concurrency before it executes.
-If a future product feature caches project metadata for faster mobile discovery, that is a
+online/last-seen state, endpoint metadata, and pairing state. Project and thread content stays on the environment. Flow coordination also runs on the environment and does not send objectives or worker directives to Connect. If a future product feature caches project metadata for faster mobile discovery, that is a
 separate explicit data decision rather than an accidental consequence of remote access.

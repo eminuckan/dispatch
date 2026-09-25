@@ -620,9 +620,9 @@ export function forgetDraftAttachmentUploads(
   attachments: ReadonlyArray<ComposerImageAttachment | ComposerFileAttachment>,
 ): void {
   for (const attachment of attachments) {
-    // Team routing awaits every upload before transferring ownership, so no
-    // live UploadJob should remain here. Clearing the state is sufficient and
-    // avoids the destructive cancel/release path.
+    // Submission awaits every upload before transferring ownership, so no
+    // live UploadJob should remain here. Clearing the state avoids the
+    // destructive cancel/release path.
     clearUploadState(attachment.id);
   }
 }

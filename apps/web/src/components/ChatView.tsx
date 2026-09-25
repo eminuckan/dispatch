@@ -345,6 +345,7 @@ import {
 import { terminalEnvironment } from "../state/terminal";
 import { threadEnvironment, useEnvironmentThread } from "../state/threads";
 import { teamEnvironment } from "../state/team";
+import { flowEnvironment } from "../state/flow";
 import {
   requestOlderThreadTurns,
   threadHasOlderTurns,
@@ -370,6 +371,7 @@ import { NewChatAnnouncements } from "./chat/NewChatAnnouncements";
 import { ExpandedImageDialog } from "./chat/ExpandedImageDialog";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
 import { TeamConversation, TeamAgentsPanel } from "./chat/TeamConversation";
+import { FlowWorkersPanel } from "./chat/FlowWorkersPanel";
 import { MessagesTimeline } from "./chat/MessagesTimeline";
 import type { AssistantCitationRequest } from "./chat/AssistantCitationSource";
 import { resolveTimelineIsAtEnd, worktreeSetupAgentStarted } from "./chat/MessagesTimeline.logic";
@@ -2006,11 +2008,27 @@ export default function ChatView(props: ChatViewProps) {
         managedTeamThreadQuery.isSuccess,
       )
     : null;
+  const flowWorkerCandidate =
+    isServerThread && activeThreadRef?.threadId.startsWith("flow-") === true;
+  const flowWorkerThreadQuery = useEnvironmentQuery(
+    flowWorkerCandidate && activeThreadRef
+      ? flowEnvironment.forThread({
+          environmentId: activeThreadRef.environmentId,
+          input: { threadId: activeThreadRef.threadId },
+        })
+      : null,
+  );
+  const isFlowWorkerThread =
+    flowWorkerCandidate &&
+    flowWorkerThreadQuery.data?.currentWorkerThreadId === activeThreadRef?.threadId;
+  const isCheckingFlowWorkerThread =
+    flowWorkerCandidate && !isFlowWorkerThread && !flowWorkerThreadQuery.isSuccess;
   // Keep team routes closed until run ownership is known. The server enforces
   // the same rule, so a transient query failure cannot expose a working composer.
   const isManagedWorkerThread = managedTeamThreadAccess === "worker";
   const isCheckingManagedTeamThread = managedTeamThreadAccess === "checking";
   const managedTeamLeadThreadId = managedTeamThreadQuery.data?.leadThreadId ?? null;
+  const workerLeadThreadId = flowWorkerThreadQuery.data?.parentThreadId ?? managedTeamLeadThreadId;
   // Managed lead turns dispatch their own frozen selection; the thread copy can
   // lag the Auto-routed effort, so the composer shows what the Lead really runs.
   const managedTeamLeadSelection = useMemo(
@@ -7339,6 +7357,7 @@ export default function ChatView(props: ChatViewProps) {
     },
     /** A queued message being sent now instead of the live composer draft. */
     queuedMessage?: QueuedComposerMessage,
+    flowEnabled?: boolean,
   ) => {
     e?.preventDefault();
     if (isManagedWorkerThread || isCheckingManagedTeamThread) return;
@@ -8434,6 +8453,7 @@ export default function ChatView(props: ChatViewProps) {
                     createThread: {
                       projectId: activeProject.id,
                       title,
+                      flowEnabled: flowEnabled === true,
                       modelSelection: threadCreateModelSelection,
                       runtimeMode,
                       interactionMode: sendInteractionMode,
@@ -9763,11 +9783,23 @@ export default function ChatView(props: ChatViewProps) {
         activeThreadWorking={isWorking}
         cwd={gitCwd ?? undefined}
       >
-        <AgentsPanel
-          model={agentPanelModel}
+        <FlowWorkersPanel
+          key={activeThreadKey}
           environmentId={activeThreadRef?.environmentId ?? null}
           threadId={activeThreadRef?.threadId ?? null}
-        />
+          supported={serverConfig?.flow === true}
+          expected={
+            activeThreadMetadata?.flowEnabled === true ||
+            activeThreadRef?.threadId.startsWith("flow-") === true
+          }
+          hasNativeAgents={agentPanelModel.hasAgents}
+        >
+          <AgentsPanel
+            model={agentPanelModel}
+            environmentId={activeThreadRef?.environmentId ?? null}
+            threadId={activeThreadRef?.threadId ?? null}
+          />
+        </FlowWorkersPanel>
       </TeamAgentsPanel>
     ) : renderedRightPanelSurface?.kind === "device" ? (
       <Suspense fallback={null}>
@@ -10141,12 +10173,12 @@ export default function ChatView(props: ChatViewProps) {
                       </div>
                     </div>
                   ) : null}
-                  {isManagedWorkerThread ? (
+                  {isManagedWorkerThread || isFlowWorkerThread ? (
                     <div className="pointer-events-auto flex items-center justify-between gap-3 rounded-xl border border-border/70 bg-background px-4 py-3 shadow-sm">
                       <p className="text-sm text-muted-foreground">
                         This worker chat is read-only. Send instructions to the Flow lead.
                       </p>
-                      {managedTeamLeadThreadId ? (
+                      {workerLeadThreadId ? (
                         <Button
                           size="sm"
                           variant="outline"
@@ -10154,7 +10186,7 @@ export default function ChatView(props: ChatViewProps) {
                             void navigate({
                               to: "/$environmentId/$threadId",
                               params: buildThreadRouteParams(
-                                scopeThreadRef(environmentId, managedTeamLeadThreadId),
+                                scopeThreadRef(environmentId, workerLeadThreadId),
                               ),
                             });
                           }}
@@ -10163,21 +10195,25 @@ export default function ChatView(props: ChatViewProps) {
                         </Button>
                       ) : null}
                     </div>
-                  ) : isCheckingManagedTeamThread ? (
+                  ) : isCheckingManagedTeamThread || isCheckingFlowWorkerThread ? (
                     <div
                       className="pointer-events-auto flex items-center justify-between gap-3 rounded-xl border border-border/70 bg-background px-4 py-3 text-sm text-muted-foreground shadow-sm"
                       role="status"
                     >
                       <span>
-                        {managedTeamThreadQuery.error
+                        {managedTeamThreadQuery.error || flowWorkerThreadQuery.error
                           ? "Could not verify this Flow chat."
                           : "Checking Flow chat permissions…"}
                       </span>
-                      {managedTeamThreadQuery.error ? (
+                      {managedTeamThreadQuery.error || flowWorkerThreadQuery.error ? (
                         <Button
                           size="sm"
                           variant="outline"
-                          onClick={managedTeamThreadQuery.refresh}
+                          onClick={
+                            isCheckingFlowWorkerThread
+                              ? flowWorkerThreadQuery.refresh
+                              : managedTeamThreadQuery.refresh
+                          }
                         >
                           Retry
                         </Button>
@@ -10316,7 +10352,27 @@ export default function ChatView(props: ChatViewProps) {
                                 onPageScrollKeyUp={onComposerPageScrollKeyUp}
                                 onPageScrollRelease={onComposerPageScrollRelease}
                                 onCompactContext={onCompactContext}
-                                onSend={onSend}
+                                onSend={(event, intent, selection, flowEnabled) => {
+                                  void onSend(
+                                    event,
+                                    intent,
+                                    selection,
+                                    undefined,
+                                    undefined,
+                                    flowEnabled,
+                                  );
+                                }}
+                                onFlowEnabledChange={async (enabled) => {
+                                  if (!activeThread || isLocalDraftThread) return;
+                                  const result = await updateThreadMetadata({
+                                    environmentId,
+                                    input: { threadId: activeThread.id, flowEnabled: enabled },
+                                  });
+                                  if (result._tag === "Failure")
+                                    throw new Error(
+                                      chatActionErrorMessage(squashAtomCommandFailure(result)),
+                                    );
+                                }}
                                 onInterrupt={onInterrupt}
                                 onImplementPlanInNewThread={onImplementPlanInNewThread}
                                 onRespondToApproval={onRespondToApproval}
@@ -10398,7 +10454,7 @@ export default function ChatView(props: ChatViewProps) {
                         </ComposerSurface.Shell>
                         {routeKind === "draft" && isDraftHeroState ? (
                           <NewChatAnnouncements
-                            teamRouting={serverConfig?.teamRouting === true}
+                            flow={serverConfig?.flow === true}
                             environmentId={environmentId}
                           />
                         ) : null}

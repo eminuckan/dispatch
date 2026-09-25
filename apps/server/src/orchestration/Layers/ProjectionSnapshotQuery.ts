@@ -587,6 +587,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           model_selection_json AS "modelSelection",
           runtime_mode AS "runtimeMode",
           interaction_mode AS "interactionMode",
+          flow_enabled AS "flowEnabled",
           branch,
           worktree_path AS "worktreePath",
           linked_pull_request_json AS "linkedPullRequest",
@@ -610,6 +611,8 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           pending_user_input_count AS "pendingUserInputCount",
           has_actionable_proposed_plan AS "hasActionableProposedPlan",
           thread_id IN (
+            SELECT thread_id FROM flow_workers
+            UNION
             SELECT json_extract(member.value, '$.command.threadId')
             FROM team_runs, json_each(team_runs.payload, '$.execution.turns') AS member
             WHERE json_extract(member.value, '$.role') = 'worker'
@@ -643,6 +646,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           model_selection_json AS "modelSelection",
           runtime_mode AS "runtimeMode",
           interaction_mode AS "interactionMode",
+          flow_enabled AS "flowEnabled",
           branch,
           worktree_path AS "worktreePath",
           linked_pull_request_json AS "linkedPullRequest",
@@ -666,6 +670,8 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           pending_user_input_count AS "pendingUserInputCount",
           has_actionable_proposed_plan AS "hasActionableProposedPlan",
           thread_id IN (
+            SELECT thread_id FROM flow_workers
+            UNION
             SELECT json_extract(member.value, '$.command.threadId')
             FROM team_runs, json_each(team_runs.payload, '$.execution.turns') AS member
             WHERE json_extract(member.value, '$.role') = 'worker'
@@ -731,6 +737,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           model_selection_json AS "modelSelection",
           runtime_mode AS "runtimeMode",
           interaction_mode AS "interactionMode",
+          flow_enabled AS "flowEnabled",
           branch,
           worktree_path AS "worktreePath",
           linked_pull_request_json AS "linkedPullRequest",
@@ -754,6 +761,8 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           pending_user_input_count AS "pendingUserInputCount",
           has_actionable_proposed_plan AS "hasActionableProposedPlan",
           thread_id IN (
+            SELECT thread_id FROM flow_workers
+            UNION
             SELECT json_extract(member.value, '$.command.threadId')
             FROM team_runs, json_each(team_runs.payload, '$.execution.turns') AS member
             WHERE json_extract(member.value, '$.role') = 'worker'
@@ -1311,6 +1320,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           model_selection_json AS "modelSelection",
           runtime_mode AS "runtimeMode",
           interaction_mode AS "interactionMode",
+          flow_enabled AS "flowEnabled",
           branch,
           worktree_path AS "worktreePath",
           linked_pull_request_json AS "linkedPullRequest",
@@ -1334,6 +1344,8 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           pending_user_input_count AS "pendingUserInputCount",
           has_actionable_proposed_plan AS "hasActionableProposedPlan",
           thread_id IN (
+            SELECT thread_id FROM flow_workers
+            UNION
             SELECT json_extract(member.value, '$.command.threadId')
             FROM team_runs, json_each(team_runs.payload, '$.execution.turns') AS member
             WHERE json_extract(member.value, '$.role') = 'worker'
@@ -2421,6 +2433,7 @@ pending_approval_requests AS (
                 id: row.threadId,
                 projectId: row.projectId,
                 title: row.title,
+                flowEnabled: row.flowEnabled === 1,
                 modelSelection: row.modelSelection,
                 runtimeMode: row.runtimeMode,
                 interactionMode: row.interactionMode,
@@ -2666,6 +2679,7 @@ pending_approval_requests AS (
                   id: row.threadId,
                   projectId: row.projectId,
                   title: row.title,
+                  flowEnabled: row.flowEnabled === 1,
                   modelSelection: row.modelSelection,
                   runtimeMode: row.runtimeMode,
                   interactionMode: row.interactionMode,
@@ -2823,6 +2837,7 @@ pending_approval_requests AS (
                         id: row.threadId,
                         projectId: row.projectId,
                         title: row.title,
+                        flowEnabled: row.flowEnabled === 1,
                         modelSelection: row.modelSelection,
                         runtimeMode: row.runtimeMode,
                         interactionMode: row.interactionMode,
@@ -2987,6 +3002,7 @@ pending_approval_requests AS (
                   id: row.threadId,
                   projectId: row.projectId,
                   title: row.title,
+                  flowEnabled: row.flowEnabled === 1,
                   modelSelection: row.modelSelection,
                   runtimeMode: row.runtimeMode,
                   interactionMode: row.interactionMode,
@@ -3341,6 +3357,7 @@ pending_approval_requests AS (
         id: threadRow.value.threadId,
         projectId: threadRow.value.projectId,
         title: threadRow.value.title,
+        flowEnabled: threadRow.value.flowEnabled === 1,
         modelSelection: threadRow.value.modelSelection,
         runtimeMode: threadRow.value.runtimeMode,
         interactionMode: threadRow.value.interactionMode,

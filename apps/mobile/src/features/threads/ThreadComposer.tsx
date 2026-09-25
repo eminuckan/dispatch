@@ -151,6 +151,7 @@ export interface ThreadComposerProps {
   readonly onUpdateModelSelection: (modelSelection: ModelSelection) => void;
   readonly onUpdateRuntimeMode: (runtimeMode: RuntimeMode) => void;
   readonly onUpdateInteractionMode: (interactionMode: ProviderInteractionMode) => void;
+  readonly onUpdateFlowEnabled?: (enabled: boolean) => void;
   readonly onExpandedChange?: (expanded: boolean) => void;
   /** Fires on editor focus/blur; hosts use it to vet stale keyboard state. */
   readonly onEditorFocusChange?: (focused: boolean) => void;
@@ -937,6 +938,16 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                         onPress={openSettings}
                       />
                     </View>
+                    {props.serverConfig?.flow === true && props.onUpdateFlowEnabled ? (
+                      <ComposerInlineControl
+                        accessibilityLabel={`Flow ${props.selectedThread.flowEnabled ? "on" : "off"}`}
+                        label="Flow"
+                        selected={props.selectedThread.flowEnabled === true}
+                        onPress={() =>
+                          props.onUpdateFlowEnabled?.(props.selectedThread.flowEnabled !== true)
+                        }
+                      />
+                    ) : null}
                   </View>
                 )}
                 <View className="shrink-0 flex-row items-center">

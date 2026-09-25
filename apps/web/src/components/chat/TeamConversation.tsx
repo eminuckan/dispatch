@@ -1,5 +1,3 @@
-import { useAtomCommand } from "../../state/use-atom-command";
-import { squashAtomCommandFailure } from "@dispatch/client-runtime/state/runtime";
 import { useRightPanelStore } from "../../rightPanelStore";
 import { Link } from "@tanstack/react-router";
 import type { TimelineEntry } from "../../session-logic";
@@ -15,7 +13,7 @@ import {
   teamThreadRoleForRun,
 } from "./teamConversation.logic";
 import type { TeamConversationMessage } from "./teamConversation.logic";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, type ReactNode } from "react";
 import { ChevronRightIcon, RefreshCwIcon } from "lucide-react";
 import type { EnvironmentId, TeamThreadView, ThreadId } from "@dispatch/contracts";
 import { scopeThreadRef } from "@dispatch/client-runtime/environment";
@@ -141,24 +139,6 @@ function TeamActivity({
   refresh: () => void;
   error: string | null;
 }) {
-  const control = useAtomCommand(teamEnvironment.control, { reportFailure: false });
-  const [controlPending, setControlPending] = useState(false);
-  const [controlError, setControlError] = useState<string | null>(null);
-  async function change(action: "pause" | "resume" | "cancel") {
-    if (controlPending) return;
-    setControlPending(true);
-    setControlError(null);
-    const result = await control({
-      environmentId,
-      input: { id: run.id, revision: run.revision, action },
-    });
-    setControlPending(false);
-    if (result._tag === "Failure") {
-      const error = squashAtomCommandFailure(result);
-      setControlError(error instanceof Error ? error.message : "Could not update Flow.");
-    }
-    refresh();
-  }
   const leadThreadRef = useMemo(
     () => (run.leadThreadId === null ? null : scopeThreadRef(environmentId, run.leadThreadId)),
     [environmentId, run.leadThreadId],
@@ -198,11 +178,6 @@ function TeamActivity({
     );
   const pausedWhileLeadWorking =
     run.status === "paused" && run.statusReason !== "Paused by user." && leadWorking;
-  const controlAction = pausedWhileLeadWorking
-    ? null
-    : run.status === "paused"
-      ? "resume"
-      : "pause";
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex items-center justify-between px-3 py-2 text-xs text-muted-foreground">
@@ -406,33 +381,7 @@ function TeamActivity({
           </details>
         </div>
       </ScrollArea>
-      {controlError && (
-        <p role="alert" className="px-3 py-1 text-xs text-destructive">
-          {controlError}
-        </p>
-      )}
-      {!["completed", "cancelled", "failed"].includes(run.status) && (
-        <div className="flex items-center gap-1 px-3 py-1">
-          {controlAction && (
-            <Button
-              size="xs"
-              variant="ghost"
-              disabled={controlPending}
-              onClick={() => void change(controlAction)}
-            >
-              {controlAction === "resume" ? "Resume" : "Pause"}
-            </Button>
-          )}
-          <Button
-            size="xs"
-            variant="ghost"
-            disabled={controlPending}
-            onClick={() => void change("cancel")}
-          >
-            Cancel
-          </Button>
-        </div>
-      )}
+      <p className="px-3 py-1 text-xs text-muted-foreground">Previous managed run · read only</p>
       <footer className="flex items-center justify-between px-3 py-2 font-mono text-[.7rem] text-muted-foreground">
         <span>
           {workingThreads.size > 0
@@ -447,118 +396,24 @@ function TeamActivity({
 
 export function TeamProviderLimitDecision({
   run,
-  environmentId,
-  currentThreadId,
-  refresh,
 }: {
   run: TeamThreadView;
   environmentId: EnvironmentId;
   currentThreadId: ThreadId;
   refresh: () => void;
 }) {
-  const providerDecision = useAtomCommand(teamEnvironment.providerDecision, {
-    reportFailure: false,
-  });
-  const decisionState = teamProviderDecisionState(run);
-  const [pendingAction, setPendingAction] = useState<string | null>(null);
-  const [decisionError, setDecisionError] = useState<string | null>(null);
-
-  if (!decisionState) return null;
-
-  const { failover, currentProfile, candidates } = decisionState;
-  const triggerText =
-    failover.trigger.kind === "provider-limit"
-      ? "hit a provider limit"
-      : failover.trigger.kind === "provider-unavailable"
-        ? "became unavailable"
-        : "could not continue on the current provider";
-
-  async function decide(action: "switch" | "pause", profileId: string | null) {
-    if (pendingAction) return;
-    const actionKey = action === "switch" && profileId ? `switch:${profileId}` : action;
-    setPendingAction(actionKey);
-    setDecisionError(null);
-    const result = await providerDecision({
-      environmentId,
-      input: {
-        id: run.id,
-        revision: run.revision,
-        failoverId: failover.id,
-        action,
-        profileId,
-      },
-    });
-    setPendingAction(null);
-    if (result._tag === "Failure") {
-      const error = squashAtomCommandFailure(result);
-      setDecisionError(error instanceof Error ? error.message : "Could not continue Flow.");
-    } else if (action === "switch") {
-      const nextLeadThreadId = result.value.lead.threadId;
-      if (nextLeadThreadId && nextLeadThreadId !== currentThreadId) {
-        useRightPanelStore.getState().open({ environmentId, threadId: nextLeadThreadId }, "agents");
-      }
-    }
-    refresh();
-  }
-
+  const decision = teamProviderDecisionState(run);
+  if (!decision) return null;
   return (
     <section
-      aria-label="Provider limit decision"
-      className="mx-1.5 my-2 space-y-2 rounded-md border border-border bg-muted/30 p-3"
+      aria-label="Previous provider limit"
+      className="mx-1.5 my-2 rounded-md border border-border bg-muted/30 p-3"
     >
-      <div className="space-y-1">
-        <p className="text-xs font-medium text-foreground">Flow needs your choice</p>
-        <p className="text-xs text-muted-foreground">
-          {currentProfile?.label ?? "The current model"} {triggerText}. Flow can continue with
-          another selected model/provider, or you can pause it here.
-        </p>
-        {failover.trigger.detail ? (
-          <p className="text-[.7rem] text-muted-foreground/80">{failover.trigger.detail}</p>
-        ) : null}
-      </div>
-      {candidates.length > 0 ? (
-        <div className="flex flex-wrap gap-1.5">
-          {candidates.map((profile) => {
-            const key = `switch:${profile.id}`;
-            return (
-              <Button
-                key={profile.id}
-                size="xs"
-                variant="secondary"
-                disabled={pendingAction !== null}
-                onClick={() => void decide("switch", profile.id)}
-              >
-                {pendingAction === key ? "Switching…" : `Continue with ${profile.label}`}
-              </Button>
-            );
-          })}
-        </div>
-      ) : (
-        <p className="text-xs text-muted-foreground">
-          No alternate selected model is available right now. Pause Flow and adjust your models if
-          needed.
-        </p>
-      )}
-      <div className="flex items-center gap-1.5">
-        <Button
-          size="xs"
-          variant="ghost"
-          disabled={pendingAction !== null}
-          onClick={() => void decide("pause", null)}
-        >
-          {pendingAction === "pause" ? "Pausing…" : "Pause Flow"}
-        </Button>
-        {decisionError ? (
-          <Button size="xs" variant="ghost" onClick={refresh}>
-            Refresh
-          </Button>
-        ) : null}
-      </div>
-      {decisionError ? (
-        <p role="alert" className="text-xs text-destructive">
-          {decisionError}
-        </p>
-      ) : null}
+      <p className="text-xs font-medium">Previous managed run paused</p>
+      <p className="mt-1 text-xs text-muted-foreground">
+        {decision.failover.trigger.detail ?? "The selected provider could not continue."} Start a
+        new Flow thread to continue this work.
+      </p>
     </section>
   );
 }

@@ -152,7 +152,7 @@ function managedEndpointStatus(
   }
 }
 
-/** Server-only credential access shared by Connect transport and hosted Smart Routing. */
+/** Server-only credential access for Connect transport. */
 export const readDispatchConnectEnvironmentConnection = Effect.fnUntraced(function* (
   secrets: ServerSecretStore.ServerSecretStore["Service"],
 ) {

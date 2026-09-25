@@ -580,6 +580,7 @@ export const ServerConfig = Schema.Struct({
   /** Whether this environment supports Dispatch managed Orchestration RPCs. */
   teamRouting: Schema.optionalKey(Schema.Boolean),
   teamRoutingV2: Schema.optionalKey(Schema.Boolean),
+  flow: Schema.optionalKey(Schema.Boolean),
   /** Whether thread subscriptions can emit an opt-in catch-up completion marker. */
   threadResumeCompletionMarker: Schema.optionalKey(Schema.Boolean),
   /**

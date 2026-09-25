@@ -167,8 +167,8 @@ function ConfiguredDispatchConnectAuthDialog({
             {mode === "sign-in" ? "Sign in to Dispatch Connect" : "Create Dispatch Connect account"}
           </DialogTitle>
           <DialogDescription>
-            An account enables environment discovery and pairing plus Flow Auto. Standard and direct
-            pairing work without an account.
+            An account enables environment discovery and pairing. Direct pairing and Flow work
+            without an account.
           </DialogDescription>
         </DialogHeader>
         <form className="flex min-h-0 flex-col" onSubmit={(event) => void submit(event)}>

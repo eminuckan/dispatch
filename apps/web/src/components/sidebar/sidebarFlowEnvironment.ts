@@ -4,7 +4,7 @@ import type { EnvironmentId } from "@dispatch/contracts";
 interface FlowEnvironment {
   readonly environmentId: EnvironmentId;
   readonly connection: { readonly phase: EnvironmentConnectionPhase };
-  readonly serverConfig: { readonly teamRouting?: boolean } | null;
+  readonly serverConfig: { readonly flow?: boolean } | null;
 }
 
 export function resolveSidebarFlowEnvironment<T extends FlowEnvironment>({
@@ -18,8 +18,7 @@ export function resolveSidebarFlowEnvironment<T extends FlowEnvironment>({
 }): T | null {
   const capable = environments.filter(
     (environment) =>
-      environment.connection.phase === "connected" &&
-      environment.serverConfig?.teamRouting === true,
+      environment.connection.phase === "connected" && environment.serverConfig?.flow === true,
   );
   return (
     capable.find((environment) => environment.environmentId === preferredEnvironmentId) ??

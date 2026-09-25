@@ -40,8 +40,8 @@ import {
   DeviceScreenshotToolkit,
   DeviceStandardToolkit,
 } from "./toolkits/device/tools.ts";
-import { TeamToolkitHandlersLive } from "./toolkits/team/handlers.ts";
-import { TeamToolkit } from "./toolkits/team/tools.ts";
+import { FlowToolkitHandlersLive } from "./toolkits/flow/handlers.ts";
+import { FlowToolkit } from "./toolkits/flow/tools.ts";
 
 const unauthorized = HttpServerResponse.jsonUnsafe(
   {
@@ -623,8 +623,8 @@ export const DeviceToolkitRegistrationLive = Layer.mergeAll(
   DeviceScreenshotRegistrationLive,
 );
 
-export const TeamToolkitRegistrationLive = McpServer.toolkit(TeamToolkit).pipe(
-  Layer.provide(TeamToolkitHandlersLive),
+export const FlowToolkitRegistrationLive = McpServer.toolkit(FlowToolkit).pipe(
+  Layer.provide(FlowToolkitHandlersLive),
 );
 
 const McpTransportLive = McpServer.layerHttp({
@@ -635,7 +635,7 @@ const McpTransportLive = McpServer.layerHttp({
 }).pipe(Layer.provide(McpAuthMiddlewareLive));
 
 export const layer = Layer.mergeAll(
-  TeamToolkitRegistrationLive,
+  FlowToolkitRegistrationLive,
   PreviewToolkitRegistrationLive,
   PullRequestsToolkitRegistrationLive,
   DeviceToolkitRegistrationLive,

@@ -262,6 +262,10 @@
     "./state/team": {
       "types": "./src/state/team.ts",
       "default": "./src/state/team.ts"
+    },
+    "./state/flow": {
+      "types": "./src/state/flow.ts",
+      "default": "./src/state/flow.ts"
     }
   },
   "scripts": {

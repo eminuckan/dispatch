@@ -112,7 +112,7 @@ public-config loader expands it to `VITE_DISPATCH_CONNECT_URL` and
 
 This release default does not change source/dev or self-hosted behavior. Outside the official release
 workflows, leaving `DISPATCH_CONNECT_URL` unset continues to mean that Dispatch Connect is optional and
-must be configured by the operator. `CONNECT_JEV_API_KEY`, environment credentials, account sessions,
+must be configured by the operator. Environment credentials, account sessions,
 and every other Connect server secret remain server-side and are never added to release build env.
 
 ### Legacy npm compatibility publication

@@ -1,7 +1,4 @@
 import * as TeamRuntime from "./team/TeamRuntime.ts";
-import * as OrchestrationAdvisor from "./team/OrchestrationAdvisor.ts";
-import * as OrchestrationModelCatalog from "./team/OrchestrationModels.ts";
-import * as OrchestrationSettings from "./team/OrchestrationSettings.ts";
 import * as OrchestrationStore from "./team/OrchestrationStore.ts";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeSocket from "@effect/platform-node/NodeSocket";
@@ -769,9 +766,6 @@ const buildAppUnderTest = (options?: {
     ).pipe(
       Layer.provide(
         TeamRuntime.layer.pipe(
-          Layer.provideMerge(OrchestrationSettings.layer),
-          Layer.provideMerge(OrchestrationModelCatalog.layer),
-          Layer.provideMerge(OrchestrationAdvisor.layer),
           Layer.provideMerge(OrchestrationStore.layer),
           Layer.provide(SqlitePersistenceMemory),
         ),

@@ -35,7 +35,7 @@ import {
   projectScriptRuntimeEnv,
   resolveProjectScripts,
 } from "@dispatch/shared/projectScripts";
-import { Alert, Platform, ScrollView, View } from "react-native";
+import { Alert, AppState, Platform, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useWorkspaceState } from "../../state/workspace";
 import { useEnvironmentShellState } from "../../state/shell";
@@ -78,6 +78,7 @@ import { useSelectedThreadRequests } from "../../state/use-selected-thread-reque
 import { useSelectedThreadWorktree } from "../../state/use-selected-thread-worktree";
 import { useThreadComposerState } from "../../state/use-thread-composer-state";
 import { teamEnvironment } from "../../state/team";
+import { flowEnvironment } from "../../state/flow";
 import { threadEnvironment } from "../../state/threads";
 import { projectThreadContentPresentation } from "./threadContentPresentation";
 import { isTeamWorkerThreadCandidate, resolveTeamThreadComposerAccess } from "./teamThreadAccess";
@@ -336,6 +337,13 @@ function ThreadRouteContent(
     selectedThreadProject,
     selectedEnvironmentConnection,
   } = useThreadSelection();
+  const params = props.route.params;
+  const environmentIdRaw = firstRouteParam(params.environmentId);
+  const environmentId = environmentIdRaw ? EnvironmentId.make(environmentIdRaw) : null;
+  const threadId = firstRouteParam(params.threadId);
+  const routeThreadIdentity =
+    environmentIdRaw !== null && threadId !== null ? `${environmentIdRaw}:${threadId}` : null;
+  const routeEnvironmentRuntime = useRemoteEnvironmentRuntime(environmentId);
   const selectedThreadDetailState = props.selectedThreadDetailState;
   const selectedThreadDetail = Option.getOrNull(selectedThreadDetailState.data);
   // "Load earlier turns" header state for windowed (paginated) thread loads.
@@ -373,6 +381,46 @@ function ThreadRouteContent(
         })
       : null,
   );
+  const flowThreadQuery = useEnvironmentQuery(
+    routeEnvironmentRuntime?.serverConfig?.flow === true && selectedThread
+      ? flowEnvironment.forThread({
+          environmentId: selectedThread.environmentId,
+          input: { threadId: selectedThread.id },
+        })
+      : null,
+  );
+  const flowWorkersActive =
+    flowThreadQuery.data?.workers.some(
+      (worker) => worker.state === "queued" || worker.state === "working",
+    ) ?? false;
+  const flowLive =
+    selectedThread?.flowEnabled === true ||
+    flowThreadQuery.data?.enabled === true ||
+    flowWorkersActive;
+  const refreshFlow = flowThreadQuery.refresh;
+  const flowThreadId = selectedThread?.id ?? null;
+  const flowSupported = routeEnvironmentRuntime?.serverConfig?.flow === true;
+  useFocusEffect(
+    useCallback(() => {
+      if (!flowThreadId || !flowSupported) return;
+      let timer: ReturnType<typeof setInterval> | null = null;
+      const onAppState = (state: string) => {
+        if (timer !== null) clearInterval(timer);
+        timer = null;
+        if (state !== "active") return;
+        refreshFlow();
+        if (flowLive) {
+          timer = setInterval(refreshFlow, flowWorkersActive ? 2_500 : 5_000);
+        }
+      };
+      onAppState(AppState.currentState);
+      const subscription = AppState.addEventListener("change", onAppState);
+      return () => {
+        if (timer !== null) clearInterval(timer);
+        subscription.remove();
+      };
+    }, [flowThreadId, flowSupported, flowLive, flowWorkersActive, refreshFlow]),
+  );
   const teamThreadComposerAccess = selectedThread
     ? resolveTeamThreadComposerAccess({
         threadId: selectedThread.id,
@@ -381,7 +429,20 @@ function ThreadRouteContent(
         error: teamThreadQuery.error,
       })
     : null;
-  const composerInputAllowed = teamThreadComposerAccess === null;
+  const flowWorkerCandidate =
+    routeEnvironmentRuntime?.serverConfig?.flow === true &&
+    selectedThread?.id.startsWith("flow-") === true;
+  const flowThreadComposerAccess = flowWorkerCandidate
+    ? flowThreadQuery.data?.currentWorkerThreadId === selectedThread?.id
+      ? "worker"
+      : flowThreadQuery.error
+        ? "unavailable"
+        : flowThreadQuery.isSuccess
+          ? null
+          : "checking"
+    : null;
+  const threadComposerAccess = flowThreadComposerAccess ?? teamThreadComposerAccess;
+  const composerInputAllowed = threadComposerAccess === null;
   const onComposerSendMessage = useCallback(
     () => (composerInputAllowed ? sendComposerMessage() : Promise.resolve(null)),
     [composerInputAllowed, sendComposerMessage],
@@ -420,9 +481,11 @@ function ThreadRouteContent(
   const gitActions = useSelectedThreadGitActions();
   const requests = useSelectedThreadRequests();
   const interruptThreadTurn = useAtomCommand(threadEnvironment.interruptTurn, "thread interrupt");
+  const updateFlowMetadata = useAtomCommand(threadEnvironment.updateMetadata, "thread Flow mode");
+  const stopFlowWorker = useAtomCommand(flowEnvironment.stop, "stop Flow worker");
   const navigation = useNavigation();
   const openTeamLead = useCallback(() => {
-    const leadThreadId = teamThreadQuery.data?.leadThreadId;
+    const leadThreadId = flowThreadQuery.data?.parentThreadId ?? teamThreadQuery.data?.leadThreadId;
     if (selectedThread === null || leadThreadId === null || leadThreadId === undefined) return;
     navigation.dispatch(
       StackActions.replace("Thread", {
@@ -430,13 +493,52 @@ function ThreadRouteContent(
         threadId: String(leadThreadId),
       }),
     );
-  }, [navigation, selectedThread, teamThreadQuery.data?.leadThreadId]);
-  const params = props.route.params;
-  const environmentIdRaw = firstRouteParam(params.environmentId);
-  const environmentId = environmentIdRaw ? EnvironmentId.make(environmentIdRaw) : null;
-  const threadId = firstRouteParam(params.threadId);
-  const routeThreadIdentity =
-    environmentIdRaw !== null && threadId !== null ? `${environmentIdRaw}:${threadId}` : null;
+  }, [
+    navigation,
+    selectedThread,
+    flowThreadQuery.data?.parentThreadId,
+    teamThreadQuery.data?.leadThreadId,
+  ]);
+  const openFlowWorker = useCallback(
+    (workerThreadId: ThreadId) => {
+      if (!selectedThread) return;
+      navigation.dispatch(
+        StackActions.replace("Thread", {
+          environmentId: String(selectedThread.environmentId),
+          threadId: String(workerThreadId),
+        }),
+      );
+    },
+    [navigation, selectedThread],
+  );
+  const onUpdateFlowEnabled = useCallback(
+    (enabled: boolean) => {
+      if (!selectedThread) return;
+      void updateFlowMetadata({
+        environmentId: selectedThread.environmentId,
+        input: { threadId: selectedThread.id, flowEnabled: enabled },
+      }).then((result) => {
+        if (result._tag === "Failure")
+          Alert.alert("Could not update Flow", "Try again after reconnecting.");
+        else flowThreadQuery.refresh();
+      });
+    },
+    [selectedThread, updateFlowMetadata, flowThreadQuery.refresh],
+  );
+  const onStopFlowWorker = useCallback(
+    (workerThreadId: ThreadId) => {
+      if (!selectedThread) return;
+      void stopFlowWorker({
+        environmentId: selectedThread.environmentId,
+        input: { parentThreadId: selectedThread.id, workerThreadId },
+      }).then((result) => {
+        if (result._tag === "Failure")
+          Alert.alert("Could not stop worker", "Try again after reconnecting.");
+        else flowThreadQuery.refresh();
+      });
+    },
+    [selectedThread, stopFlowWorker, flowThreadQuery.refresh],
+  );
   const [inspectorSelection, setInspectorSelection] = useState<ThreadInspectorSelection | null>(
     () => (props.renderInspector ? { routeThreadIdentity, mode: "route" } : null),
   );
@@ -495,7 +597,6 @@ function ThreadRouteContent(
       };
     }, [props.renderInspector]),
   );
-  const routeEnvironmentRuntime = useRemoteEnvironmentRuntime(environmentId);
   const routeConnectionState =
     routeEnvironmentRuntime?.connectionState ?? (environmentId ? "available" : connectionState);
   const routeConnectionError = routeEnvironmentRuntime?.connectionError ?? null;
@@ -1091,10 +1192,26 @@ function ThreadRouteContent(
           layoutVariant={layout.variant}
           usesAutomaticContentInsets={usesNativeHeaderGlass}
           onOpenConnectionEditor={handleOpenConnectionEditor}
-          teamThreadComposerAccess={teamThreadComposerAccess}
-          teamLeadThreadId={teamThreadQuery.data?.leadThreadId ?? null}
+          teamThreadComposerAccess={threadComposerAccess}
+          teamLeadThreadId={
+            flowThreadQuery.data?.parentThreadId ?? teamThreadQuery.data?.leadThreadId ?? null
+          }
           onOpenTeamLead={openTeamLead}
-          onRetryTeamThreadAccess={teamThreadQuery.refresh}
+          onRetryTeamThreadAccess={
+            flowWorkerCandidate ? flowThreadQuery.refresh : teamThreadQuery.refresh
+          }
+          flowView={flowThreadQuery.data}
+          flowError={
+            selectedThread.flowEnabled === true || flowWorkerCandidate
+              ? flowThreadQuery.error
+              : null
+          }
+          onRefreshFlow={flowThreadQuery.refresh}
+          onOpenFlowWorker={openFlowWorker}
+          onStopFlowWorker={onStopFlowWorker}
+          onUpdateThreadFlowEnabled={
+            flowWorkerCandidate || teamWorkerCandidate ? undefined : onUpdateFlowEnabled
+          }
           onChangeDraftMessage={onComposerChangeDraft}
           onPickDraftMedia={onComposerPickMedia}
           onPickDraftFiles={onComposerPickFiles}

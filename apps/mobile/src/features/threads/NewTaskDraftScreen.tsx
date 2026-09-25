@@ -1679,6 +1679,17 @@ export function NewTaskDraftScreen(props: {
                         onPress={settingsSheetPresentation.open}
                       />
                     </View>
+                    {selectedEnvironmentServerConfig?.flow === true ? (
+                      <ComposerInlineControl
+                        accessibilityLabel={`Flow ${flow.flowEnabled ? "on" : "off"}`}
+                        accessibilityHint="Lets the selected model coordinate persistent workers"
+                        disabled={isComposerInteractionLocked}
+                        label="Flow"
+                        selected={flow.flowEnabled}
+                        onPress={() => flow.setFlowEnabled(!flow.flowEnabled)}
+                        showChevron={false}
+                      />
+                    ) : null}
                     {flow.planModeEnabled ? (
                       <ComposerInlineControl
                         accessibilityHint={`Switches to ${flow.interactionMode === "plan" ? "Build" : "Plan"} mode`}
