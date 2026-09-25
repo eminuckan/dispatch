@@ -200,7 +200,7 @@ import { ThreadPreviewMiniPlayer } from "./preview/ThreadPreviewMiniPlayer";
 import { subscribePreviewAction } from "./preview/previewActionBus";
 import { getConfiguredPreviewUrls } from "./preview/previewEmptyStateLogic";
 import { makeWorkspaceFileDropHandlers } from "./chat/workspaceFileDrop";
-import { teamThreadComposerAccess } from "./chat/teamConversation.logic";
+import { teamLeadThreadSelection, teamThreadComposerAccess } from "./chat/teamConversation.logic";
 import {
   isSameSidebarThreadRef,
   useSidebarPendingFileDropStore,
@@ -2011,6 +2011,15 @@ export default function ChatView(props: ChatViewProps) {
   const isManagedWorkerThread = managedTeamThreadAccess === "worker";
   const isCheckingManagedTeamThread = managedTeamThreadAccess === "checking";
   const managedTeamLeadThreadId = managedTeamThreadQuery.data?.leadThreadId ?? null;
+  // Managed lead turns dispatch their own frozen selection; the thread copy can
+  // lag the Auto-routed effort, so the composer shows what the Lead really runs.
+  const managedTeamLeadSelection = useMemo(
+    () =>
+      managedTeamThreadQuery.data && activeThreadRef
+        ? teamLeadThreadSelection(managedTeamThreadQuery.data, activeThreadRef.threadId)
+        : null,
+    [activeThreadRef, managedTeamThreadQuery.data],
+  );
   const activeThreadKey = activeThreadRef ? scopedThreadKey(activeThreadRef) : null;
   const activeThreadShell = useThreadShell(isServerThread ? activeThreadRef : null);
   const [timelineAnchor, setTimelineAnchor] = useState<{
@@ -10269,7 +10278,9 @@ export default function ChatView(props: ChatViewProps) {
                                 activeProjectDefaultModelSelection={
                                   activeProjectDefaultModelSelection
                                 }
-                                activeThreadModelSelection={activeThread?.modelSelection}
+                                activeThreadModelSelection={
+                                  managedTeamLeadSelection ?? activeThread?.modelSelection
+                                }
                                 activeContextWindow={activeContextWindow}
                                 compactThreadUnavailable={compactThreadUnavailable}
                                 compactDisabled={compactDisabled}

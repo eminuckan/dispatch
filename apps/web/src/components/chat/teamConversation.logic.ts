@@ -1,5 +1,11 @@
 import { teamAgentDisplayName } from "@dispatch/shared/teamAgentNames";
-import type { MessageId, TeamAttempt, TeamMessage, TeamThreadView } from "@dispatch/contracts";
+import type {
+  MessageId,
+  ModelSelection,
+  TeamAttempt,
+  TeamMessage,
+  TeamThreadView,
+} from "@dispatch/contracts";
 import {
   isTeamProtocolRole,
   looksLikeTeamProtocol,
@@ -168,6 +174,24 @@ export function teamThreadComposerAccess(
   if (!queryResolved) return "checking";
   if (!run) return null;
   return teamThreadRoleForRun(run, threadId);
+}
+
+/**
+ * The selection a managed lead thread actually runs with: the latest lead
+ * attempt frozen for that exact thread. Managed attempts never read the
+ * thread's own model selection, so the composer must show this instead of the
+ * profile copy the thread was created with.
+ */
+export function teamLeadThreadSelection(
+  run: Pick<TeamThreadView, "leadThreadId" | "attempts">,
+  threadId: string,
+): ModelSelection | null {
+  if (run.leadThreadId !== threadId) return null;
+  return (
+    run.attempts.findLast(
+      (attempt) => attempt.owner.role === "lead" && attempt.owner.threadId === threadId,
+    )?.selection ?? null
+  );
 }
 
 export function teamPrimaryRoleLabel(

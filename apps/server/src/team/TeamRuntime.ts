@@ -394,7 +394,6 @@ export const make = Effect.gen(function* () {
     let current = run;
     if (attempt.owner.role === "lead") current = yield* ensureLeadWorktree(current);
     else if (attempt.taskId) current = yield* ensureTaskWorktree(current, attempt.taskId);
-    const profile = profileFor(current, attempt.owner.profileId);
     const task = attempt.taskId
       ? current.tasks.find((candidate) => candidate.id === attempt.taskId)
       : undefined;
@@ -438,7 +437,10 @@ export const make = Effect.gen(function* () {
           attempt.owner.role === "lead"
             ? `${current.executionMode === "direct" ? "Direct" : "Lead"} · ${current.prompt.slice(0, 80)}`
             : `Worker · ${(task?.objective ?? current.prompt).slice(0, 80)}`,
-        modelSelection: profile.selection,
+        // The thread read model feeds the composer, so it must carry the
+        // frozen selection the managed attempts dispatch — including the
+        // routed effort — rather than the profile's static copy.
+        modelSelection: persistedAttempt.selection,
         runtimeMode: current.runtimeMode,
         interactionMode: "default",
         branch,

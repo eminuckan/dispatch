@@ -15,6 +15,7 @@ import {
   teamAgentName,
   teamConversationMessages,
   teamConversationEntries,
+  teamLeadThreadSelection,
   teamMailboxEntries,
   teamMessageDeliveryLabel,
   teamThreadComposerAccess,
@@ -607,6 +608,30 @@ it("fails closed while managed-thread ownership loads, then trusts exact run mem
   expect(teamThreadComposerAccess(leadThreadId, run, true)).toBe("lead");
   expect(teamThreadComposerAccess("team-unrelated", run, true)).toBeNull();
   expect(teamThreadComposerAccess("ordinary-thread", null, false)).toBeNull();
+});
+
+it("uses the routed lead effort the managed lead thread actually dispatches", () => {
+  const routedSelection = {
+    ...statusProfile.selection,
+    options: [{ id: "reasoningEffort", value: "high" }],
+  };
+  const run = statusRun({
+    attempts: [
+      { ...statusAttempt("plan", "succeeded", null), selection: statusProfile.selection },
+      { ...statusAttempt("review", "running", null), selection: routedSelection },
+      statusAttempt("work", "running", "worker-task"),
+    ],
+  });
+
+  expect(teamLeadThreadSelection(run, statusLeadThreadId)).toEqual(routedSelection);
+  expect(teamLeadThreadSelection(run, statusWorkerThreadId)).toBeNull();
+  expect(teamLeadThreadSelection(statusRun(), statusLeadThreadId)).toBeNull();
+  expect(
+    teamLeadThreadSelection(
+      statusRun({ leadThreadId: ThreadId.make("team-new-lead"), attempts: run.attempts }),
+      statusLeadThreadId,
+    ),
+  ).toBeNull();
 });
 
 it("maps persisted delivery receipts without treating read state as delivery", () => {

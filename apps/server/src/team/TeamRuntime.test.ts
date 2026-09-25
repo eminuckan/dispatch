@@ -624,6 +624,47 @@ it.effect(
   },
 );
 
+it.effect("creates the managed lead thread with the routed effort it dispatches", () => {
+  const autoLead: TeamModelProfile = {
+    ...leadProfile,
+    id: "auto-effort-lead",
+    label: "Frontier Lead",
+    selection: {
+      instanceId: ProviderInstanceId.make("codex"),
+      model: "gpt-6-sol",
+      options: [{ id: "reasoningEffort", value: "max" }],
+    },
+    effortMode: "auto",
+    capability: "frontier",
+  };
+  const f = fixture(null, true, {
+    advisorConfigured: true,
+    selectedEffort: "high",
+    settingsPolicy: { ...policy, flowMode: "auto", profiles: [autoLead] },
+  });
+  return Effect.gen(function* () {
+    const runtime = yield* make;
+    const run = yield* runtime.start({
+      commandId: "auto-effort-thread",
+      projectId,
+      runtimeMode: "approval-required",
+      prompt: "Investigate thread switching",
+      attachments: [],
+    });
+
+    expect(run.leadSelection?.options).toContainEqual({
+      id: "reasoningEffort",
+      value: "high",
+    });
+    const attemptSelection = run.attempts[0]?.selection;
+    expect(attemptSelection?.options).toContainEqual({ id: "reasoningEffort", value: "high" });
+    const created = f.commands.find(
+      (command) => command.type === "thread.create" && command.threadId === run.lead.threadId,
+    );
+    expect(created?.type === "thread.create" && created.modelSelection).toEqual(attemptSelection);
+  }).pipe(Effect.provide(f.layer));
+});
+
 it.effect("routes a single-model task through an allowed model without creating a team", () => {
   const unassigned: TeamModelProfile = {
     ...leadProfile,
