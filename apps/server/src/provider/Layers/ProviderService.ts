@@ -923,7 +923,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         Effect.map((thread) => Option.isSome(thread) && thread.value.flowEnabled === true),
         Effect.orElseSucceed(() => false),
       );
-      if (flowEnabled) capabilities.add("flow");
+      if (flowEnabled || threadId.startsWith("flow-")) capabilities.add("flow");
     }
     return capabilities;
   });
@@ -1691,7 +1691,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         )
       : false;
     const flowInstructions = flowEnabled
-      ? "<dispatch_flow>The user enabled Flow for this thread. You are the lead using the model they selected. You may use the flow_* MCP tools to start persistent workers with explicit assignments and model choices. Delegate only when useful, review their work, integrate changes yourself, and give the final answer. You may also work directly.</dispatch_flow>"
+      ? "<dispatch_flow>The user enabled Flow for this thread. You are the lead using the model they selected. Read flow_profiles for the configured worker pool: each profile describes its provider, model, effort, and suitable tasks. Prefer those descriptions when assigning work; use flow_models for the live catalog if no profile fits. Choose each worker deliberately; use routine workers for bounded tasks and deep workers when stronger reasoning is warranted. Workers may use other providers. Give explicit assignments, read progress with flow_wait, message a working worker with flow_send, review every worker's result regardless of tier, integrate changes yourself, and give the final answer. Work directly when delegation would not help.</dispatch_flow>"
       : undefined;
     const flowInput = [flowInstructions, inputTextWithAttachmentContext]
       .filter(Boolean)

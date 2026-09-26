@@ -39,6 +39,7 @@ import {
   type ProviderDriverKind,
 } from "./providerInstance.ts";
 import { PullRequestMergeMethod } from "./pullRequest.ts";
+import { FlowWorkerProfiles } from "./flow.ts";
 
 // ── Client Settings (local-only) ───────────────────────────────
 
@@ -1046,6 +1047,7 @@ export const PROJECT_SCOPED_SERVER_SETTING_KEYS = [
   "enableAgentDeviceAccess",
   "textGenerationModelSelection",
   "sourceControlWriterModelSelection",
+  "flowWorkerProfiles",
   "sourceControlWritingStyle",
   "pullRequestMergeMethod",
   "sidebarAutoSettleOnMerge",
@@ -1073,6 +1075,7 @@ export const ProjectSettingsOverrides = Schema.Struct({
   enableAgentDeviceAccess: Schema.optionalKey(Schema.Boolean),
   textGenerationModelSelection: Schema.optionalKey(ModelSelection),
   sourceControlWriterModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
+  flowWorkerProfiles: Schema.optionalKey(FlowWorkerProfiles),
   sourceControlWritingStyle: Schema.optionalKey(SourceControlWritingStyleSettings),
   pullRequestMergeMethod: Schema.optionalKey(Schema.NullOr(PullRequestMergeMethod)),
   sidebarAutoSettleOnMerge: Schema.optionalKey(Schema.Boolean),
@@ -1245,6 +1248,7 @@ export const ServerSettings = Schema.Struct({
   sourceControlWriterModelSelection: Schema.NullOr(ModelSelection).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
+  flowWorkerProfiles: FlowWorkerProfiles.pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   /**
    * The merge method pull requests start with; `null` reuses the method
    * last chosen on this device. Server-side so a project can override it
@@ -1526,6 +1530,7 @@ export const ServerSettingsPatch = Schema.Struct({
     }),
   ),
   sourceControlWriterModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
+  flowWorkerProfiles: Schema.optionalKey(FlowWorkerProfiles),
   pullRequestMergeMethod: Schema.optionalKey(Schema.NullOr(PullRequestMergeMethod)),
   observability: Schema.optionalKey(
     Schema.Struct({

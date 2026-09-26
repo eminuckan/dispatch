@@ -39,13 +39,33 @@ const client = McpSchema.McpServerClient.of({
 
 it.effect("Flow MCP controls use the authenticated lead thread and require its capability", () => {
   const spawned: ThreadId[] = [];
+  const reported: ThreadId[] = [];
   const runtime = {
     models: Effect.succeed([]),
+    profiles: () =>
+      Effect.succeed([
+        {
+          id: "routine-scout",
+          name: "Routine scout",
+          tier: "routine",
+          description: "Bounded searches with lead verification",
+          modelSelection: selection,
+        },
+      ]),
     spawn: (threadId: ThreadId) => {
       spawned.push(threadId);
       return Effect.succeed(worker);
     },
     send: () => Effect.die("unused"),
+    report: (threadId: ThreadId) => {
+      reported.push(threadId);
+      return Effect.succeed({
+        sequence: 1,
+        workerThreadId: threadId,
+        message: "Still working",
+        createdAt: worker.createdAt,
+      });
+    },
     wait: () => Effect.die("unused"),
     stop: () => Effect.die("unused"),
     view: () =>
@@ -54,15 +74,19 @@ it.effect("Flow MCP controls use the authenticated lead thread and require its c
         enabled: true,
         currentWorkerThreadId: null,
         workers: [worker],
+        updates: [],
       }),
   };
   const testLayer = McpHttpServer.FlowToolkitRegistrationLive.pipe(
     Layer.provideMerge(McpServer.McpServer.layer),
     Layer.provide(Layer.succeed(FlowRuntime, runtime as never)),
   );
-  const invocation = (enabled: boolean): McpInvocationContext.McpInvocationScope => ({
+  const invocation = (
+    enabled: boolean,
+    threadId = parentThreadId,
+  ): McpInvocationContext.McpInvocationScope => ({
     environmentId: EnvironmentId.make("environment"),
-    threadId: parentThreadId,
+    threadId,
     providerSessionId: "session",
     providerInstanceId: selection.instanceId,
     capabilities: enabled ? new Set(["flow"]) : new Set(),
@@ -74,6 +98,8 @@ it.effect("Flow MCP controls use the authenticated lead thread and require its c
       expect(server.tools.map(({ tool }) => tool.name).toSorted()).toEqual([
         "flow_list",
         "flow_models",
+        "flow_profiles",
+        "flow_report",
         "flow_send",
         "flow_spawn",
         "flow_stop",
@@ -97,6 +123,38 @@ it.effect("Flow MCP controls use the authenticated lead thread and require its c
       expect(allowed.isError).toBe(false);
       expect(spawned).toEqual([parentThreadId]);
       expect(allowed.structuredContent).toMatchObject({ threadId: workerThreadId, parentThreadId });
+      const profiles = yield* server
+        .callTool({ name: "flow_profiles", arguments: {} })
+        .pipe(
+          Effect.provideService(McpInvocationContext.McpInvocationContext, invocation(true)),
+          Effect.provideService(McpSchema.McpServerClient, client),
+        );
+      expect(profiles.isError).toBe(false);
+      const profileText = profiles.content.find((entry) => entry.type === "text");
+      expect(profileText?.text).toContain("Bounded searches with lead verification");
+      const reportInput = { id: "progress-1", message: "Still working" };
+      const deniedReport = yield* server
+        .callTool({ name: "flow_report", arguments: reportInput })
+        .pipe(
+          Effect.provideService(
+            McpInvocationContext.McpInvocationContext,
+            invocation(false, workerThreadId),
+          ),
+          Effect.provideService(McpSchema.McpServerClient, client),
+        );
+      expect(deniedReport.isError).toBe(true);
+      expect(reported).toEqual([]);
+      const allowedReport = yield* server
+        .callTool({ name: "flow_report", arguments: reportInput })
+        .pipe(
+          Effect.provideService(
+            McpInvocationContext.McpInvocationContext,
+            invocation(true, workerThreadId),
+          ),
+          Effect.provideService(McpSchema.McpServerClient, client),
+        );
+      expect(allowedReport.isError).toBe(false);
+      expect(reported).toEqual([workerThreadId]);
     }),
   ).pipe(Effect.provide(testLayer));
 });

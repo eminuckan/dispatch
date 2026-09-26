@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 import * as Schema from "effect/Schema";
 
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
+import { ProjectId } from "./baseSchemas.ts";
 import {
   ClientSettingsSchema,
   ClientSettingsPatch,
@@ -1012,4 +1013,31 @@ it("validates remote device hosts and rejects ambiguous host ids", () => {
     decodeDeviceHostSettings({ deviceHosts: [{ ...host, target: "-oProxyCommand=bad" }] }),
   ).toThrow();
   expect(() => decodeDeviceHostSettings({ deviceHosts: [{ ...host, port: 0 }] })).toThrow();
+});
+
+it("persists project-scoped Flow worker profiles with model effort and task guidance", () => {
+  const profile = {
+    id: "routine-review",
+    name: "Routine review",
+    tier: "routine",
+    description: "Review bounded changes; lead verifies findings.",
+    modelSelection: {
+      instanceId: "opencode",
+      model: "deepseek-v4.1-flash",
+      options: [{ id: "reasoningEffort", value: "low" }],
+    },
+  };
+  expect(decodeServerSettings({}).flowWorkerProfiles).toEqual([]);
+  expect(decodeServerSettingsPatch({ flowWorkerProfiles: [profile] }).flowWorkerProfiles).toEqual([
+    profile,
+  ]);
+  expect(
+    decodeServerSettingsPatch({
+      projectSettingsOverrides: { project: { flowWorkerProfiles: [profile] } },
+    }).projectSettingsOverrides?.[ProjectId.make("project")]?.flowWorkerProfiles,
+  ).toEqual([profile]);
+  expect(() =>
+    decodeServerSettingsPatch({ flowWorkerProfiles: [{ ...profile, description: " " }] }),
+  ).toThrow();
+  expect(() => decodeServerSettingsPatch({ flowWorkerProfiles: [profile, profile] })).toThrow();
 });

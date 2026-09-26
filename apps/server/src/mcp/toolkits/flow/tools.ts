@@ -3,10 +3,14 @@ import {
   FlowJob,
   FlowModelSelection,
   FlowSendInput,
+  FlowReportInput,
   FlowSpawnInput,
   FlowThreadView,
   FlowWaitInput,
   FlowWorker,
+  FlowUpdate,
+  FlowWorkerProfile,
+  ProviderOptionDescriptor,
   ThreadId,
 } from "@dispatch/contracts";
 import * as Schema from "effect/Schema";
@@ -27,6 +31,7 @@ const Models = Tool.make("flow_models", {
       selection: FlowModelSelection,
       providerName: Schema.String,
       modelName: Schema.String,
+      optionDescriptors: Schema.Array(ProviderOptionDescriptor),
     }),
   ),
   failure: FlowError,
@@ -35,9 +40,27 @@ const Models = Tool.make("flow_models", {
   .annotate(Tool.Title, "List Flow models")
   .annotate(Tool.Readonly, true);
 
+const Profiles = Tool.make("flow_profiles", {
+  description:
+    "List the user's configured worker pool for this project. Each profile includes provider, model, effort, and the user's description of when to use it. Deep workers suit difficult reasoning; routine workers suit frequent bounded tasks and may need closer checking. Review every worker's result. Pick a profile deliberately for each assignment; there is no automatic routing.",
+  parameters: NoArguments,
+  success: Schema.Array(
+    Schema.Struct({
+      profile: FlowWorkerProfile,
+      providerName: Schema.String,
+      modelName: Schema.String,
+      available: Schema.Boolean,
+    }),
+  ),
+  failure: FlowError,
+  dependencies,
+})
+  .annotate(Tool.Title, "List Flow worker pool")
+  .annotate(Tool.Readonly, true);
+
 const Spawn = Tool.make("flow_spawn", {
   description:
-    "Start one persistent Dispatch worker thread for a concrete assignment. Choose its model explicitly with flow_models. The worker gets an isolated Git worktree and only the assignment you supply; it does not inherit this conversation. Reuse id on retry. The lead owns review and integration.",
+    "Start one persistent Dispatch worker thread for a concrete assignment. Prefer a configured profile from flow_profiles so its task guidance, provider, model, and effort inform your choice; use an explicit selection from flow_models when no profile fits. The worker gets an isolated Git worktree and only the assignment you supply; it does not inherit this conversation. Reuse id on retry. The lead owns review and integration.",
   parameters: FlowSpawnInput,
   success: FlowWorker,
   failure: FlowError,
@@ -49,7 +72,7 @@ const Spawn = Tool.make("flow_spawn", {
 
 const Send = Tool.make("flow_send", {
   description:
-    "Send a follow-up assignment to an idle worker, preserving that worker's thread and model. Reuse id on retry. Open the worker thread for its full history.",
+    "Message an idle or working worker, preserving its thread and model. A working provider session receives the message during its current turn when that provider supports steering. Reuse id on retry. Open the worker thread for its full history.",
   parameters: FlowSendInput,
   success: FlowJob,
   failure: FlowError,
@@ -59,9 +82,21 @@ const Send = Tool.make("flow_send", {
   .annotate(Tool.Idempotent, true)
   .annotate(Tool.Readonly, false);
 
+const Report = Tool.make("flow_report", {
+  description:
+    "For Flow workers: send a concise progress update, question, or blocker to the lead while working. The lead sees it through flow_wait or flow_list. Reuse id on retry.",
+  parameters: FlowReportInput,
+  success: FlowUpdate,
+  failure: FlowError,
+  dependencies,
+})
+  .annotate(Tool.Title, "Report Flow progress")
+  .annotate(Tool.Idempotent, true)
+  .annotate(Tool.Readonly, false);
+
 const Wait = Tool.make("flow_wait", {
   description:
-    "Read worker progress and results. Optionally wait up to 30 seconds for a worker to finish. Results are concise; the worker thread holds its full conversation. The lead must verify the result before answering the user.",
+    "Read recent worker progress, including live flow_report updates, and results. Optionally wait up to 30 seconds for a change; pass the last update sequence as afterUpdateSequence to wake on a newer report. The worker thread holds its full conversation. The lead must verify the result before answering the user.",
   parameters: FlowWaitInput,
   success: FlowThreadView,
   failure: FlowError,
@@ -92,4 +127,4 @@ const Stop = Tool.make("flow_stop", {
   .annotate(Tool.Readonly, false)
   .annotate(Tool.Destructive, true);
 
-export const FlowToolkit = Toolkit.make(Models, Spawn, Send, Wait, List, Stop);
+export const FlowToolkit = Toolkit.make(Models, Profiles, Spawn, Send, Report, Wait, List, Stop);

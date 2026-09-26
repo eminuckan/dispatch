@@ -6,6 +6,7 @@ import {
   MessageId,
   ThreadId,
   type FlowSendInput,
+  type FlowReportInput,
   type FlowSpawnInput,
   type FlowThreadView,
   type FlowWaitInput,
@@ -13,6 +14,7 @@ import {
 } from "@dispatch/contracts";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
+import * as Equal from "effect/Equal";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -29,7 +31,10 @@ import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSna
 import { ProjectionTurnRepository } from "../persistence/Services/ProjectionTurns.ts";
 import { ProjectionTurnRepositoryLive } from "../persistence/Layers/ProjectionTurns.ts";
 import { ProviderRegistry } from "../provider/Services/ProviderRegistry.ts";
+import { ProviderService } from "../provider/Services/ProviderService.ts";
 import { forkParked } from "../serverActivation.ts";
+import { ServerSettingsService } from "../serverSettings.ts";
+import { resolveProjectSettings } from "@dispatch/shared/projectSettings";
 import { FlowStore } from "./FlowStore.ts";
 import { settledFlowReceipt } from "./FlowReceipt.ts";
 
@@ -47,8 +52,10 @@ export const make = Effect.gen(function* () {
   const projection = yield* ProjectionSnapshotQuery;
   const turns = yield* ProjectionTurnRepository;
   const providers = yield* ProviderRegistry;
+  const providerService = yield* ProviderService;
   const git = yield* GitWorkflowService;
   const engine = yield* OrchestrationEngineService;
+  const settings = yield* ServerSettingsService;
   const lock = yield* Semaphore.make(1);
   const wakeups = yield* Queue.unbounded<void>();
   const completed = yield* PubSub.unbounded<ThreadId>();
@@ -75,18 +82,53 @@ export const make = Effect.gen(function* () {
   ) {
     const candidates = yield* providers.getProviders.pipe(Effect.mapError(unavailable));
     const provider = candidates.find((item) => item.instanceId === selection.instanceId);
+    const model = provider?.models.find((item) => item.slug === selection.model && !item.isLegacy);
     if (
       !provider ||
       !provider.enabled ||
       provider.status !== "ready" ||
       provider.auth.status === "unauthenticated" ||
       provider.availability === "unavailable" ||
-      !provider.models.some((model) => model.slug === selection.model && !model.isLegacy)
+      !model
     )
       return yield* error(
         "unavailable",
         "The selected worker model is not available in this environment.",
       );
+    for (const option of selection.options ?? []) {
+      const descriptor = model.capabilities?.optionDescriptors?.find(
+        (item) => item.id === option.id,
+      );
+      if (
+        !descriptor ||
+        (descriptor.type === "boolean" && typeof option.value !== "boolean") ||
+        (descriptor.type === "select" &&
+          (typeof option.value !== "string" ||
+            !descriptor.options.some((choice) => choice.id === option.value)))
+      )
+        return yield* error("unavailable", `The worker model no longer supports ${option.id}.`);
+    }
+  });
+
+  const profiles = Effect.fn("FlowRuntime.profiles")(function* (parentThreadId: ThreadId) {
+    const parent = yield* requireParent(parentThreadId);
+    const current = yield* settings.getSettings.pipe(Effect.mapError(unavailable));
+    return resolveProjectSettings(current, parent.projectId).settings.flowWorkerProfiles;
+  });
+
+  const selectionForSpawn = Effect.fn("FlowRuntime.selectionForSpawn")(function* (
+    parentThreadId: ThreadId,
+    input: FlowSpawnInput,
+  ) {
+    if ((input.profileId === undefined) === (input.modelSelection === undefined))
+      return yield* error("invalid", "Choose exactly one worker profile or model selection.");
+    if (input.modelSelection) return input.modelSelection;
+    const matches = (yield* profiles(parentThreadId)).filter(
+      (entry) => entry.id === input.profileId,
+    );
+    if (matches.length !== 1)
+      return yield* error("not-found", "The selected Flow worker profile is unavailable.");
+    return matches[0]!.modelSelection;
   });
 
   const view = Effect.fn("FlowRuntime.view")(function* (threadId: ThreadId) {
@@ -98,6 +140,7 @@ export const make = Effect.gen(function* () {
       enabled: yield* store.isEnabled(parentThreadId),
       currentWorkerThreadId: threadId === parentThreadId ? null : threadId,
       workers,
+      updates: yield* store.listUpdates(parentThreadId),
     } satisfies FlowThreadView;
   });
 
@@ -127,13 +170,15 @@ export const make = Effect.gen(function* () {
     parentThreadId: ThreadId,
     input: FlowSpawnInput,
   ) {
+    if ((input.profileId === undefined) === (input.modelSelection === undefined))
+      return yield* error("invalid", "Choose exactly one worker profile or model selection.");
     const existing = yield* store.getWorkerBySpawnId(input.id);
     if (existing) {
       if (
         existing.parentThreadId !== parentThreadId ||
         existing.assignment !== input.assignment ||
-        existing.modelSelection.instanceId !== input.modelSelection.instanceId ||
-        existing.modelSelection.model !== input.modelSelection.model
+        existing.profileId !== (input.profileId ?? null) ||
+        (input.modelSelection && !Equal.equals(existing.modelSelection, input.modelSelection))
       )
         return yield* error(
           "conflict",
@@ -141,8 +186,9 @@ export const make = Effect.gen(function* () {
         );
       return existing;
     }
+    const modelSelection = yield* selectionForSpawn(parentThreadId, input);
     yield* requireParent(parentThreadId);
-    yield* validateModel(input.modelSelection);
+    yield* validateModel(modelSelection);
     const workerThreadId = ThreadId.make(`flow-${NodeCrypto.randomUUID()}`);
     const timestamp = yield* nowIso;
     const worker = yield* store.reserveWorker({
@@ -150,7 +196,8 @@ export const make = Effect.gen(function* () {
       parentThreadId,
       spawnId: input.id,
       assignment: input.assignment,
-      modelSelection: input.modelSelection,
+      modelSelection,
+      ...(input.profileId ? { profileId: input.profileId } : {}),
       branch: `flow/${workerThreadId}`,
       jobId: `flow-job-${input.id}`,
       messageId: `flow-message-${input.id}`,
@@ -181,16 +228,46 @@ export const make = Effect.gen(function* () {
       return existing;
     }
     yield* requireParent(parentThreadId);
+    const worker = yield* store.getWorker(input.workerThreadId);
+    if (!worker || worker.parentThreadId !== parentThreadId)
+      return yield* error("not-found", "Worker does not belong to this Flow.");
+    const shell = yield* projection
+      .getThreadShellById(worker.threadId)
+      .pipe(Effect.mapError(unavailable));
+    const active = Option.isSome(shell) && shell.value.latestTurn?.state === "running";
+    const prepared = active
+      ? yield* providerService
+          .prepareSteerTurnMessageId(worker.threadId)
+          .pipe(Effect.orElseSucceed(() => ({ status: "unsupported" }) as const))
+      : ({ status: "unsupported" } as const);
     const job = yield* store.reserveJob({
       parentThreadId,
       workerThreadId: input.workerThreadId,
       id,
-      messageId: `flow-message-${input.id}`,
+      messageId: prepared.status === "ready" ? prepared.messageId : `flow-message-${input.id}`,
       message: input.message,
+      delivery: prepared.status === "ready" ? "steer" : "turn",
       createdAt: yield* nowIso,
     });
     yield* Queue.offer(wakeups, undefined);
     return job;
+  });
+
+  const report = Effect.fn("FlowRuntime.report")(function* (
+    workerThreadId: ThreadId,
+    input: FlowReportInput,
+  ) {
+    const worker = yield* store.getWorker(workerThreadId);
+    if (!worker || worker.state === "stopped")
+      return yield* error("not-found", "Active Flow worker was not found.");
+    const update = yield* store.recordUpdate({
+      workerThreadId,
+      id: `${workerThreadId}:${input.id}`,
+      message: input.message,
+      createdAt: yield* nowIso,
+    });
+    yield* PubSub.publish(completed, worker.parentThreadId);
+    return update;
   });
 
   const stop = Effect.fn("FlowRuntime.stop")(function* (
@@ -280,6 +357,15 @@ export const make = Effect.gen(function* () {
   ) {
     let worker = yield* store.getWorker(ThreadId.make(row.workerThreadId));
     if (!worker || worker.state === "stopped") return;
+    const current = yield* projection
+      .getThreadShellById(worker.threadId)
+      .pipe(Effect.mapError(unavailable));
+    if (
+      row.delivery === "turn" &&
+      Option.isSome(current) &&
+      current.value.latestTurn?.state === "running"
+    )
+      return;
     worker = yield* ensureWorktree(worker.threadId);
     const parent = yield* requireLeadThread(worker.parentThreadId);
     if (!worker.worktreePath)
@@ -297,12 +383,52 @@ export const make = Effect.gen(function* () {
       worktreePath: worker.worktreePath,
       createdAt: worker.createdAt,
     });
-    const prompt = [
-      `You are a Dispatch Flow worker. Your assignment is: ${row.prompt}`,
-      `Work in your isolated checkout at ${worker.worktreePath}. Do not change the parent checkout.`,
-      "Report the result, files changed, validation performed, and any commit or branch needed for the lead to integrate your work.",
-      "You may use your provider's native tools. The Flow lead owns integration and the final user response.",
-    ].join("\n\n");
+    const initial = row.id === `flow-job-${worker.spawnId}`;
+    const prompt = initial
+      ? [
+          `You are a Dispatch Flow worker. Your assignment is: ${row.prompt}`,
+          `Work in your isolated checkout at ${worker.worktreePath}. Do not change the parent checkout.`,
+          "Use flow_report to send concise progress or a blocker to the lead while you work. The lead may send you a message during your turn.",
+          "Report the result, files changed, validation performed, and any commit or branch needed for the lead to integrate your work.",
+          "You may use your provider's native tools. The Flow lead owns integration and the final user response.",
+        ].join("\n\n")
+      : `Message from your Flow lead: ${row.prompt}`;
+    if (row.delivery === "steer") {
+      yield* engine.dispatch({
+        type: "thread.message.user.append",
+        commandId: CommandId.make(`flow-message-append-${row.id}`),
+        threadId: worker.threadId,
+        message: {
+          messageId: MessageId.make(row.messageId),
+          text: prompt,
+          attachments: [],
+        },
+        createdAt: row.createdAt,
+      });
+      const latest = yield* projection
+        .getThreadShellById(worker.threadId)
+        .pipe(Effect.mapError(unavailable));
+      const turn = Option.isSome(latest) ? latest.value.latestTurn : null;
+      if (turn?.state === "running") {
+        const delivered = yield* providerService.steerTurn({
+          threadId: worker.threadId,
+          expectedTurnId: turn.turnId,
+          messageId: MessageId.make(row.messageId),
+          input: prompt,
+        });
+        if (delivered.status === "accepted") {
+          yield* store.updateJob({
+            id: row.id,
+            state: "completed",
+            workerState: "idle",
+            result: "Delivered to the active worker turn.",
+            updatedAt: yield* nowIso,
+          });
+          yield* PubSub.publish(completed, worker.parentThreadId);
+          return;
+        }
+      }
+    }
     yield* engine.dispatch({
       type: "thread.turn.start",
       commandId: CommandId.make(row.commandId),
@@ -430,6 +556,12 @@ export const make = Effect.gen(function* () {
     if (selected.length !== (input.workerThreadIds?.length ?? selected.length))
       return yield* error("not-found", "A requested worker does not belong to this Flow.");
     if (
+      (input.afterUpdateSequence !== undefined &&
+        current.updates.some(
+          (update) =>
+            update.sequence > input.afterUpdateSequence! &&
+            selected.some((worker) => worker.threadId === update.workerThreadId),
+        )) ||
       selected.every((worker) => worker.state !== "queued" && worker.state !== "working") ||
       (input.timeoutSeconds ?? 0) === 0
     )
@@ -446,6 +578,7 @@ export const make = Effect.gen(function* () {
     view,
     spawn,
     send,
+    report,
     stop,
     wait,
     tick,
@@ -453,6 +586,7 @@ export const make = Effect.gen(function* () {
     assertCanEnableFlow,
     wakeups: Stream.fromQueue(wakeups),
     models: providers.getProviders,
+    profiles,
   };
 });
 

@@ -70,7 +70,7 @@ export function FlowWorkersPanel({
     ) : (
       children
     );
-  const { parentThreadId, workers } = query.data;
+  const { parentThreadId, workers, updates } = query.data;
   if (!query.data.enabled && workers.length === 0) return children;
 
   return (
@@ -89,59 +89,78 @@ export function FlowWorkersPanel({
           </p>
         ) : (
           <div className="mt-2 divide-y divide-border/50">
-            {workers.map((worker) => (
-              <div key={worker.threadId} className="py-2 first:pt-0 last:pb-0">
-                <div className="flex items-start justify-between gap-2">
-                  <button
-                    type="button"
-                    className="min-w-0 text-left text-xs font-medium hover:underline focus-visible:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
-                    onClick={() =>
-                      void navigate({
-                        to: "/$environmentId/$threadId",
-                        params: { environmentId, threadId: worker.threadId },
-                      })
-                    }
-                  >
-                    <span className="block truncate">{worker.assignment}</span>
-                  </button>
-                  <span className="shrink-0 text-[11px] text-muted-foreground">{worker.state}</span>
+            {workers.map((worker) => {
+              const latestUpdate = updates.findLast(
+                (update) => update.workerThreadId === worker.threadId,
+              );
+              const effort = worker.modelSelection.options?.find(
+                (option) =>
+                  option.id === "reasoningEffort" ||
+                  option.id === "effort" ||
+                  option.id === "thinkingLevel",
+              )?.value;
+              return (
+                <div key={worker.threadId} className="py-2 first:pt-0 last:pb-0">
+                  <div className="flex items-start justify-between gap-2">
+                    <button
+                      type="button"
+                      className="min-w-0 text-left text-xs font-medium hover:underline focus-visible:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+                      onClick={() =>
+                        void navigate({
+                          to: "/$environmentId/$threadId",
+                          params: { environmentId, threadId: worker.threadId },
+                        })
+                      }
+                    >
+                      <span className="block truncate">{worker.assignment}</span>
+                    </button>
+                    <span className="shrink-0 text-[11px] text-muted-foreground">
+                      {worker.state}
+                    </span>
+                  </div>
+                  <p className="mt-0.5 truncate text-[11px] text-muted-foreground">
+                    {worker.modelSelection.instanceId} · {worker.modelSelection.model}
+                    {typeof effort === "string" ? ` · ${effort}` : ""}
+                  </p>
+                  {latestUpdate && worker.state !== "idle" && worker.state !== "stopped" ? (
+                    <p className="mt-1 line-clamp-2 text-xs text-foreground/80" role="status">
+                      {latestUpdate.message}
+                    </p>
+                  ) : null}
+                  {worker.latestJob?.result ? (
+                    <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">
+                      {worker.latestJob.result}
+                    </p>
+                  ) : worker.error || worker.latestJob?.error ? (
+                    <p className="mt-1 text-xs text-destructive" role="status">
+                      {worker.error ?? worker.latestJob?.error}
+                    </p>
+                  ) : null}
+                  {worker.state !== "stopped" ? (
+                    <Button
+                      size="xs"
+                      variant="ghost"
+                      className="mt-1"
+                      disabled={stopping === worker.threadId}
+                      onClick={() => {
+                        setStopping(worker.threadId);
+                        setStopError(null);
+                        void stop({
+                          environmentId,
+                          input: { parentThreadId, workerThreadId: worker.threadId },
+                        }).then((result) => {
+                          setStopping(null);
+                          if (result._tag === "Failure") setStopError("Could not stop worker.");
+                          query.refresh();
+                        });
+                      }}
+                    >
+                      Stop
+                    </Button>
+                  ) : null}
                 </div>
-                <p className="mt-0.5 truncate text-[11px] text-muted-foreground">
-                  {worker.modelSelection.model}
-                </p>
-                {worker.latestJob?.result ? (
-                  <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">
-                    {worker.latestJob.result}
-                  </p>
-                ) : worker.error || worker.latestJob?.error ? (
-                  <p className="mt-1 text-xs text-destructive" role="status">
-                    {worker.error ?? worker.latestJob?.error}
-                  </p>
-                ) : null}
-                {worker.state !== "stopped" ? (
-                  <Button
-                    size="xs"
-                    variant="ghost"
-                    className="mt-1"
-                    disabled={stopping === worker.threadId}
-                    onClick={() => {
-                      setStopping(worker.threadId);
-                      setStopError(null);
-                      void stop({
-                        environmentId,
-                        input: { parentThreadId, workerThreadId: worker.threadId },
-                      }).then((result) => {
-                        setStopping(null);
-                        if (result._tag === "Failure") setStopError("Could not stop worker.");
-                        query.refresh();
-                      });
-                    }}
-                  >
-                    Stop
-                  </Button>
-                ) : null}
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
         {query.error ? (

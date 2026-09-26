@@ -7,9 +7,7 @@ function SettingsOrchestrationRoute() {
   return environment ? (
     <TeamSettingsPanel environmentId={environment.environmentId} />
   ) : (
-    <p className="p-8 text-sm text-muted-foreground">
-      Connect an environment to configure routing.
-    </p>
+    <p className="p-8 text-sm text-muted-foreground">Connect an environment to configure Flow.</p>
   );
 }
 export const Route = createFileRoute("/settings/orchestration")({

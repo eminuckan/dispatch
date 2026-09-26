@@ -40,6 +40,7 @@ export const FlowToolkitHandlersLive = FlowToolkit.toLayer(
                         selection: { instanceId: provider.instanceId, model: model.slug },
                         providerName: provider.displayName ?? provider.instanceId,
                         modelName: model.name,
+                        optionDescriptors: model.capabilities?.optionDescriptors ?? [],
                       }))
                   : [],
               ),
@@ -49,8 +50,48 @@ export const FlowToolkitHandlersLive = FlowToolkit.toLayer(
             ),
           ),
         ),
+      flow_profiles: () =>
+        authorized((threadId) =>
+          Effect.all(
+            [
+              runtime!.profiles(threadId),
+              runtime!.models.pipe(
+                Effect.mapError(
+                  () =>
+                    new FlowError({ code: "unavailable", message: "Could not list Flow models." }),
+                ),
+              ),
+            ],
+            { concurrency: "unbounded" },
+          ).pipe(
+            Effect.map(([profiles, providers]) =>
+              profiles.map((profile) => {
+                const provider = providers.find(
+                  (item) => item.instanceId === profile.modelSelection.instanceId,
+                );
+                const model = provider?.models.find(
+                  (item) => item.slug === profile.modelSelection.model && !item.isLegacy,
+                );
+                return {
+                  profile,
+                  providerName: provider?.displayName ?? profile.modelSelection.instanceId,
+                  modelName: model?.name ?? profile.modelSelection.model,
+                  available: Boolean(
+                    provider &&
+                    provider.enabled &&
+                    provider.status === "ready" &&
+                    provider.auth.status !== "unauthenticated" &&
+                    provider.availability !== "unavailable" &&
+                    model,
+                  ),
+                };
+              }),
+            ),
+          ),
+        ),
       flow_spawn: (input) => authorized((threadId) => runtime!.spawn(threadId, input)),
       flow_send: (input) => authorized((threadId) => runtime!.send(threadId, input)),
+      flow_report: (input) => authorized((threadId) => runtime!.report(threadId, input)),
       flow_wait: (input) => authorized((threadId) => Effect.scoped(runtime!.wait(threadId, input))),
       flow_list: () =>
         authorized((threadId) =>

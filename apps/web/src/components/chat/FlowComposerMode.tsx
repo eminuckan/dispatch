@@ -84,6 +84,7 @@ export function FlowComposerToggle() {
       <Switch
         size="sm"
         checked={flow.enabled}
+        aria-label="Flow"
         aria-checked={flow.enabled}
         disabled={flow.pending}
         onCheckedChange={(enabled) => void flow.setEnabled(enabled)}

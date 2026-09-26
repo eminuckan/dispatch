@@ -71,7 +71,9 @@ Leaving reasoning level or service tier unset uses the provider's own configurat
 
 Turn on **Flow** in the composer for a thread when you want the selected agent to coordinate other agents. The model you select remains the lead. Flow does not choose a model for you or require a Dispatch Connect account. You can turn Flow on or off for an existing thread.
 
-The lead can start up to five workers, choose an available model for each, send follow-up instructions, wait for results, and stop them. Each worker has its own thread and Git worktree. Open **Agents** to inspect workers and their conversations. Ask the lead to integrate or review their work; worker branches are not merged automatically.
+In **Settings → Flow**, add worker profiles for deep or routine work. Each profile chooses a provider, model, effort where supported, and a description of the tasks it suits. You can add several profiles to either group, including models from different providers. The lead sees these descriptions and chooses a worker for each assignment; Flow does not route work by price or category automatically. The lead must review every worker's result.
+
+The lead can start workers, send instructions while a worker is active, receive progress reports, wait for results, and stop workers. Messages reach the current turn when the worker's provider supports live steering; otherwise they run as the next turn. Each worker has its own thread and Git worktree. Open **Agents** to inspect workers and their conversations. Worker branches are not merged automatically.
 
 Turning Flow off prevents new delegation. Work already assigned to workers continues; you can inspect or stop those workers in **Agents**.
 
