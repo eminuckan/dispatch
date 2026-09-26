@@ -17,6 +17,7 @@ const worker = {
   assignment: "Check parser edge cases",
   modelSelection: selection,
   branch: "flow/flow-worker",
+  repositoryPath: ".",
   worktreePath: null,
   state: "queued" as const,
   error: null,

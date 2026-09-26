@@ -73,11 +73,11 @@ Turn on **Flow** in the composer for a thread when you want the selected agent t
 
 In **Settings → Flow**, add worker profiles for deep or routine work. Each profile chooses a provider, model, effort where supported, and a description of the tasks it suits. You can add several profiles to either group, including models from different providers. The lead sees these descriptions and chooses a worker for each assignment; Flow does not route work by price or category automatically. The lead must review every worker's result.
 
-The lead can start workers, send instructions while a worker is active, receive progress reports, wait for results, and stop workers. Messages reach the current turn when the worker's provider supports live steering; otherwise they run as the next turn. Each worker has its own thread and Git worktree. Open **Agents** to inspect workers and their conversations. Worker branches are not merged automatically.
+The lead can start workers, send instructions while a worker is active, receive progress reports, wait for results, and stop workers. Messages reach the current turn when the worker's provider supports live steering; otherwise they run as the next turn. Each worker has its own thread. Open **Agents** to inspect workers and their conversations. Worker branches are not merged automatically.
 
 Turning Flow off prevents new delegation. Work already assigned to workers continues; you can inspect or stop those workers in **Agents**.
 
-A worker needs a repository with a commit. Its checkout starts from the lead thread's current commit, so commit changes you want workers to see first. Flow workers persist across app restarts, and their threads remain available for inspection after they stop.
+In a Git project with a commit, workers get separate worktrees at the current commit, so commit changes you want them to see first. If the project folder is not a Git repository, workers can use the shared live folder and see its child repositories and uncommitted files. For work confined to a child repository, the lead can start a worker in that repository's separate worktree. You do not need to initialize Git in the parent folder or choose a repository yourself. Shared workers may touch the same files, so the lead coordinates their assignments and reviews the result. Flow workers persist across app restarts, and their threads remain available for inspection after they stop.
 
 Older managed team runs remain visible in their existing threads, but new work starts through Flow.
 

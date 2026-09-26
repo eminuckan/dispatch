@@ -1,8 +1,11 @@
 import { expect, it } from "@effect/vitest";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { CommandId, MessageId, ProjectId, ProviderInstanceId, ThreadId } from "@dispatch/contracts";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { GitWorkflowService } from "../git/GitWorkflowService.ts";
@@ -26,6 +29,186 @@ const crossProviderSelection = {
 };
 const assistantMessageId = MessageId.make("flow-answer");
 const createdAt = "2026-09-25T00:00:00.000Z";
+
+it.effect(
+  "starts shared workers at an umbrella root and isolated workers in chosen child repos",
+  () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const workspaceRoot = yield* fileSystem.realPath(yield* fileSystem.makeTempDirectoryScoped());
+      const childRepo = path.join(workspaceRoot, "api");
+      yield* fileSystem.makeDirectory(childRepo);
+      yield* fileSystem.makeDirectory(path.join(childRepo, ".git"));
+      yield* fileSystem.makeDirectory(path.join(workspaceRoot, "not-a-repo"));
+      const outside = yield* fileSystem.realPath(yield* fileSystem.makeTempDirectoryScoped());
+      yield* fileSystem.symlink(outside, path.join(workspaceRoot, "escape"));
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`
+      INSERT INTO projection_threads
+        (thread_id, project_id, title, model_selection_json, runtime_mode, interaction_mode, created_at, updated_at, flow_enabled)
+      VALUES (${parentThreadId}, ${projectId}, 'Lead', '{}', 'full-access', 'default', ${createdAt}, ${createdAt}, 1)
+    `;
+      const store = yield* makeStore;
+      const commands: Array<{ type: string; [key: string]: unknown }> = [];
+      const gitCwds: string[] = [];
+      const worktreeInputs: Array<{ cwd: string; refName: string; path: string | null }> = [];
+      const runtime = yield* makeRuntime.pipe(
+        Effect.provideService(FlowStore, store),
+        Effect.provideService(ProjectionSnapshotQuery, {
+          getThreadShellById: () =>
+            Effect.succeed(
+              Option.some({
+                id: parentThreadId,
+                projectId,
+                flowEnabled: true,
+                managedTeamWorker: false,
+                runtimeMode: "full-access",
+                worktreePath: null,
+                latestTurn: null,
+                session: null,
+              }),
+            ),
+          getProjectShellById: () => Effect.succeed(Option.some({ workspaceRoot })),
+          getThreadDetailById: () => Effect.succeed(Option.none()),
+        } as never),
+        Effect.provideService(ProjectionTurnRepository, {
+          listByThreadId: () => Effect.succeed([]),
+        } as never),
+        Effect.provideService(ProviderRegistry, {
+          getProviders: Effect.succeed([
+            {
+              instanceId: selection.instanceId,
+              enabled: true,
+              status: "ready",
+              auth: { status: "authenticated" },
+              availability: "available",
+              models: [{ slug: selection.model, isLegacy: false }],
+            },
+          ]),
+        } as never),
+        Effect.provideService(ProviderService, {
+          prepareSteerTurnMessageId: () => Effect.succeed({ status: "unsupported" }),
+        } as never),
+        Effect.provideService(GitWorkflowService, {
+          isRepository: (cwd: string) => Effect.succeed(cwd === childRepo),
+          hasCommit: ({ cwd }: { cwd: string }) =>
+            Effect.sync(() => {
+              gitCwds.push(cwd);
+              return cwd === childRepo;
+            }),
+          listRefs: () => Effect.succeed({ refs: [] }),
+          pruneWorktrees: () => Effect.void,
+          createWorktree: (input: { cwd: string; refName: string; path: string | null }) =>
+            Effect.sync(() => {
+              gitCwds.push(input.cwd);
+              worktreeInputs.push(input);
+              return {
+                worktree: { path: path.join(workspaceRoot, "api-worker"), refName: "flow/api" },
+              };
+            }),
+        } as never),
+        Effect.provideService(OrchestrationEngineService, {
+          dispatch: (command: { type: string }) =>
+            Effect.sync(() => {
+              commands.push(command);
+            }),
+        } as never),
+      );
+
+      const shared = yield* runtime.spawn(parentThreadId, {
+        id: CommandId.make("umbrella-shared"),
+        assignment: "Investigate API and dashboard together",
+        modelSelection: selection,
+      });
+      expect(shared.repositoryPath).toBeNull();
+      expect(shared.branch).toBeNull();
+      yield* runtime.tick();
+      expect(commands[0]).toMatchObject({
+        type: "thread.create",
+        threadId: shared.threadId,
+        branch: null,
+        worktreePath: null,
+      });
+      expect(gitCwds).toEqual([]);
+
+      const child = yield* runtime.spawn(parentThreadId, {
+        id: CommandId.make("umbrella-child"),
+        assignment: "Implement the API change",
+        modelSelection: selection,
+        repositoryPath: "api",
+      });
+      expect(child.repositoryPath).toBe("api");
+      expect(
+        (yield* runtime.spawn(parentThreadId, {
+          id: CommandId.make("umbrella-child"),
+          assignment: "Implement the API change",
+          modelSelection: selection,
+          repositoryPath: "api",
+        })).threadId,
+      ).toBe(child.threadId);
+      expect(
+        (yield* runtime
+          .spawn(parentThreadId, {
+            id: CommandId.make("umbrella-child"),
+            assignment: "Implement the API change",
+            modelSelection: selection,
+          })
+          .pipe(Effect.flip)).code,
+      ).toBe("conflict");
+      yield* runtime.tick();
+      expect(gitCwds).toEqual([childRepo, childRepo, childRepo]);
+      expect(
+        commands.find(
+          (command) => command.type === "thread.create" && command.threadId === child.threadId,
+        ),
+      ).toMatchObject({
+        branch: child.branch,
+        worktreePath: path.join(workspaceRoot, "api-worker"),
+      });
+      expect((yield* store.getWorker(child.threadId))?.repositoryPath).toBe("api");
+      yield* store.updateJob({
+        id: "flow-job-umbrella-child",
+        state: "completed",
+        workerState: "idle",
+        result: "Done",
+        updatedAt: createdAt,
+      });
+      yield* runtime.send(parentThreadId, {
+        id: CommandId.make("umbrella-child-followup"),
+        workerThreadId: child.threadId,
+        message: "Check one more case",
+      });
+      yield* runtime.tick();
+      expect(worktreeInputs[1]).toMatchObject({
+        cwd: childRepo,
+        refName: child.branch,
+        path: path.join(workspaceRoot, "api-worker"),
+      });
+
+      for (const [id, repositoryPath] of [
+        ["outside", `../${path.basename(outside)}`],
+        ["symlink", "escape"],
+        ["non-repo", "not-a-repo"],
+      ] as const) {
+        expect(
+          (yield* runtime
+            .spawn(parentThreadId, {
+              id: CommandId.make(id),
+              assignment: "Invalid repository",
+              modelSelection: selection,
+              repositoryPath,
+            })
+            .pipe(Effect.flip)).code,
+        ).toBe("invalid");
+        expect(yield* store.getWorkerBySpawnId(id)).toBeNull();
+      }
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, SqlitePersistenceMemory, serverSettingsLayerTest({})),
+      ),
+    ),
+);
 
 it.effect("dispatches an isolated worker turn and persists its completed result", () =>
   Effect.gen(function* () {
@@ -117,8 +300,10 @@ it.effect("dispatches an isolated worker turn and persists its completed result"
         steerTurn: () => Effect.succeed({ status: "unsupported" }),
       } as never),
       Effect.provideService(GitWorkflowService, {
+        isRepository: () => Effect.succeed(true),
         hasCommit: () => Effect.succeed(true),
         listRefs: () => Effect.succeed({ refs: [] }),
+        pruneWorktrees: () => Effect.void,
         createWorktree: () =>
           Effect.succeed({ worktree: { path: "/project-flow-worker", refName: "flow/worker" } }),
       } as never),
@@ -176,6 +361,7 @@ it.effect("dispatches an isolated worker turn and persists its completed result"
   }).pipe(
     Effect.provide(
       Layer.mergeAll(
+        NodeServices.layer,
         SqlitePersistenceMemory,
         serverSettingsLayerTest({
           flowWorkerProfiles: [
@@ -279,8 +465,10 @@ it.effect("delivers a lead message into an active worker turn and keeps its resu
           }),
       } as never),
       Effect.provideService(GitWorkflowService, {
+        isRepository: () => Effect.succeed(true),
         hasCommit: () => Effect.succeed(true),
         listRefs: () => Effect.succeed({ refs: [] }),
+        pruneWorktrees: () => Effect.void,
         createWorktree: () =>
           Effect.succeed({ worktree: { path: "/project-flow-worker", refName: "flow/worker" } }),
       } as never),
@@ -343,5 +531,9 @@ it.effect("delivers a lead message into an active worker turn and keeps its resu
     yield* runtime.tick();
     expect((yield* store.getJob(later.id))?.state).toBe("queued");
     expect(commands).toHaveLength(beforeTick);
-  }).pipe(Effect.provide(Layer.mergeAll(SqlitePersistenceMemory, serverSettingsLayerTest({})))),
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(NodeServices.layer, SqlitePersistenceMemory, serverSettingsLayerTest({})),
+    ),
+  ),
 );

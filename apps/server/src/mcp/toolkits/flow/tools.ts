@@ -60,7 +60,7 @@ const Profiles = Tool.make("flow_profiles", {
 
 const Spawn = Tool.make("flow_spawn", {
   description:
-    "Start one persistent Dispatch worker thread for a concrete assignment. Prefer a configured profile from flow_profiles so its task guidance, provider, model, and effort inform your choice; use an explicit selection from flow_models when no profile fits. The worker gets an isolated Git worktree and only the assignment you supply; it does not inherit this conversation. Reuse id on retry. The lead owns review and integration.",
+    "Start one persistent Dispatch worker thread for a concrete assignment. Prefer a configured profile from flow_profiles so its task guidance, provider, model, and effort inform your choice; use an explicit selection from flow_models when no profile fits. In a Git project, the worker automatically gets an isolated worktree. In a project whose root is not Git, the worker shares the live project directory by default; specify repositoryPath relative to the project root to give it an isolated worktree in a child Git repository. Inspect the project and choose the child path yourself when isolation helps; the user need not configure it. The worker receives only the assignment you supply and does not inherit this conversation. Reuse id on retry. The lead owns review and integration.",
   parameters: FlowSpawnInput,
   success: FlowWorker,
   failure: FlowError,
@@ -117,7 +117,7 @@ const List = Tool.make("flow_list", {
 
 const Stop = Tool.make("flow_stop", {
   description:
-    "Stop a worker owned by this Flow. Its thread and worktree remain available for inspection. The worker cannot receive new assignments after stopping.",
+    "Stop a worker owned by this Flow. Its thread and any worktree remain available for inspection. The worker cannot receive new assignments after stopping.",
   parameters: Schema.Struct({ workerThreadId: ThreadId }),
   success: FlowWorker,
   failure: FlowError,

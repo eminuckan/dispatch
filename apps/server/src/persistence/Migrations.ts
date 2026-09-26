@@ -69,6 +69,7 @@ import Migration0056 from "./Migrations/056_OrchestrationV2.ts";
 import Migration0057 from "./Migrations/057_FlowThreads.ts";
 import Migration0058 from "./Migrations/058_FlowCollaboration.ts";
 import Migration0059 from "./Migrations/059_FlowLiveMessages.ts";
+import Migration0060 from "./Migrations/060_FlowRepositoryPaths.ts";
 import Migration0054 from "./Migrations/054_TeamRuns.ts";
 import Migration0053 from "./Migrations/053_PullRequestFilesViewed.ts";
 
@@ -142,6 +143,7 @@ const migrationEntries = [
   [57, "FlowThreads", Migration0057],
   [58, "FlowCollaboration", Migration0058],
   [59, "FlowLiveMessages", Migration0059],
+  [60, "FlowRepositoryPaths", Migration0060],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);

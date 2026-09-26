@@ -28,6 +28,7 @@ interface WorkerRow {
   readonly modelSelectionJson: string;
   readonly profileId: string | null;
   readonly branch: string;
+  readonly repositoryPath: string | null;
   readonly worktreePath: string | null;
   readonly state: FlowWorker["state"];
   readonly error: string | null;
@@ -61,7 +62,7 @@ export const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 
   const getWorkerRow = (threadId: string) =>
-    sql<WorkerRow>`SELECT thread_id AS "threadId", parent_thread_id AS "parentThreadId", spawn_id AS "spawnId", assignment, model_selection_json AS "modelSelectionJson", profile_id AS "profileId", branch, worktree_path AS "worktreePath", state, error, created_at AS "createdAt", updated_at AS "updatedAt" FROM flow_workers WHERE thread_id = ${threadId}`.pipe(
+    sql<WorkerRow>`SELECT thread_id AS "threadId", parent_thread_id AS "parentThreadId", spawn_id AS "spawnId", assignment, model_selection_json AS "modelSelectionJson", profile_id AS "profileId", branch, repository_path AS "repositoryPath", worktree_path AS "worktreePath", state, error, created_at AS "createdAt", updated_at AS "updatedAt" FROM flow_workers WHERE thread_id = ${threadId}`.pipe(
       Effect.map((rows) => rows[0] ?? null),
     );
   const getJobRow = (id: string) =>
@@ -92,7 +93,8 @@ export const make = Effect.gen(function* () {
       assignment: row.assignment,
       modelSelection: decodeSelection(row.modelSelectionJson),
       profileId: row.profileId,
-      branch: row.branch,
+      branch: row.repositoryPath === null ? null : row.branch,
+      repositoryPath: row.repositoryPath,
       worktreePath: row.worktreePath,
       state: row.state,
       error: row.error,
@@ -117,7 +119,7 @@ export const make = Effect.gen(function* () {
 
   const getWorkerBySpawnId = Effect.fn("FlowStore.getWorkerBySpawnId")(function* (spawnId: string) {
     const rows =
-      yield* sql<WorkerRow>`SELECT thread_id AS "threadId", parent_thread_id AS "parentThreadId", spawn_id AS "spawnId", assignment, model_selection_json AS "modelSelectionJson", profile_id AS "profileId", branch, worktree_path AS "worktreePath", state, error, created_at AS "createdAt", updated_at AS "updatedAt" FROM flow_workers WHERE spawn_id = ${spawnId}`;
+      yield* sql<WorkerRow>`SELECT thread_id AS "threadId", parent_thread_id AS "parentThreadId", spawn_id AS "spawnId", assignment, model_selection_json AS "modelSelectionJson", profile_id AS "profileId", branch, repository_path AS "repositoryPath", worktree_path AS "worktreePath", state, error, created_at AS "createdAt", updated_at AS "updatedAt" FROM flow_workers WHERE spawn_id = ${spawnId}`;
     return rows[0] ? yield* toWorker(rows[0]) : null;
   }, Effect.mapError(persistence));
 
@@ -128,7 +130,7 @@ export const make = Effect.gen(function* () {
 
   const listWorkers = Effect.fn("FlowStore.listWorkers")(function* (parentThreadId: ThreadId) {
     const rows = yield* sql<WorkerRow>`
-      SELECT thread_id AS "threadId", parent_thread_id AS "parentThreadId", spawn_id AS "spawnId", assignment, model_selection_json AS "modelSelectionJson", profile_id AS "profileId", branch, worktree_path AS "worktreePath", state, error, created_at AS "createdAt", updated_at AS "updatedAt" FROM flow_workers WHERE parent_thread_id = ${parentThreadId}
+      SELECT thread_id AS "threadId", parent_thread_id AS "parentThreadId", spawn_id AS "spawnId", assignment, model_selection_json AS "modelSelectionJson", profile_id AS "profileId", branch, repository_path AS "repositoryPath", worktree_path AS "worktreePath", state, error, created_at AS "createdAt", updated_at AS "updatedAt" FROM flow_workers WHERE parent_thread_id = ${parentThreadId}
       ORDER BY created_at ASC, rowid ASC
     `;
     return yield* Effect.forEach(rows, toWorker);
@@ -212,6 +214,7 @@ export const make = Effect.gen(function* () {
     readonly modelSelection: ModelSelection;
     readonly profileId?: string | undefined;
     readonly branch: string;
+    readonly repositoryPath: string | null;
     readonly jobId: string;
     readonly messageId: string;
     readonly createdAt: string;
@@ -220,13 +223,14 @@ export const make = Effect.gen(function* () {
       .withTransaction(
         Effect.gen(function* () {
           const prior =
-            yield* sql<WorkerRow>`SELECT thread_id AS "threadId", parent_thread_id AS "parentThreadId", spawn_id AS "spawnId", assignment, model_selection_json AS "modelSelectionJson", profile_id AS "profileId", branch, worktree_path AS "worktreePath", state, error, created_at AS "createdAt", updated_at AS "updatedAt" FROM flow_workers WHERE spawn_id = ${input.spawnId}`;
+            yield* sql<WorkerRow>`SELECT thread_id AS "threadId", parent_thread_id AS "parentThreadId", spawn_id AS "spawnId", assignment, model_selection_json AS "modelSelectionJson", profile_id AS "profileId", branch, repository_path AS "repositoryPath", worktree_path AS "worktreePath", state, error, created_at AS "createdAt", updated_at AS "updatedAt" FROM flow_workers WHERE spawn_id = ${input.spawnId}`;
           if (prior[0]) {
             if (
               prior[0].parentThreadId !== input.parentThreadId ||
               prior[0].assignment !== input.assignment ||
               prior[0].profileId !== (input.profileId ?? null) ||
-              prior[0].modelSelectionJson !== encodeSelection(input.modelSelection)
+              prior[0].modelSelectionJson !== encodeSelection(input.modelSelection) ||
+              prior[0].repositoryPath !== input.repositoryPath
             )
               return yield* fail(
                 "conflict",
@@ -238,8 +242,8 @@ export const make = Effect.gen(function* () {
           if (!enabled)
             return yield* fail("invalid", "Enable Flow on this thread before starting a worker.");
           yield* sql`
-          INSERT INTO flow_workers (thread_id, parent_thread_id, spawn_id, assignment, model_selection_json, profile_id, branch, worktree_path, state, error, created_at, updated_at)
-          VALUES (${input.threadId}, ${input.parentThreadId}, ${input.spawnId}, ${input.assignment}, ${encodeSelection(input.modelSelection)}, ${input.profileId ?? null}, ${input.branch}, NULL, 'queued', NULL, ${input.createdAt}, ${input.createdAt})
+          INSERT INTO flow_workers (thread_id, parent_thread_id, spawn_id, assignment, model_selection_json, profile_id, branch, repository_path, worktree_path, state, error, created_at, updated_at)
+          VALUES (${input.threadId}, ${input.parentThreadId}, ${input.spawnId}, ${input.assignment}, ${encodeSelection(input.modelSelection)}, ${input.profileId ?? null}, ${input.branch}, ${input.repositoryPath}, NULL, 'queued', NULL, ${input.createdAt}, ${input.createdAt})
         `;
           yield* sql`
           INSERT INTO flow_jobs (id, worker_thread_id, command_id, message_id, prompt, state, result, error, created_at, updated_at)

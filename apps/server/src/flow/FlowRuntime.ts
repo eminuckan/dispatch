@@ -16,8 +16,10 @@ import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Equal from "effect/Equal";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
@@ -54,6 +56,8 @@ export const make = Effect.gen(function* () {
   const providers = yield* ProviderRegistry;
   const providerService = yield* ProviderService;
   const git = yield* GitWorkflowService;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
   const engine = yield* OrchestrationEngineService;
   const settings = yield* ServerSettingsService;
   const lock = yield* Semaphore.make(1);
@@ -131,6 +135,56 @@ export const make = Effect.gen(function* () {
     return matches[0]!.modelSelection;
   });
 
+  const leadCwd = Effect.fn("FlowRuntime.leadCwd")(function* (parentThreadId: ThreadId) {
+    const parent = yield* requireLeadThread(parentThreadId);
+    const project = yield* projection
+      .getProjectShellById(parent.projectId)
+      .pipe(Effect.mapError(unavailable));
+    if (Option.isNone(project)) return yield* error("not-found", "Flow project was not found.");
+    return parent.worktreePath ?? project.value.workspaceRoot;
+  });
+
+  const resolveRepository = Effect.fn("FlowRuntime.resolveRepository")(function* (
+    workspaceRoot: string,
+    repositoryPath: string,
+  ) {
+    if (path.isAbsolute(repositoryPath))
+      return yield* error("invalid", "Choose a repository inside this project.");
+    const root = yield* fileSystem
+      .realPath(workspaceRoot)
+      .pipe(Effect.mapError(() => error("invalid", "The project workspace is unavailable.")));
+    const candidate = yield* fileSystem
+      .realPath(path.resolve(root, repositoryPath))
+      .pipe(
+        Effect.mapError(() => error("invalid", "The selected repository path is unavailable.")),
+      );
+    const relative = path.relative(root, candidate);
+    if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative))
+      return yield* error("invalid", "Choose a repository inside this project.");
+    return candidate;
+  });
+
+  const requireRepositoryCommit = Effect.fn("FlowRuntime.requireRepositoryCommit")(function* (
+    cwd: string,
+  ) {
+    if (!(yield* git.isRepository(cwd).pipe(Effect.mapError(unavailable))))
+      return yield* error("invalid", "The selected path is not a Git repository.");
+    if (!(yield* git.hasCommit({ cwd, refName: "HEAD" }).pipe(Effect.mapError(unavailable))))
+      return yield* error("unavailable", "The selected Git repository needs a commit.");
+  });
+
+  const requireChildRepository = Effect.fn("FlowRuntime.requireChildRepository")(function* (
+    cwd: string,
+  ) {
+    if (
+      !(yield* fileSystem
+        .exists(path.join(cwd, ".git"))
+        .pipe(Effect.mapError(() => error("invalid", "The selected repository is unavailable."))))
+    )
+      return yield* error("invalid", "Choose the root of a child Git repository.");
+    yield* requireRepositoryCommit(cwd);
+  });
+
   const view = Effect.fn("FlowRuntime.view")(function* (threadId: ThreadId) {
     const parentThreadId = yield* store.findParent(threadId);
     if (!parentThreadId) return null;
@@ -178,6 +232,11 @@ export const make = Effect.gen(function* () {
         existing.parentThreadId !== parentThreadId ||
         existing.assignment !== input.assignment ||
         existing.profileId !== (input.profileId ?? null) ||
+        (input.repositoryPath === undefined &&
+          existing.repositoryPath !== null &&
+          existing.repositoryPath !== ".") ||
+        (input.repositoryPath !== undefined &&
+          existing.repositoryPath !== path.normalize(input.repositoryPath)) ||
         (input.modelSelection && !Equal.equals(existing.modelSelection, input.modelSelection))
       )
         return yield* error(
@@ -189,6 +248,19 @@ export const make = Effect.gen(function* () {
     const modelSelection = yield* selectionForSpawn(parentThreadId, input);
     yield* requireParent(parentThreadId);
     yield* validateModel(modelSelection);
+    const cwd = yield* leadCwd(parentThreadId);
+    let repositoryPath: string | null;
+    if (input.repositoryPath) {
+      const repositoryCwd = yield* resolveRepository(cwd, input.repositoryPath);
+      yield* requireChildRepository(repositoryCwd);
+      repositoryPath = path.normalize(input.repositoryPath);
+    } else {
+      const isRepository = yield* git.isRepository(cwd).pipe(Effect.mapError(unavailable));
+      const hasCommit = isRepository
+        ? yield* git.hasCommit({ cwd, refName: "HEAD" }).pipe(Effect.mapError(unavailable))
+        : false;
+      repositoryPath = hasCommit ? "." : null;
+    }
     const workerThreadId = ThreadId.make(`flow-${NodeCrypto.randomUUID()}`);
     const timestamp = yield* nowIso;
     const worker = yield* store.reserveWorker({
@@ -198,7 +270,8 @@ export const make = Effect.gen(function* () {
       assignment: input.assignment,
       modelSelection,
       ...(input.profileId ? { profileId: input.profileId } : {}),
-      branch: `flow/${workerThreadId}`,
+      branch: repositoryPath === null ? "" : `flow/${workerThreadId}`,
+      repositoryPath,
       jobId: `flow-job-${input.id}`,
       messageId: `flow-message-${input.id}`,
       createdAt: timestamp,
@@ -319,29 +392,39 @@ export const make = Effect.gen(function* () {
   ) {
     let worker = yield* store.getWorker(workerThreadId);
     if (!worker) return yield* error("not-found", "Worker was not found.");
-    if (worker.worktreePath) return worker;
-    const parent = yield* requireLeadThread(worker.parentThreadId);
-    const project = yield* projection
-      .getProjectShellById(parent.projectId)
-      .pipe(Effect.mapError(unavailable));
-    if (Option.isNone(project)) return yield* error("not-found", "Flow project was not found.");
-    const cwd = parent.worktreePath ?? project.value.workspaceRoot;
-    const hasCommit = yield* git
-      .hasCommit({ cwd, refName: "HEAD" })
-      .pipe(Effect.mapError(unavailable));
-    if (!hasCommit)
-      return yield* error("unavailable", "Flow workers need a Git repository with a commit.");
+    if (worker.repositoryPath === null) return worker;
+    if (
+      worker.worktreePath &&
+      (yield* fileSystem.exists(worker.worktreePath).pipe(Effect.mapError(unavailable)))
+    )
+      return worker;
+    const workspaceRoot = yield* leadCwd(worker.parentThreadId);
+    const cwd =
+      worker.repositoryPath === "."
+        ? workspaceRoot
+        : yield* resolveRepository(workspaceRoot, worker.repositoryPath);
+    if (worker.repositoryPath === ".") yield* requireRepositoryCommit(cwd);
+    else yield* requireChildRepository(cwd);
+    if (!worker.branch) return yield* error("invalid", "Worker branch is missing.");
+    const branch = worker.branch;
+    if (worker.worktreePath) {
+      yield* git.pruneWorktrees({ cwd }).pipe(Effect.mapError(unavailable));
+      yield* git
+        .createWorktree({ cwd, refName: branch, path: worker.worktreePath })
+        .pipe(Effect.mapError(unavailable));
+      return worker;
+    }
     const refs = yield* git
-      .listRefs({ cwd, query: worker.branch, refKind: "local", refresh: true })
+      .listRefs({ cwd, query: branch, refKind: "local", refresh: true })
       .pipe(Effect.mapError(unavailable));
-    const existing = refs.refs.find((ref) => ref.name === worker!.branch);
+    const existing = refs.refs.find((ref) => ref.name === branch);
     const worktree = existing?.worktreePath
       ? { path: existing.worktreePath, refName: existing.name }
       : (yield* git
           .createWorktree({
             cwd,
             refName: existing?.name ?? "HEAD",
-            ...(existing ? {} : { newRefName: worker.branch }),
+            ...(existing ? {} : { newRefName: branch }),
             baseRefName: "HEAD",
             path: null,
           })
@@ -368,7 +451,7 @@ export const make = Effect.gen(function* () {
       return;
     worker = yield* ensureWorktree(worker.threadId);
     const parent = yield* requireLeadThread(worker.parentThreadId);
-    if (!worker.worktreePath)
+    if (worker.repositoryPath !== null && !worker.worktreePath)
       return yield* error("unavailable", "Worker worktree could not be prepared.");
     yield* engine.dispatch({
       type: "thread.create",
@@ -387,9 +470,11 @@ export const make = Effect.gen(function* () {
     const prompt = initial
       ? [
           `You are a Dispatch Flow worker. Your assignment is: ${row.prompt}`,
-          `Work in your isolated checkout at ${worker.worktreePath}. Do not change the parent checkout.`,
+          worker.repositoryPath === null
+            ? "You share the lead's live project directory. It may contain several independent Git repositories or no Git repository. Run Git commands only inside a repository, coordinate file ownership with the lead, and do not overwrite another worker's changes."
+            : `Work in your isolated checkout at ${worker.worktreePath} for repository ${worker.repositoryPath}. Do not change the parent checkout.`,
           "Use flow_report to send concise progress or a blocker to the lead while you work. The lead may send you a message during your turn.",
-          "Report the result, files changed, validation performed, and any commit or branch needed for the lead to integrate your work.",
+          "Report the result, files changed, validation performed, and any repository, commit, or branch needed for the lead to integrate your work.",
           "You may use your provider's native tools. The Flow lead owns integration and the final user response.",
         ].join("\n\n")
       : `Message from your Flow lead: ${row.prompt}`;

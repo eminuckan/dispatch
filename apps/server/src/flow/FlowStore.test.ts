@@ -31,6 +31,7 @@ it.effect("reserves Flow workers and jobs durably with parent-scoped idempotency
       modelSelection: selection,
       profileId: "routine-parser",
       branch: "flow/flow-worker-1",
+      repositoryPath: ".",
       jobId: "flow-job-spawn-1",
       messageId: "flow-message-spawn-1",
       createdAt,
@@ -75,6 +76,19 @@ it.effect("reserves Flow workers and jobs durably with parent-scoped idempotency
     });
     const persisted = yield* make;
     expect((yield* persisted.getWorker(workerThreadId))?.worktreePath).toBe("/worktrees/worker-1");
+    const shared = yield* persisted.reserveWorker({
+      ...input,
+      threadId: ThreadId.make("flow-shared"),
+      spawnId: "shared-spawn",
+      assignment: "Review the whole workspace",
+      branch: "",
+      repositoryPath: null,
+      jobId: "flow-job-shared",
+      messageId: "flow-message-shared",
+    });
+    expect(shared.branch).toBeNull();
+    expect((yield* (yield* make).getWorker(shared.threadId))?.repositoryPath).toBeNull();
+    yield* persisted.stop(parentThreadId, shared.threadId);
     const followup = {
       parentThreadId,
       workerThreadId,
@@ -161,6 +175,7 @@ it.effect("lets the lead start more than five workers", () =>
         assignment: `Check part ${index}`,
         modelSelection: selection,
         branch: `flow/worker-${index}`,
+        repositoryPath: ".",
         jobId: `flow-job-${index}`,
         messageId: `flow-message-${index}`,
         createdAt,

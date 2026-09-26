@@ -1,3 +1,4 @@
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import { CommandId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
@@ -47,7 +48,10 @@ export const FlowWorker = Schema.Struct({
   assignment: FlowText,
   modelSelection: FlowModelSelection,
   profileId: Schema.optional(Schema.NullOr(FlowWorkerProfile.fields.id)),
-  branch: Schema.String,
+  branch: Schema.NullOr(Schema.String),
+  repositoryPath: Schema.NullOr(Schema.String).pipe(
+    Schema.withDecodingDefault(Effect.succeed(".")),
+  ),
   worktreePath: Schema.NullOr(Schema.String),
   state: Schema.Literals(["queued", "working", "idle", "failed", "stopped"]),
   error: Schema.NullOr(Schema.String),
@@ -82,6 +86,7 @@ export const FlowSpawnInput = Schema.Struct({
   assignment: FlowText,
   profileId: Schema.optional(FlowWorkerProfile.fields.id),
   modelSelection: Schema.optional(FlowModelSelection),
+  repositoryPath: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(400))),
 });
 export type FlowSpawnInput = typeof FlowSpawnInput.Type;
 

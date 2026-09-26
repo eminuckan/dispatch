@@ -942,7 +942,9 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                   <AppText numberOfLines={1} className="text-sm">
                     {worker.assignment}
                   </AppText>
-                  <AppText className="text-xs text-foreground-muted">{worker.state}</AppText>
+                  <AppText className="text-xs text-foreground-muted">
+                    {worker.state} · {worker.repositoryPath === null ? "shared" : "worktree"}
+                  </AppText>
                 </Pressable>
                 {worker.state !== "stopped" ? (
                   <Pressable

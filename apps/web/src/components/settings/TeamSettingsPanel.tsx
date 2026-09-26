@@ -409,8 +409,9 @@ function FlowSettingsEditor({ providers }: { providers: ReadonlyArray<ServerProv
         );
       })}
       <p className="px-3 text-xs text-muted-foreground sm:px-4">
-        Turn on Flow in a thread’s composer. Workers use separate Git worktrees; your lead remains
-        responsible for integration.
+        Turn on Flow in a thread’s composer. Workers use Git worktrees where available or share a
+        project folder that is not a Git repository. Your lead chooses the workspace and handles
+        integration.
       </p>
     </SettingsPageContainer>
   );

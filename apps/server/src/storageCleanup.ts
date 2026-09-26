@@ -244,7 +244,7 @@ export const make = Effect.gen(function* () {
           storageCleanupActivityAt(thread) < now - settings.worktreeAfterDays * DAY_MS;
         let eligible = deleted || old;
         if (!eligible && (settings.worktreeUnchanged || settings.worktreeOnMerge)) {
-          const repositoryCwd = path.resolve(project.workspaceRoot);
+          const repositoryCwd = worktreePath;
           const remote = yield* git.resolvePrimaryRemoteName(repositoryCwd);
           const branch = yield* git.resolveDefaultBranchName(repositoryCwd, remote);
           if (branch === null) return;
@@ -352,10 +352,10 @@ export const make = Effect.gen(function* () {
           )
         )
           return;
-        yield* git.removeWorktree({ cwd: project.workspaceRoot, path: worktreePath, force: false });
+        yield* gitManager.invalidateStatus(worktreePath);
+        yield* git.removeWorktree({ cwd: worktreePath, path: worktreePath, force: false });
         yield* gitManager.invalidateStatus(project.workspaceRoot);
-        // Preserve branch and path: ProviderCommandReactor recreates the checkout
-        // from that branch when the thread is resumed.
+        // Preserve branch and path so the next turn can recreate the checkout.
         yield* Effect.logInfo("storage cleanup removed worktree", { threadId: thread.id });
       }).pipe(
         (effect) => withWorkspaceLease(worktreePath, effect),

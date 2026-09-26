@@ -122,6 +122,13 @@ export function FlowWorkersPanel({
                     {worker.modelSelection.instanceId} · {worker.modelSelection.model}
                     {typeof effort === "string" ? ` · ${effort}` : ""}
                   </p>
+                  <p className="truncate text-[11px] text-muted-foreground">
+                    {worker.repositoryPath === null
+                      ? "Shared workspace"
+                      : worker.repositoryPath === "."
+                        ? "Isolated worktree"
+                        : `${worker.repositoryPath} · isolated worktree`}
+                  </p>
                   {latestUpdate && worker.state !== "idle" && worker.state !== "stopped" ? (
                     <p className="mt-1 line-clamp-2 text-xs text-foreground/80" role="status">
                       {latestUpdate.message}
