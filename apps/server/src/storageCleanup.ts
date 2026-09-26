@@ -245,11 +245,18 @@ export const make = Effect.gen(function* () {
         let eligible = deleted || old;
         if (!eligible && (settings.worktreeUnchanged || settings.worktreeOnMerge)) {
           const repositoryCwd = worktreePath;
+          const commonDir = (yield* git.execute({
+            operation: "StorageCleanup.repositoryCommonDir",
+            cwd: repositoryCwd,
+            args: ["rev-parse", "--git-common-dir"],
+          })).stdout.trim();
+          if (!commonDir) return;
+          const repositoryKey = path.resolve(repositoryCwd, commonDir);
           const remote = yield* git.resolvePrimaryRemoteName(repositoryCwd);
           const branch = yield* git.resolveDefaultBranchName(repositoryCwd, remote);
           if (branch === null) return;
           const defaultRef = `refs/remotes/${remote}/${branch}`;
-          const refreshed = refreshedDefaultRefs.get(repositoryCwd) ?? new Set<string>();
+          const refreshed = refreshedDefaultRefs.get(repositoryKey) ?? new Set<string>();
           if (!refreshed.has(defaultRef)) {
             yield* git.fetchRemoteTrackingBranch({
               cwd: repositoryCwd,
@@ -257,7 +264,7 @@ export const make = Effect.gen(function* () {
               remoteBranch: branch,
             });
             refreshed.add(defaultRef);
-            refreshedDefaultRefs.set(repositoryCwd, refreshed);
+            refreshedDefaultRefs.set(repositoryKey, refreshed);
           }
           const base = yield* git.resolveCommit({
             cwd: worktreePath,

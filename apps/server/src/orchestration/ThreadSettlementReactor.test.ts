@@ -1701,7 +1701,7 @@ describe("storage cleanup", () => {
                   fetchRemoteTrackingBranch: (input) =>
                     Effect.sync(() => {
                       assert.deepStrictEqual(input, {
-                        cwd: config.baseDir,
+                        cwd: worktreePath,
                         remoteName: "origin",
                         remoteBranch: "main",
                       });
@@ -1744,11 +1744,13 @@ describe("storage cleanup", () => {
                           : 0,
                       ),
                       stdout:
-                        protection === "ignored" || protection === "deleted-ignored"
-                          ? ".env\0"
-                          : protection === "ignored-directory"
-                            ? ".cache/\0"
-                            : "",
+                        input.operation === "StorageCleanup.repositoryCommonDir"
+                          ? `${config.baseDir}/.git\n`
+                          : protection === "ignored" || protection === "deleted-ignored"
+                            ? ".env\0"
+                            : protection === "ignored-directory"
+                              ? ".cache/\0"
+                              : "",
                       stderr: "",
                       stdoutTruncated: false,
                       stderrTruncated: false,
@@ -1781,6 +1783,7 @@ describe("storage cleanup", () => {
                     ),
                   removeWorktree: (input) => {
                     assert.strictEqual(input.force, false);
+                    assert.strictEqual(input.cwd, input.path);
                     removals.push(input.path);
                     return fs.remove(input.path, { recursive: true }).pipe(Effect.orDie);
                   },
